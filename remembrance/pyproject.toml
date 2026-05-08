@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "remembrance"
+version = "0.1.0"
+description = "Remembrance — Event-driven semantic memory for agentic workflows"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5.0",
+    "lancedb>=0.6.0",
+    "ollama>=0.3.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.29.0",
+    "typer>=0.12.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.3"]
+
+[project.scripts]
+remembrance = "remembrance.cli:app"
+
+[tool.ruff]
+line-length = 100

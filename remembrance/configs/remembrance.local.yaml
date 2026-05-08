@@ -1,0 +1,35 @@
+# Remembrance local configuration
+server:
+  host: "127.0.0.1"
+  port: 18790
+
+database:
+  metadata_path: "./remembrance-data/metadata.db"
+  vector_path: "./remembrance-data/vectors"
+
+embedding:
+  provider: "ollama"
+  model: "nomic-embed-text"
+  ollama_url: "http://localhost:11434"
+  dimensions: 768
+
+search:
+  hybrid_weights:
+    vector_similarity: 0.65
+    keyword_score: 0.15
+    importance_score: 0.10
+    project_match: 0.05
+    recency_score: 0.05
+  default_limit: 8
+  project_mismatch_penalty: 0.9
+
+context:
+  max_memories: 8
+  default_token_budget: 2500
+  max_token_budget: 8000
+  output_format: "both"  # "markdown", "json", or "both"
+
+defaults:
+  scope: "project"
+  importance_score: 0.5
+  confidence_score: 1.0
