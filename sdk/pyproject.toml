@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "prism-sdk"
+version = "0.1.0"
+description = "Prism — Event-Native AI Agent Platform SDK"
+requires-python = ">=3.11"
+dependencies = [
+    "nats-py>=2.6.0",
+    "pydantic>=2.5.0",
+]
+
+[project.optional-dependencies]
+discord = ["discord.py>=2.3.0"]
+telegram = ["python-telegram-bot>=21.0.0"]
+all = ["discord.py>=2.3.0", "python-telegram-bot>=21.0.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.3"]
+
+[tool.ruff]
+line-length = 100
