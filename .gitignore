@@ -1,7 +1,7 @@
-# Prism build artifacts
-prism-cli
-prism-bus
-prism-agent
+# Prism build artifacts (binaries at repo root only)
+/prism-cli
+/prism-bus
+/prism-agent
 prism-data/
 
 # Run outputs (keep directory structure)
