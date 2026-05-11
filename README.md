@@ -4,65 +4,155 @@ Prism is an event-native AI agent platform where every action, decision, and sta
 
 ## V1 Status: Stabilized ✅
 
-The V1 lifecycle is proven end-to-end:
+The V1 lifecycle is proven end-to-end with 26 passing integration tests:
 - ✅ `prism run` CLI — full task lifecycle with event persistence
 - ✅ Canonical event schema with ULID IDs, correlation IDs, and parent chains
 - ✅ NATS JetStream bus with durable storage
 - ✅ Deterministic placeholder agent (real LLM calls are V2)
 - ✅ Optional Remembrance context hook (graceful fallback)
 - ✅ Event log persistence (`runs/<run_id>/events.jsonl` + `summary.json`)
-- ✅ 22 passing integration tests
+- ✅ Parent chain integrity — events link back via `parent_id` in both in-memory and NATS-published events
 
-## Quick Start
+## Quick Start (Fresh Clone)
 
-### Prerequisites
-- Go 1.22+
-- NATS Server (embedded mode included in `prism-bus`)
+### 1. Prerequisites
 
-### Build
+- **Go 1.22+** — [install](https://go.dev/dl/)
+- **Git** — for cloning the repo
+- (Optional) **NATS Server** — only if running `prism-bus` standalone; the CLI and tests use embedded NATS
+
+### 2. Clone & Build
+
 ```bash
-go build -o prism-cli ./cmd/prism-cli/
-go build -o prism-bus ./cmd/prism-bus/
+git clone https://github.com/emaharmony/prism.git
+cd prism
+
+# Build all three binaries
+go build -o prism-cli   ./cmd/prism-cli/
+go build -o prism-bus   ./cmd/prism-bus/
 go build -o prism-agent ./cmd/prism-agent/
 ```
 
-### Run V1 Lifecycle
+### 3. Run Tests
 
-1. Start the bus:
+```bash
+go test ./internal/... -v
+```
+
+You should see 26 tests pass across three packages:
+- `internal/agent` — 5 tests (PlaceholderAgent + delay)
+- `internal/event` — 12 tests (IDs, event creation, JSON round-trip, security)
+- `internal/run` — 9 tests (lifecycle, memory, correlation, NATS pub/sub, parent chains)
+
+### 4. Start the Bus
+
 ```bash
 ./prism-bus
 ```
 
-2. In another terminal, run a task:
+This starts an embedded NATS server with JetStream enabled on `localhost:4222`. Data is stored in `./prism-data/`.
+
+You should see:
+```
+prism: NATS server running on nats://localhost:4222
+prism: JetStream initialized
+prism: stream PRISM created
+prism: bus ready — subscribing to prism.>
+```
+
+### 5. Run a Task
+
+In another terminal:
+
 ```bash
 ./prism-cli run --task "Test V1 event lifecycle" --project prism --agent lumi
 ```
 
-3. Check the results:
+You'll see events emitted in real time:
+```
+  💎 [prism.task.created]  id=evt_01KRC7AQXH...
+  💎 [prism.task.started]  id=evt_01KRC7AQXH...
+  💎 [prism.agent.started] id=evt_01KRC7AQXH...
+  💎 [prism.agent.output]  id=evt_01KRC7AQXH...
+  💎 [prism.agent.completed] id=evt_01KRC7AQXH...
+  💎 [prism.task.completed] id=evt_01KRC7AQXH...
+prism: run run_01KRC... completed (6 events, 8ms)
+```
+
+### 6. Check the Results
+
 ```bash
+# Find the latest run
 ls runs/
+
+# Read the event log (one compact JSON object per line)
 cat runs/<run_id>/events.jsonl
+
+# Read the human-readable summary
 cat runs/<run_id>/summary.json
 ```
 
-### With Memory Context (Optional)
+### 7. (Optional) With Memory Context
+
+If you have [Remembrance](https://github.com/emaharmony/prism) running:
+
 ```bash
-# Requires Remembrance running at http://localhost:18790
-./prism-cli run --task "Analyze the codebase" --memory-enabled --memory-url http://localhost:18790
+# Enable memory context (graceful fallback if unavailable)
+./prism-cli run --task "Analyze the codebase" --project prism --agent lumi \
+  --memory-enabled --memory-url http://localhost:18790
 
 # Fail if memory is unavailable
-./prism-cli run --task "Critical analysis" --memory-enabled --require-memory
+./prism-cli run --task "Critical analysis" --project prism --agent lumi \
+  --memory-enabled --require-memory
 ```
 
-### Health Check
+### 8. Health Check
+
 ```bash
 ./prism-cli health
 ```
 
-### Start an Agent
+Connects to NATS, verifies JetStream, checks the PRISM stream, and shows message count.
+
+### 9. (Optional) Start an Agent
+
 ```bash
 ./prism-agent -name lumi -subs "prism.task.>,prism.agent.>"
 ```
+
+This subscribes to task and agent events and dispatches them to registered handlers.
+
+## CLI Reference
+
+### `prism run`
+
+```
+prism run --task <description> [options]
+
+Required:
+  --task string         Task description
+
+Options:
+  --project string     Project name (default: "prism")
+  --agent string       Agent name (default: "lumi")
+  --bus-url string     NATS URL (default: "nats://localhost:4222")
+  --run-dir string     Output directory (default: "./runs")
+  --memory-enabled     Enable Remembrance context hook
+  --require-memory     Fail if Remembrance is unavailable
+  --memory-url string  Remembrance URL (default: "http://localhost:18790")
+```
+
+### `prism health`
+
+```
+prism health [--bus-url string]
+
+Connects to NATS and reports bus/stream status.
+```
+
+### `prism version`
+
+Prints the current version (`v0.1.0`).
 
 ## Architecture
 
@@ -83,18 +173,20 @@ cat runs/<run_id>/summary.json
                     └─────────────┘
 ```
 
+**Event flow:** `prism-cli run` → emits `task.created` → `task.started` → (optional) `memory.context_requested/built/failed` → `agent.started` → `agent.output` → `agent.completed` → `task.completed/failed`. Every event has a `correlation_id` linking it to the run, and a `parent_id` linking it to the causal predecessor.
+
 ## V1 Event Types
 
 | Event | Subject | Description |
 |-------|---------|-------------|
 | Task Created | `prism.task.created` | New task enters the system |
-| Task Started | `prism.task.started` | Processing begins |
+| Task Started | `prism.task.started` | Processing begins (parent: task.created) |
 | Task Completed | `prism.task.completed` | Task finished successfully |
-| Task Failed | `prism.task.failed` | Task failed |
+| Task Failed | `prism.task.failed` | Task failed (parent: task.started) |
 | Memory Context Requested | `prism.memory.context_requested` | Asking Remembrance for context |
 | Memory Context Built | `prism.memory.context_built` | Context retrieved successfully |
 | Memory Context Failed | `prism.memory.context_failed` | Context retrieval failed |
-| Agent Started | `prism.agent.started` | Agent begins processing |
+| Agent Started | `prism.agent.started` | Agent begins processing (parent: task.started) |
 | Agent Output | `prism.agent.output` | Agent produces result |
 | Agent Completed | `prism.agent.completed` | Agent finished |
 | Agent Failed | `prism.agent.failed` | Agent failed |
@@ -125,32 +217,30 @@ Every event follows this canonical structure:
 }
 ```
 
+- **ID format:** `evt_<ulid>`, `corr_<ulid>`, `run_<ulid>`, `sess_<ulid>` — sortable, unique, time-encoded
+- **Parent chain:** Every event links to its direct causal predecessor via `parent_id`
+- **Correlation:** All events in a run share the same `correlation_id`
+- **Timestamps:** RFC3339Nano (UTC)
+
 ## Project Structure
 
 ```
 prism/
 ├── cmd/
-│   ├── prism-cli/       # CLI entrypoint (prism run, prism health)
+│   ├── prism-cli/        # CLI entrypoint (prism run, prism health, prism version)
 │   ├── prism-bus/        # Embedded NATS JetStream server
 │   └── prism-agent/      # Agent runtime (subscribes, processes, publishes)
 ├── internal/
 │   ├── event/            # Canonical event schema (shared package)
-│   ├── run/              # V1 lifecycle orchestrator
-│   ├── agent/            # Placeholder agent (deterministic)
+│   ├── run/              # V1 lifecycle orchestrator (buildEvent/publishEvent)
+│   ├── agent/            # Placeholder agent (deterministic, with delay option)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
-├── remembrance/          # FastAPI memory layer (LanceDB + SQLite + Ollama)
-├── runs/                 # Run outputs (events.jsonl, summary.json)
+├── runs/                 # Run outputs (gitignored, created at runtime)
 ├── docs/
 │   └── DESIGN.md         # Architecture design document
-└── go.mod
-```
-
-## Running Tests
-
-```bash
-go test ./internal/... -v
+└── go.mod                # Go 1.26.2, nats.go, ulid/v2
 ```
 
 ## V2 Roadmap
