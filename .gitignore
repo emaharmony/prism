@@ -1,3 +1,9 @@
 # Prism build artifacts
+prism-cli
 prism-bus
+prism-agent
 prism-data/
+
+# Run outputs (keep directory structure)
+runs/*
+!runs/.gitkeep
