@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +12,8 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/emaharmony/prism/internal/event"
 )
 
 // AgentConfig defines an agent that subscribes to events and processes them.
@@ -21,7 +21,7 @@ type AgentConfig struct {
 	Name       string   `json:"name"`
 	Subscribes []string `json:"subscribes"`
 	Model      string   `json:"model,omitempty"`
-	MaxPending  int      `json:"max_pending,omitempty"`
+	MaxPending int      `json:"max_pending,omitempty"`
 }
 
 // AgentRuntime connects to the Prism bus, subscribes to events,
@@ -30,7 +30,7 @@ type AgentRuntime struct {
 	nc      *nats.Conn
 	js      nats.JetStreamContext
 	config  AgentConfig
-	handler func(Event)
+	handler func(event.Event)
 	mu      sync.Mutex
 	pending int
 }
@@ -83,7 +83,7 @@ func main() {
 		nc:     nc,
 		js:     js,
 		config: config,
-		handler: func(evt Event) {
+		handler: func(evt event.Event) {
 			// Default handler: log the event and emit a processed event
 			log.Printf("  🔮 [%s] received %s from %s", config.Name, evt.Type, evt.Source)
 		},
@@ -143,7 +143,7 @@ func main() {
 }
 
 func (r *AgentRuntime) handleMessage(msg *nats.Msg) {
-	evt, err := eventFromBytes(msg.Data)
+	evt, err := event.EventFromBytes(msg.Data)
 	if err != nil {
 		log.Printf("  ⚠️ [%s] invalid event: %v", r.config.Name, err)
 		return
@@ -166,9 +166,9 @@ func (r *AgentRuntime) handleMessage(msg *nats.Msg) {
 	log.Printf("  🔮 [%s] processed %s (pending=%d)", r.config.Name, evt.Type, pending-1)
 }
 
-func (r *AgentRuntime) publish(eventType string, payload map[string]any) Event {
-	evt := newEvent(eventType, r.config.Name, payload)
-	data, err := json.Marshal(evt)
+func (r *AgentRuntime) publish(eventType string, payload map[string]any) event.Event {
+	evt := event.NewEvent(eventType, r.config.Name, payload)
+	data, err := evt.ToJSON()
 	if err != nil {
 		log.Printf("  ⚠️ [%s] failed to marshal event: %v", r.config.Name, err)
 		return evt
@@ -205,47 +205,3 @@ func parseSubs(s string) []string {
 	return result
 }
 
-// ── Event types (shared with prism-bus) ────────────────────────────
-// In production, these would be in a shared package.
-
-type Event struct {
-	ID            string         `json:"id"`
-	Type          string         `json:"type"`
-	Source        string         `json:"source"`
-	Timestamp     string         `json:"timestamp"`
-	CorrelationID string         `json:"correlation_id"`
-	ParentID      string         `json:"parent_id,omitempty"`
-	Payload       map[string]any `json:"payload"`
-	Metadata      EventMetadata  `json:"metadata"`
-}
-
-type EventMetadata struct {
-	Model      string `json:"model,omitempty"`
-	PromptHash string `json:"prompt_hash,omitempty"`
-	TokenCost  int    `json:"token_cost,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	LatencyMs  int    `json:"latency_ms,omitempty"`
-}
-
-var eventCounter int64
-
-func newEvent(eventType, source string, payload map[string]any) Event {
-	eventCounter++
-	now := time.Now().UTC()
-	return Event{
-		ID:        fmt.Sprintf("evt_%d_%06d", now.UnixMilli(), eventCounter),
-		Type:      eventType,
-		Source:    source,
-		Timestamp: now.Format(time.RFC3339Nano),
-		Payload:   payload,
-	}
-}
-
-func eventFromBytes(data []byte) (Event, error) {
-	var evt Event
-	err := json.Unmarshal(data, &evt)
-	return evt, err
-}
-
-// Unused import for context (will be needed for LLM calls)
-var _ = context.Background
