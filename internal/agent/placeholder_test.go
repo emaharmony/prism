@@ -3,6 +3,7 @@ package agent_test
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
 )
@@ -92,5 +93,34 @@ func TestPlaceholderAlwaysSucceeds(t *testing.T) {
 		if output.Status != "completed" {
 			t.Errorf("placeholder agent failed on iteration %d: %s", i, output.Status)
 		}
+	}
+}
+
+func TestPlaceholderWithDelay(t *testing.T) {
+	input := agent.PlaceholderInput{
+		Task:    "test delay",
+		Project: "prism",
+		Agent:   "lumi",
+	}
+
+	delay := 50 * time.Millisecond
+	start := time.Now()
+	output := agent.RunPlaceholderWithDelay(input, delay)
+	elapsed := time.Since(start)
+
+	if output.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", output.Status)
+	}
+	if elapsed < delay {
+		t.Errorf("expected delay >= %v, got %v", delay, elapsed)
+	}
+
+	// Verify output is identical to RunPlaceholder
+	directOutput := agent.RunPlaceholder(input)
+	if output.Status != directOutput.Status {
+		t.Errorf("delayed output status %q != direct %q", output.Status, directOutput.Status)
+	}
+	if output.Summary != directOutput.Summary {
+		t.Errorf("delayed output summary %q != direct %q", output.Summary, directOutput.Summary)
 	}
 }

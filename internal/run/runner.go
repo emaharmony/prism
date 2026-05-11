@@ -6,10 +6,12 @@ package run
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -43,15 +45,16 @@ type RunResult struct {
 
 // Runner orchestrates the V1 lifecycle.
 type Runner struct {
-	config        RunConfig
-	runID         string
-	correlationID string
-	sessionID     string
-	events        []event.Event
-	nc            *nats.Conn
-	js            nats.JetStreamContext
-	memClient     *remembrance.Client
-	startedAt     string
+	config           RunConfig
+	runID            string
+	correlationID    string
+	sessionID        string
+	events           []event.Event
+	nc               *nats.Conn
+	js               nats.JetStreamContext
+	memClient        *remembrance.Client
+	startedAt        string
+	taskStartedID    string // ID of the task.started event for linking failure events
 }
 
 // NewRunner creates a new V1 lifecycle runner.
@@ -103,6 +106,7 @@ func (r *Runner) Run() (*RunResult, error) {
 		"project": r.config.Project,
 		"agent":   r.config.Agent,
 	}, evt.ID)
+	r.taskStartedID = evt.ID
 
 	// 4. Optional: Remembrance context hook
 	var contextStr string
@@ -229,13 +233,26 @@ func (r *Runner) Run() (*RunResult, error) {
 	}, nil
 }
 
-// fail emits a task.failed event and returns an error result.
+// fail emits a task.failed event (linked to task.started) and returns an error result.
 func (r *Runner) fail(msg string) (*RunResult, error) {
-	r.emit(event.V1EventTypes.TaskFailed, "prism-cli", map[string]any{
-		"task":    r.config.Task,
-		"project": r.config.Project,
-		"error":   msg,
-	})
+	// Use emitWithParent so task.failed links to task.started in both
+	// the in-memory slice and the NATS-published event.
+	parentID := r.taskStartedID
+	if parentID == "" {
+		// Fallback: if task.started was never emitted (extreme edge case),
+		// use plain emit so we still log the failure.
+		r.emit(event.V1EventTypes.TaskFailed, "prism-cli", map[string]any{
+			"task":    r.config.Task,
+			"project": r.config.Project,
+			"error":   msg,
+		})
+	} else {
+		r.emitWithParent(event.V1EventTypes.TaskFailed, "prism-cli", map[string]any{
+			"task":    r.config.Task,
+			"project": r.config.Project,
+			"error":   msg,
+		}, parentID)
+	}
 
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	durationMs := r.calculateDuration()
@@ -269,8 +286,10 @@ func (r *Runner) fail(msg string) (*RunResult, error) {
 	return result, fmt.Errorf("run failed: %s", msg)
 }
 
-// emit creates and records an event, publishes it to NATS.
-func (r *Runner) emit(eventType, source string, payload map[string]any) event.Event {
+// buildEvent creates an event, sets correlation_id and metadata, and appends
+// it to the in-memory r.events slice. It does NOT publish to NATS — call
+// publishEvent after building to publish.
+func (r *Runner) buildEvent(eventType, source string, payload map[string]any) event.Event {
 	evt := event.NewEvent(eventType, source, payload)
 	evt.CorrelationID = r.correlationID
 	evt.Metadata = event.EventMetadata{
@@ -279,30 +298,39 @@ func (r *Runner) emit(eventType, source string, payload map[string]any) event.Ev
 		Project:   r.config.Project,
 		Agent:     r.config.Agent,
 	}
-
 	r.events = append(r.events, evt)
+	return evt
+}
 
-	// Publish to NATS (best effort for V1)
+// publishEvent publishes a fully-built event to NATS (best effort for V1).
+func (r *Runner) publishEvent(evt event.Event) {
 	data, err := evt.ToJSON()
 	if err != nil {
 		log.Printf("prism: failed to marshal event %s: %v", evt.ID, err)
-		return evt
+		return
 	}
-	if _, err := r.js.Publish(eventType, data); err != nil {
+	if _, err := r.js.Publish(evt.Type, data); err != nil {
 		log.Printf("prism: failed to publish event %s: %v", evt.ID, err)
 	} else {
 		log.Printf("  💎 [%s] id=%s", evt.Type, evt.ID[:24])
 	}
+}
 
+// emit builds and publishes an event to NATS.
+func (r *Runner) emit(eventType, source string, payload map[string]any) event.Event {
+	evt := r.buildEvent(eventType, source, payload)
+	r.publishEvent(evt)
 	return evt
 }
 
-// emitWithParent creates an event with a parent ID.
+// emitWithParent builds an event with a parent_id, then publishes to NATS.
+// Unlike the old implementation, parent_id is set BEFORE publishing, so both
+// the in-memory slice and the NATS-published event include it.
 func (r *Runner) emitWithParent(eventType, source string, payload map[string]any, parentID string) event.Event {
-	evt := r.emit(eventType, source, payload)
+	evt := r.buildEvent(eventType, source, payload)
 	evt.ParentID = parentID
-	// Re-marshal with parent ID
 	r.events[len(r.events)-1] = evt
+	r.publishEvent(evt)
 	return evt
 }
 
@@ -318,8 +346,14 @@ func (r *Runner) ensureStream() {
 		Storage:   nats.FileStorage,
 	})
 	if err != nil {
-		// Stream likely already exists
-		log.Printf("prism: stream PRISM already exists or error: %v", err)
+		// "stream name already in use" is expected on re-creation; log at info level.
+		// Any other error is unexpected and logged at warning level.
+		if errors.Is(err, nats.ErrStreamNameAlreadyInUse) ||
+			strings.Contains(err.Error(), "already in use") {
+			log.Printf("prism: stream PRISM already exists (reusing)")
+		} else {
+			log.Printf("prism: WARNING: failed to ensure stream PRISM: %v", err)
+		}
 	}
 }
 

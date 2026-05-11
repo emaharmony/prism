@@ -154,6 +154,11 @@ func (r *AgentRuntime) handleMessage(msg *nats.Msg) {
 	pending := r.pending
 	r.mu.Unlock()
 
+	// The pending counter is intentionally loose/observational:
+	// it tracks how many events are being processed concurrently.
+	// The handler runs without the lock held since it may take time.
+	// This is fine for V1 observability — it's not used for flow control.
+
 	// Call the handler
 	r.handler(evt)
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -355,5 +356,148 @@ func TestV1NATSPublishAndSubscribe(t *testing.T) {
 	// Should have received at least 6 events
 	if len(received) < 6 {
 		t.Errorf("expected at least 6 events received via NATS, got %d", len(received))
+	}
+}
+
+func TestV1Remembrance404(t *testing.T) {
+	// Start a test HTTP server that returns 404 for the context-build endpoint
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	// Simple HTTP server returning 404
+	httpServer := &http.Server{Addr: "127.0.0.1:0"}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	go httpServer.Serve(listener)
+	defer httpServer.Close()
+
+	memoryURL := fmt.Sprintf("http://%s", listener.Addr().String())
+
+	tmpDir := t.TempDir()
+	cfg := run.RunConfig{
+		Task:           "Test remembrance 404",
+		Project:        "prism",
+		Agent:          "lumi",
+		BusURL:         busURL,
+		MemoryEnabled:  true,
+		RequireMemory:  false,
+		MemoryURL:      memoryURL,
+		RunDir:         filepath.Join(tmpDir, "runs"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+
+	if err != nil {
+		t.Fatalf("V1 run with 404 memory should not error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", result.Status)
+	}
+
+	// Read events and verify memory.context_failed was emitted
+	eventsPath := filepath.Join(tmpDir, "runs", result.RunID, "events.jsonl")
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("failed to read events.jsonl: %v", err)
+	}
+
+	foundContextRequested := false
+	foundContextFailed := false
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, line := range lines {
+		var evt event.Event
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		if evt.Type == "prism.memory.context_requested" {
+			foundContextRequested = true
+		}
+		if evt.Type == "prism.memory.context_failed" {
+			foundContextFailed = true
+		}
+	}
+
+	if !foundContextRequested {
+		t.Error("expected prism.memory.context_requested event")
+	}
+	if !foundContextFailed {
+		t.Error("expected prism.memory.context_failed event for 404 response")
+	}
+}
+
+func TestV1ParentIDInNATS(t *testing.T) {
+	// Verify that events published to NATS include parent_id
+	// This tests the fix for the emitWithParent bug
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+	cfg := run.RunConfig{
+		Task:          "Test parent_id in NATS",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: false,
+		RunDir:        filepath.Join(tmpDir, "runs"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("V1 run failed: %v", err)
+	}
+
+	// Read events.jsonl and verify parent_ids are set
+	eventsPath := filepath.Join(tmpDir, "runs", result.RunID, "events.jsonl")
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("failed to read events.jsonl: %v", err)
+	}
+
+	var events []event.Event
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, line := range lines {
+		var evt event.Event
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		events = append(events, evt)
+	}
+
+	// Build a map of event types to their parent IDs
+	parentIDs := make(map[string]string)
+	for _, evt := range events {
+		parentIDs[evt.Type] = evt.ParentID
+	}
+
+	// task.started should have parent = task.created
+	taskCreatedID := ""
+	for _, evt := range events {
+		if evt.Type == "prism.task.created" {
+			taskCreatedID = evt.ID
+		}
+	}
+
+	if taskCreatedID == "" {
+		t.Fatal("task.created event not found")
+	}
+
+	// task.started should be parented to task.created
+	if parentIDs["prism.task.started"] != taskCreatedID {
+		t.Errorf("task.started parent_id = %q, want %q (task.created ID)", parentIDs["prism.task.started"], taskCreatedID)
+	}
+
+	// agent.started should be parented to task.started
+	taskStartedID := ""
+	for _, evt := range events {
+		if evt.Type == "prism.task.started" {
+			taskStartedID = evt.ID
+		}
+	}
+	if parentIDs["prism.agent.started"] != taskStartedID {
+		t.Errorf("agent.started parent_id = %q, want %q (task.started ID)", parentIDs["prism.agent.started"], taskStartedID)
 	}
 }
