@@ -4,8 +4,8 @@ Prism is an event-native AI agent platform where every action, decision, and sta
 
 ## V1 Status: Stabilized ✅
 
-The V1 lifecycle is proven end-to-end with 26 passing integration tests:
-- ✅ `prism run` CLI — full task lifecycle with event persistence
+The V1 lifecycle is proven end-to-end with 25 passing integration tests:
+- ✅ `prism` CLI — full task lifecycle with event persistence
 - ✅ Canonical event schema with ULID IDs, correlation IDs, and parent chains
 - ✅ NATS JetStream bus with durable storage
 - ✅ Deterministic placeholder agent (real LLM calls are V2)
@@ -17,9 +17,8 @@ The V1 lifecycle is proven end-to-end with 26 passing integration tests:
 
 ### 1. Prerequisites
 
-- **Go 1.22+** — [install](https://go.dev/dl/)
+- **Go 1.26.2+** — [install](https://go.dev/dl/)
 - **Git** — for cloning the repo
-- (Optional) **NATS Server** — only if running `prism-bus` standalone; the CLI and tests use embedded NATS
 
 ### 2. Clone & Build
 
@@ -28,7 +27,8 @@ git clone https://github.com/emaharmony/prism.git
 cd prism
 
 # Build all three binaries
-go build -o prism-cli   ./cmd/prism-cli/
+# The CLI binary is named 'prism' for convenience
+go build -o prism       ./cmd/prism-cli/
 go build -o prism-bus   ./cmd/prism-bus/
 go build -o prism-agent ./cmd/prism-agent/
 ```
@@ -39,10 +39,10 @@ go build -o prism-agent ./cmd/prism-agent/
 go test ./internal/... -v
 ```
 
-You should see 26 tests pass across three packages:
+You should see 25 tests pass across three packages:
 - `internal/agent` — 5 tests (PlaceholderAgent + delay)
 - `internal/event` — 12 tests (IDs, event creation, JSON round-trip, security)
-- `internal/run` — 9 tests (lifecycle, memory, correlation, NATS pub/sub, parent chains)
+- `internal/run` — 8 tests (lifecycle, memory, correlation, NATS pub/sub, parent chains)
 
 ### 4. Start the Bus
 
@@ -54,10 +54,10 @@ This starts an embedded NATS server with JetStream enabled on `localhost:4222`. 
 
 You should see:
 ```
+prism: starting event bus...
 prism: NATS server running on nats://localhost:4222
-prism: JetStream initialized
-prism: stream PRISM created
-prism: bus ready — subscribing to prism.>
+prism: stream 'PRISM' created (subjects: prism.>)
+prism: publishing V1 test events...
 ```
 
 ### 5. Run a Task
@@ -65,7 +65,7 @@ prism: bus ready — subscribing to prism.>
 In another terminal:
 
 ```bash
-./prism-cli run --task "Test V1 event lifecycle" --project prism --agent lumi
+./prism run --task "Test V1 event lifecycle" --project prism --agent lumi
 ```
 
 You'll see events emitted in real time:
@@ -82,7 +82,7 @@ prism: run run_01KRC... completed (6 events, 8ms)
 ### 6. Check the Results
 
 ```bash
-# Find the latest run
+# Find the latest run (directory is created after your first run)
 ls runs/
 
 # Read the event log (one compact JSON object per line)
@@ -94,22 +94,22 @@ cat runs/<run_id>/summary.json
 
 ### 7. (Optional) With Memory Context
 
-If you have [Remembrance](https://github.com/emaharmony/prism) running:
+If you have Remembrance running at `http://localhost:18790`:
 
 ```bash
 # Enable memory context (graceful fallback if unavailable)
-./prism-cli run --task "Analyze the codebase" --project prism --agent lumi \
+./prism run --task "Analyze the codebase" --project prism --agent lumi \
   --memory-enabled --memory-url http://localhost:18790
 
 # Fail if memory is unavailable
-./prism-cli run --task "Critical analysis" --project prism --agent lumi \
+./prism run --task "Critical analysis" --project prism --agent lumi \
   --memory-enabled --require-memory
 ```
 
 ### 8. Health Check
 
 ```bash
-./prism-cli health
+./prism health
 ```
 
 Connects to NATS, verifies JetStream, checks the PRISM stream, and shows message count.
@@ -127,7 +127,7 @@ This subscribes to task and agent events and dispatches them to registered handl
 ### `prism run`
 
 ```
-prism run --task <description> [options]
+./prism run --task <description> [options]
 
 Required:
   --task string         Task description
@@ -145,7 +145,7 @@ Options:
 ### `prism health`
 
 ```
-prism health [--bus-url string]
+./prism health [--bus-url string]
 
 Connects to NATS and reports bus/stream status.
 ```
@@ -173,7 +173,7 @@ Prints the current version (`v0.1.0`).
                     └─────────────┘
 ```
 
-**Event flow:** `prism-cli run` → emits `task.created` → `task.started` → (optional) `memory.context_requested/built/failed` → `agent.started` → `agent.output` → `agent.completed` → `task.completed/failed`. Every event has a `correlation_id` linking it to the run, and a `parent_id` linking it to the causal predecessor.
+**Event flow:** `prism run` → emits `task.created` → `task.started` → (optional) `memory.context_requested/built/failed` → `agent.started` → `agent.output` → `agent.completed` → `task.completed/failed`. Every event has a `correlation_id` linking it to the run, and a `parent_id` linking it to the causal predecessor.
 
 ## V1 Event Types
 
@@ -227,7 +227,7 @@ Every event follows this canonical structure:
 ```
 prism/
 ├── cmd/
-│   ├── prism-cli/        # CLI entrypoint (prism run, prism health, prism version)
+│   ├── prism-cli/        # CLI entrypoint (build as 'prism')
 │   ├── prism-bus/        # Embedded NATS JetStream server
 │   └── prism-agent/      # Agent runtime (subscribes, processes, publishes)
 ├── internal/
