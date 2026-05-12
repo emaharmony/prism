@@ -609,14 +609,14 @@ func TestV2MockProviderSuccess(t *testing.T) {
 
 	assertContainsTypes(t, types, expected)
 
-	// Verify parent_id chains:
+	// Verify parent_id chains (V2 causal chain):
 	// task.started -> task.created
 	// agent.started -> task.started
 	// llm.requested -> agent.started
 	// llm.completed -> llm.requested
-	// agent.completed -> agent.started
-	// output.written -> agent.started
-	// task.completed -> task.started
+	// agent.completed -> llm.completed
+	// output.written -> agent.completed
+	// task.completed -> agent.completed
 	parentMap := make(map[string]string)
 	idMap := make(map[string]string)
 	for _, evt := range events {
@@ -635,6 +635,15 @@ func TestV2MockProviderSuccess(t *testing.T) {
 	}
 	if parentMap[event.V2EventTypes.LLMCompleted] != idMap[event.V2EventTypes.LLMRequested] {
 		t.Error("llm.completed parent should be llm.requested")
+	}
+	if parentMap[event.V1EventTypes.AgentCompleted] != idMap[event.V2EventTypes.LLMCompleted] {
+		t.Error("agent.completed parent should be llm.completed")
+	}
+	if parentMap[event.V2EventTypes.OutputWritten] != idMap[event.V1EventTypes.AgentCompleted] {
+		t.Error("output.written parent should be agent.completed")
+	}
+	if parentMap[event.V1EventTypes.TaskCompleted] != idMap[event.V1EventTypes.AgentCompleted] {
+		t.Error("task.completed parent should be agent.completed")
 	}
 
 	// Verify correlation_id propagation
@@ -846,6 +855,26 @@ func TestV2LLMFailure(t *testing.T) {
 	}
 
 	assertContainsTypes(t, types, expected)
+
+	// Verify parent_id chain for failure path:
+	// task.started -> task.created
+	// agent.started -> task.started
+	// llm.requested -> agent.started
+	// llm.failed -> llm.requested
+	// agent.failed -> llm.failed
+	// task.failed -> task.started
+	parentMap := make(map[string]string)
+	idMap := make(map[string]string)
+	for _, evt := range events {
+		parentMap[evt.Type] = evt.ParentID
+		idMap[evt.Type] = evt.ID
+	}
+	if parentMap[event.V2EventTypes.AgentFailed] != idMap[event.V2EventTypes.LLMFailed] {
+		t.Error("agent.failed parent should be llm.failed")
+	}
+	if parentMap[event.V2EventTypes.LLMFailed] != idMap[event.V2EventTypes.LLMRequested] {
+		t.Error("llm.failed parent should be llm.requested")
+	}
 
 	// Verify llm.failed has error in payload
 	for _, evt := range events {
