@@ -44,83 +44,53 @@ You should see 25 tests pass across three packages:
 - `internal/event` — 12 tests (IDs, event creation, JSON round-trip, security)
 - `internal/run` — 8 tests (lifecycle, memory, correlation, NATS pub/sub, parent chains)
 
-### 4. Start the Bus
+### Start Bus (Terminal 1)
 
-```bash
-./prism-bus
+```powershell
+  .\prism-bus.exe
 ```
 
-This starts an embedded NATS server with JetStream enabled on `localhost:4222`. Data is stored in `./prism-data/`.
+### Run a Task (Terminal 2)
 
-You should see:
-```
-prism: starting event bus...
-prism: NATS server running on nats://localhost:4222
-prism: stream 'PRISM' created (subjects: prism.>)
-prism: publishing V1 test events...
+```powershell
+  .\prism.exe run --task "Test V1 event lifecycle" --project prism --agent lumi
 ```
 
-### 5. Run a Task
+### Health Check (Terminal 2, after bus is running)
 
-In another terminal:
-
-```bash
-./prism run --task "Test V1 event lifecycle" --project prism --agent lumi
+```powershell
+  .\prism.exe health
 ```
 
-You'll see events emitted in real time:
-```
-  💎 [prism.task.created]  id=evt_01KRC7AQXH...
-  💎 [prism.task.started]  id=evt_01KRC7AQXH...
-  💎 [prism.agent.started] id=evt_01KRC7AQXH...
-  💎 [prism.agent.output]  id=evt_01KRC7AQXH...
-  💎 [prism.agent.completed] id=evt_01KRC7AQXH...
-  💎 [prism.task.completed] id=evt_01KRC7AQXH...
-prism: run run_01KRC... completed (6 events, 8ms)
+### Check Results
+
+```powershell
+  ls runs\
+  cat runs\<run_id>\events.jsonl
+  cat runs\<run_id>\summary.json
 ```
 
-### 6. Check the Results
+### Memory Fallback Test (no Remembrance needed)
 
-```bash
-# Find the latest run (directory is created after your first run)
-ls runs/
-
-# Read the event log (one compact JSON object per line)
-cat runs/<run_id>/events.jsonl
-
-# Read the human-readable summary
-cat runs/<run_id>/summary.json
+```powershell
+  .\prism.exe run --task "Test memory fallback" --memory-enabled
 ```
 
-### 7. (Optional) With Memory Context
+Should complete with memory.context_failed event but still succeed.
 
-If you have Remembrance running at `http://localhost:18790`:
+### Memory Required Test (should fail)
 
-```bash
-# Enable memory context (graceful fallback if unavailable)
-./prism run --task "Analyze the codebase" --project prism --agent lumi \
-  --memory-enabled --memory-url http://localhost:18790
-
-# Fail if memory is unavailable
-./prism run --task "Critical analysis" --project prism --agent lumi \
-  --memory-enabled --require-memory
+```powershell
+  .\prism.exe run --task "Test require memory" --memory-enabled --require-memory
 ```
 
-### 8. Health Check
+Should fail with task.failed since Remembrance isn't running.
 
-```bash
-./prism health
+### Version
+
+```powershell
+  .\prism.exe version
 ```
-
-Connects to NATS, verifies JetStream, checks the PRISM stream, and shows message count.
-
-### 9. (Optional) Start an Agent
-
-```bash
-./prism-agent -name lumi -subs "prism.task.>,prism.agent.>"
-```
-
-This subscribes to task and agent events and dispatches them to registered handlers.
 
 ## CLI Reference
 
@@ -255,4 +225,4 @@ prism/
 
 ## License
 
-Private — Emmanuel Harmony
+Private — Emmanuel Vinas
