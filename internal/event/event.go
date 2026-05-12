@@ -64,16 +64,24 @@ var V2EventTypes = struct {
 	LLMFailed    string
 
 	// Context injection (additional to V1 context events)
-	ContextInjected string
+	ContextRequested string
+	ContextInjected  string
+	ContextFailed    string
+
+	// Agent lifecycle extensions
+	AgentFailed string
 
 	// Output artifacts
 	OutputWritten string
 }{
-	LLMRequested:    "prism.llm.requested",
-	LLMCompleted:    "prism.llm.completed",
-	LLMFailed:       "prism.llm.failed",
-	ContextInjected: "prism.context.injected",
-	OutputWritten:   "prism.output.written",
+	LLMRequested:     "prism.llm.requested",
+	LLMCompleted:     "prism.llm.completed",
+	LLMFailed:        "prism.llm.failed",
+	ContextRequested: "prism.context.requested",
+	ContextInjected:  "prism.context.injected",
+	ContextFailed:    "prism.context.failed",
+	AgentFailed:      "prism.agent.failed",
+	OutputWritten:    "prism.output.written",
 }
 
 // Event is the canonical Prism event schema.

@@ -1,10 +1,11 @@
-// Package run implements the V1 lifecycle orchestrator.
+// Package run implements the lifecycle orchestrator for Prism V2.
 // It accepts a task, emits the complete event lifecycle through NATS,
-// optionally retrieves Remembrance context, runs the placeholder agent,
-// and persists the event log.
+// optionally retrieves Remembrance context, calls an LLM provider,
+// and persists the event log with artifacts.
 package run
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,24 +17,33 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prism/internal/prompt"
+	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/remembrance"
 )
 
-// RunConfig holds the configuration for a V1 run.
+// RunConfig holds the configuration for a run.
 type RunConfig struct {
-	Task           string
-	Project        string
-	Agent          string
-	BusURL         string
-	MemoryEnabled  bool
-	RequireMemory  bool
-	MemoryURL      string
-	RunDir         string // Base directory for run outputs (default: ./runs)
+	Task          string
+	Project       string
+	Agent         string
+	BusURL        string
+	MemoryEnabled bool
+	RequireMemory bool
+	MemoryURL     string
+	RunDir        string // Base directory for run outputs (default: ./runs)
+
+	// V2 LLM provider configuration
+	Provider     provider.Provider
+	Model        string
+	Temperature  float64
+	MaxTokens    int
+	Timeout      time.Duration
+	DryRunPrompt bool // If true, build prompt and artifacts but skip LLM call
 }
 
-// RunResult holds the result of a completed V1 run.
+// RunResult holds the result of a completed run.
 type RunResult struct {
 	RunID       string `json:"run_id"`
 	Status      string `json:"status"`
@@ -43,21 +53,21 @@ type RunResult struct {
 	Error       string `json:"error,omitempty"`
 }
 
-// Runner orchestrates the V1 lifecycle.
+// Runner orchestrates the lifecycle.
 type Runner struct {
-	config           RunConfig
-	runID            string
-	correlationID    string
-	sessionID        string
-	events           []event.Event
-	nc               *nats.Conn
-	js               nats.JetStreamContext
-	memClient        *remembrance.Client
-	startedAt        string
-	taskStartedID    string // ID of the task.started event for linking failure events
+	config        RunConfig
+	runID         string
+	correlationID string
+	sessionID     string
+	events        []event.Event
+	nc            *nats.Conn
+	js            nats.JetStreamContext
+	memClient     *remembrance.Client
+	startedAt     string
+	taskStartedID string // ID of the task.started event for linking failure events
 }
 
-// NewRunner creates a new V1 lifecycle runner.
+// NewRunner creates a new lifecycle runner.
 func NewRunner(config RunConfig) *Runner {
 	return &Runner{
 		config: config,
@@ -65,7 +75,7 @@ func NewRunner(config RunConfig) *Runner {
 	}
 }
 
-// Run executes the complete V1 lifecycle.
+// Run executes the complete lifecycle.
 // It returns a RunResult and an error if the lifecycle failed.
 func (r *Runner) Run() (*RunResult, error) {
 	// Generate IDs
@@ -74,7 +84,24 @@ func (r *Runner) Run() (*RunResult, error) {
 	r.sessionID = event.NewSessionID()
 	r.startedAt = time.Now().UTC().Format(time.RFC3339Nano)
 
-	log.Printf("prism: starting V1 run %s", r.runID)
+	log.Printf("prism: starting run %s", r.runID)
+
+	// Default provider for V1 backward compat
+	if r.config.Provider == nil {
+		r.config.Provider = provider.NewMockProvider()
+	}
+	if r.config.Model == "" {
+		r.config.Model = "mock-model"
+	}
+	if r.config.Temperature == 0 {
+		r.config.Temperature = 0.2
+	}
+	if r.config.MaxTokens == 0 {
+		r.config.MaxTokens = 2048
+	}
+	if r.config.Timeout == 0 {
+		r.config.Timeout = 60 * time.Second
+	}
 
 	// 1. Connect to NATS
 	nc, err := nats.Connect(r.config.BusURL, nats.Name(fmt.Sprintf("prism-run-%s", r.runID)))
@@ -110,13 +137,20 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// 4. Optional: Remembrance context hook
 	var contextStr string
-	memoryUsed := false
+	memoryStatus := "none" // "none", "injected", "failed"
 
 	if r.config.MemoryEnabled {
 		r.memClient = remembrance.NewClient(r.config.MemoryURL)
 
-		// Emit memory.context_requested
+		// Emit V1 memory.context_requested (backward compat)
 		r.emitWithParent(event.V1EventTypes.MemoryContextRequested, "prism-cli", map[string]any{
+			"task":    r.config.Task,
+			"project": r.config.Project,
+			"agent":   r.config.Agent,
+		}, evt.ID)
+
+		// Emit V2 context.requested
+		r.emitWithParent(event.V2EventTypes.ContextRequested, "prism-cli", map[string]any{
 			"task":    r.config.Task,
 			"project": r.config.Project,
 			"agent":   r.config.Agent,
@@ -126,7 +160,16 @@ func (r *Runner) Run() (*RunResult, error) {
 		if err != nil {
 			// Memory failed
 			log.Printf("prism: remembrance context failed: %v", err)
+			memoryStatus = "failed"
+
+			// V1 backward compat
 			r.emitWithParent(event.V1EventTypes.MemoryContextFailed, "prism-cli", map[string]any{
+				"task":  r.config.Task,
+				"error": err.Error(),
+			}, evt.ID)
+
+			// V2 context.failed
+			r.emitWithParent(event.V2EventTypes.ContextFailed, "prism-cli", map[string]any{
 				"task":  r.config.Task,
 				"error": err.Error(),
 			}, evt.ID)
@@ -138,17 +181,32 @@ func (r *Runner) Run() (*RunResult, error) {
 			contextStr = ""
 		} else if ctxResp != nil {
 			// Memory succeeded
-			memoryUsed = true
 			contextStr = ctxResp.Context
+			memoryStatus = "injected"
 			log.Printf("prism: remembrance context built (%d sources)", len(ctxResp.Sources))
+
+			// V1 backward compat
 			r.emitWithParent(event.V1EventTypes.MemoryContextBuilt, "prism-cli", map[string]any{
-				"task":         r.config.Task,
+				"task":          r.config.Task,
+				"sources_count": len(ctxResp.Sources),
+			}, evt.ID)
+
+			// V2 context.injected
+			r.emitWithParent(event.V2EventTypes.ContextInjected, "prism-cli", map[string]any{
+				"task":          r.config.Task,
 				"sources_count": len(ctxResp.Sources),
 			}, evt.ID)
 		} else {
 			// No context available (404)
 			log.Printf("prism: no remembrance context available")
+			memoryStatus = "failed"
+
 			r.emitWithParent(event.V1EventTypes.MemoryContextFailed, "prism-cli", map[string]any{
+				"task":  r.config.Task,
+				"error": "no context available",
+			}, evt.ID)
+
+			r.emitWithParent(event.V2EventTypes.ContextFailed, "prism-cli", map[string]any{
 				"task":  r.config.Task,
 				"error": "no context available",
 			}, evt.ID)
@@ -166,32 +224,151 @@ func (r *Runner) Run() (*RunResult, error) {
 		"project": r.config.Project,
 	}, evt.ID)
 
-	// 6. Run deterministic placeholder agent
-	input := agent.PlaceholderInput{
-		Task:    r.config.Task,
-		Project: r.config.Project,
-		Agent:   r.config.Agent,
-		Context: contextStr,
+	// 6. Build and write prompt
+	promptContent := prompt.BuildPrompt(r.config.Agent, r.config.Project, r.config.Task, contextStr)
+	runDir := filepath.Join(r.config.RunDir, r.runID)
+	if err := prompt.WritePrompt(runDir, promptContent); err != nil {
+		log.Printf("prism: failed to write prompt.md: %v", err)
+		return r.fail(fmt.Sprintf("failed to write prompt: %v", err))
 	}
-	output := agent.RunPlaceholder(input)
 
-	// 7. Emit agent.output
-	r.emitWithParent(event.V1EventTypes.AgentOutput, "prism-cli", map[string]any{
-		"agent":            r.config.Agent,
-		"status":           output.Status,
-		"summary":          output.Summary,
-		"context_received": output.ContextReceived,
-		"actions":          output.Actions,
+	// 7. Dry run prompt — skip LLM, complete task
+	if r.config.DryRunPrompt {
+		log.Printf("prism: dry-run mode — prompt written, skipping LLM call")
+		r.emitWithParent(event.V1EventTypes.AgentCompleted, "prism-cli", map[string]any{
+			"agent":     r.config.Agent,
+			"dry_run":   true,
+			"prompt.md": true,
+		}, agentEvt.ID)
+
+		// Must find the original task.started event to use as parent for task.completed
+		var taskStartedID string
+		for _, evt := range r.events {
+			if evt.Type == event.V1EventTypes.TaskStarted {
+				taskStartedID = evt.ID
+				break
+			}
+		}
+		r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
+			"task":    r.config.Task,
+			"project": r.config.Project,
+			"agent":   r.config.Agent,
+			"status":  "completed",
+			"dry_run": true,
+		}, taskStartedID)
+
+		completedAt := time.Now().UTC().Format(time.RFC3339Nano)
+		durationMs := r.calculateDuration()
+
+		summary := event.Summary{
+			RunID:         r.runID,
+			CorrelationID: r.correlationID,
+			Status:        "completed",
+			EventCount:    len(r.events),
+			StartedAt:     r.startedAt,
+			CompletedAt:   completedAt,
+			DurationMs:    durationMs,
+			MemoryUsed:    memoryStatus == "injected",
+			Agent:         r.config.Agent,
+			Project:       r.config.Project,
+			Task:          r.config.Task,
+			Provider:      "dry-run",
+			Model:         r.config.Model,
+			PromptPath:    filepath.Join(runDir, "prompt.md"),
+			MemoryStatus:  memoryStatus,
+		}
+
+		eventsPath, summaryPath, err := r.persist(summary)
+		if err != nil {
+			return nil, fmt.Errorf("failed to persist run data: %w", err)
+		}
+
+		log.Printf("prism: dry-run %s completed (%d events, %dms)", r.runID, len(r.events), durationMs)
+		return &RunResult{
+			RunID:       r.runID,
+			Status:      "completed",
+			EventCount:  len(r.events),
+			EventsPath:  eventsPath,
+			SummaryPath: summaryPath,
+		}, nil
+	}
+
+	// 8. Emit llm.requested
+	llmReqEvt := r.emitWithParent(event.V2EventTypes.LLMRequested, "prism-cli", map[string]any{
+		"model":       r.config.Model,
+		"temperature": r.config.Temperature,
+		"max_tokens":  r.config.MaxTokens,
 	}, agentEvt.ID)
 
-	// 8. Emit agent.completed
+	// 9. Call the provider with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), r.config.Timeout)
+	defer cancel()
+
+	genReq := provider.GenerateRequest{
+		RunID:         r.runID,
+		CorrelationID: r.correlationID,
+		Agent:         r.config.Agent,
+		Project:       r.config.Project,
+		Task:          r.config.Task,
+		Prompt:        promptContent,
+		Model:         r.config.Model,
+		Temperature:   r.config.Temperature,
+		MaxTokens:     r.config.MaxTokens,
+	}
+
+	genResp, err := r.config.Provider.Generate(ctx, genReq)
+
+	if err != nil {
+		// LLM failed
+		log.Printf("prism: LLM generate failed: %v", err)
+
+		// llm.failed
+		r.emitWithParent(event.V2EventTypes.LLMFailed, "prism-cli", map[string]any{
+			"error":        err.Error(),
+			"context_done": errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled),
+		}, llmReqEvt.ID)
+
+		// agent.failed (V2)
+		r.emitWithParent(event.V2EventTypes.AgentFailed, "prism-cli", map[string]any{
+			"agent": r.config.Agent,
+			"error": err.Error(),
+		}, llmReqEvt.ID)
+
+		return r.failWithLLMError(fmt.Sprintf("LLM generation failed: %v", err), err.Error())
+	}
+
+	// 10. LLM succeeded — emit llm.completed
+	r.emitWithParent(event.V2EventTypes.LLMCompleted, "prism-cli", map[string]any{
+		"model":          genResp.Model,
+		"provider":       genResp.Provider,
+		"latency_ms":     genResp.LatencyMS,
+		"prompt_tokens":  genResp.PromptTokens,
+		"output_tokens":  genResp.OutputTokens,
+		"text_length":    len(genResp.Text),
+	}, llmReqEvt.ID)
+
+	// 11. Emit agent.completed (V1 backward compat)
 	r.emitWithParent(event.V1EventTypes.AgentCompleted, "prism-cli", map[string]any{
 		"agent":   r.config.Agent,
-		"status":  output.Status,
-		"summary": output.Summary,
+		"status":  "completed",
+		"summary": genResp.Text[:min(len(genResp.Text), 200)],
 	}, agentEvt.ID)
 
-	// 9. Emit task.completed
+	// 12. Write output.md
+	outputPath := filepath.Join(runDir, "output.md")
+	if err := prompt.WriteOutput(runDir, genResp.Text); err != nil {
+		log.Printf("prism: failed to write output.md: %v", err)
+		return r.fail(fmt.Sprintf("failed to write output: %v", err))
+	}
+
+	// Emit output.written
+	r.emitWithParent(event.V2EventTypes.OutputWritten, "prism-cli", map[string]any{
+		"path":         outputPath,
+		"agent":        r.config.Agent,
+		"output_bytes": len(genResp.Text),
+	}, agentEvt.ID)
+
+	// 13. Emit task.completed
 	r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
 		"task":    r.config.Task,
 		"project": r.config.Project,
@@ -199,7 +376,7 @@ func (r *Runner) Run() (*RunResult, error) {
 		"status":  "completed",
 	}, evt.ID)
 
-	// 10. Persist event log and summary
+	// 14. Persist event log and summary
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	durationMs := r.calculateDuration()
 
@@ -211,10 +388,17 @@ func (r *Runner) Run() (*RunResult, error) {
 		StartedAt:     r.startedAt,
 		CompletedAt:   completedAt,
 		DurationMs:    durationMs,
-		MemoryUsed:    memoryUsed,
+		MemoryUsed:    memoryStatus == "injected",
 		Agent:         r.config.Agent,
 		Project:       r.config.Project,
 		Task:          r.config.Task,
+		// V2 fields
+		Provider:     genResp.Provider,
+		Model:        genResp.Model,
+		OutputPath:   outputPath,
+		PromptPath:   filepath.Join(runDir, "prompt.md"),
+		MemoryStatus: memoryStatus,
+		LLMLatencyMs: genResp.LatencyMS,
 	}
 
 	eventsPath, summaryPath, err := r.persist(summary)
@@ -227,7 +411,7 @@ func (r *Runner) Run() (*RunResult, error) {
 	return &RunResult{
 		RunID:       r.runID,
 		Status:      "completed",
-		EventCount:   len(r.events),
+		EventCount:  len(r.events),
 		EventsPath:  eventsPath,
 		SummaryPath: summaryPath,
 	}, nil
@@ -235,6 +419,12 @@ func (r *Runner) Run() (*RunResult, error) {
 
 // fail emits a task.failed event (linked to task.started) and returns an error result.
 func (r *Runner) fail(msg string) (*RunResult, error) {
+	return r.failWithLLMError(msg, "")
+}
+
+// failWithLLMError emits a task.failed event and returns an error result,
+// optionally with an LLM error in the summary.
+func (r *Runner) failWithLLMError(msg string, llmError string) (*RunResult, error) {
 	// Use emitWithParent so task.failed links to task.started in both
 	// the in-memory slice and the NATS-published event.
 	parentID := r.taskStartedID
@@ -270,6 +460,8 @@ func (r *Runner) fail(msg string) (*RunResult, error) {
 		Project:       r.config.Project,
 		Task:          r.config.Task,
 		ErrorMessage:  msg,
+		Model:         r.config.Model,
+		LLMError:      llmError,
 	}
 
 	eventsPath, summaryPath, _ := r.persist(summary)
@@ -277,7 +469,7 @@ func (r *Runner) fail(msg string) (*RunResult, error) {
 	result := &RunResult{
 		RunID:       r.runID,
 		Status:      "failed",
-		EventCount:   len(r.events),
+		EventCount:  len(r.events),
 		EventsPath:  eventsPath,
 		SummaryPath: summaryPath,
 		Error:       msg,
