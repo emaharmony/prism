@@ -352,7 +352,7 @@ func (r *Runner) Run() (*RunResult, error) {
 	}
 
 	// 10. LLM succeeded — emit llm.completed
-	r.emitWithParent(event.V2EventTypes.LLMCompleted, "prism-cli", map[string]any{
+	llmCompletedEvt := r.emitWithParent(event.V2EventTypes.LLMCompleted, "prism-cli", map[string]any{
 		"model":          genResp.Model,
 		"provider":       genResp.Provider,
 		"latency_ms":     genResp.LatencyMS,
@@ -362,11 +362,12 @@ func (r *Runner) Run() (*RunResult, error) {
 	}, llmReqEvt.ID)
 
 	// 11. Emit agent.completed (V1 backward compat)
-	r.emitWithParent(event.V1EventTypes.AgentCompleted, "prism-cli", map[string]any{
+	// Parent is llm.completed (V2 causal chain: agent started → llm requested → llm completed → agent completed)
+	agentCompletedEvt := r.emitWithParent(event.V1EventTypes.AgentCompleted, "prism-cli", map[string]any{
 		"agent":   r.config.Agent,
 		"status":  "completed",
 		"summary": genResp.Text[:min(len(genResp.Text), 200)],
-	}, agentEvt.ID)
+	}, llmCompletedEvt.ID)
 
 	// 12. Write output.md
 	outputPath := filepath.Join(runDir, "output.md")
@@ -380,15 +381,16 @@ func (r *Runner) Run() (*RunResult, error) {
 		"path":         outputPath,
 		"agent":        r.config.Agent,
 		"output_bytes": len(genResp.Text),
-	}, agentEvt.ID)
+	}, agentCompletedEvt.ID)
 
+	// 13. Emit task.completed
 	// 13. Emit task.completed
 	r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
 		"task":    r.config.Task,
 		"project": r.config.Project,
 		"agent":   r.config.Agent,
 		"status":  "completed",
-	}, evt.ID)
+	}, agentCompletedEvt.ID)
 
 	// 14. Persist event log and summary
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
