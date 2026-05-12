@@ -56,6 +56,34 @@ var V1EventTypes = struct {
 	SystemHealth:           "prism.system.health",
 }
 
+// V2EventTypes defines the event types introduced in V2 (real LLM agent execution).
+var V2EventTypes = struct {
+	// LLM request lifecycle
+	LLMRequested string
+	LLMCompleted string
+	LLMFailed    string
+
+	// Context injection (additional to V1 context events)
+	ContextRequested string
+	ContextInjected  string
+	ContextFailed    string
+
+	// Agent lifecycle extensions
+	AgentFailed string
+
+	// Output artifacts
+	OutputWritten string
+}{
+	LLMRequested:     "prism.llm.requested",
+	LLMCompleted:     "prism.llm.completed",
+	LLMFailed:        "prism.llm.failed",
+	ContextRequested: "prism.context.requested",
+	ContextInjected:  "prism.context.injected",
+	ContextFailed:    "prism.context.failed",
+	AgentFailed:      "prism.agent.failed",
+	OutputWritten:    "prism.output.written",
+}
+
 // Event is the canonical Prism event schema.
 // Every action, decision, and state change flows as one of these.
 type Event struct {
@@ -151,16 +179,23 @@ func EventFromBytes(data []byte) (Event, error) {
 
 // Summary represents a V1 run summary written to summary.json.
 type Summary struct {
-	RunID          string `json:"run_id"`
-	CorrelationID  string `json:"correlation_id"`
-	Status         string `json:"status"`
-	EventCount     int    `json:"event_count"`
-	StartedAt      string `json:"started_at"`
-	CompletedAt    string `json:"completed_at"`
-	DurationMs     int64  `json:"duration_ms"`
-	MemoryUsed     bool   `json:"memory_used"`
-	Agent          string `json:"agent"`
-	Project        string `json:"project"`
-	Task           string `json:"task"`
-	ErrorMessage   string `json:"error_message,omitempty"`
+	RunID         string `json:"run_id"`
+	CorrelationID string `json:"correlation_id"`
+	Status        string `json:"status"`
+	EventCount    int    `json:"event_count"`
+	StartedAt     string `json:"started_at"`
+	CompletedAt   string `json:"completed_at"`
+	DurationMs    int64  `json:"duration_ms"`
+	MemoryUsed    bool   `json:"memory_used"`
+	Agent         string `json:"agent"`
+	Project       string `json:"project"`
+	Task          string `json:"task"`
+	ErrorMessage  string `json:"error_message,omitempty"`
+	Provider      string `json:"provider,omitempty"`
+	Model         string `json:"model,omitempty"`
+	OutputPath    string `json:"output_path,omitempty"`
+	PromptPath    string `json:"prompt_path,omitempty"`
+	MemoryStatus  string `json:"memory_status,omitempty"` // "none", "injected", "failed"
+	LLMLatencyMs  int64  `json:"llm_latency_ms,omitempty"`
+	LLMError      string `json:"llm_error,omitempty"`
 }
