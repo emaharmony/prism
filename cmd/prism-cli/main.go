@@ -1,4 +1,4 @@
-// Package main implements the prism CLI with the `prism run` command for V1.
+// Package main implements the prism CLI with the `prism run` command for V2.
 package main
 
 import (
@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
 	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/run"
 )
 
@@ -25,6 +27,15 @@ func main() {
 	memoryURL := runCmd.String("memory-url", "http://localhost:18790", "Remembrance URL")
 	runDir := runCmd.String("run-dir", "./runs", "Directory for run outputs")
 
+	// V2 LLM flags
+	providerFlag := runCmd.String("provider", "mock", "LLM provider: mock or ollama")
+	modelFlag := runCmd.String("model", "mock-model", "Model name")
+	temperatureFlag := runCmd.Float64("temperature", 0.2, "LLM temperature")
+	maxTokensFlag := runCmd.Int("max-tokens", 2048, "Max output tokens")
+	timeoutFlag := runCmd.Duration("timeout", 60*time.Second, "LLM request timeout")
+	dryRunPrompt := runCmd.Bool("dry-run-prompt", false, "Build prompt and artifacts but skip LLM call")
+	ollamaURL := runCmd.String("ollama-url", "http://localhost:11434", "Ollama base URL")
+
 	// ── Subcommand: health ──────────────────────────────────────────
 	healthCmd := flag.NewFlagSet("health", flag.ExitOnError)
 	healthBusURL := healthCmd.String("bus-url", "nats://localhost:4222", "NATS bus URL")
@@ -38,6 +49,24 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		runCmd.Parse(os.Args[2:])
+
+		// Resolve provider
+		var p provider.Provider
+		var providerName string
+		model := *modelFlag
+
+		switch *providerFlag {
+		case "mock":
+			p = provider.NewMockProvider()
+			providerName = "mock"
+		case "ollama":
+			p = provider.NewOllamaProvider(*ollamaURL)
+			providerName = "ollama"
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown provider '%s' (expected mock or ollama)\n", *providerFlag)
+			os.Exit(1)
+		}
+
 		executeRun(runConfig{
 			Task:           *taskFlag,
 			Project:        *projectFlag,
@@ -47,12 +76,19 @@ func main() {
 			RequireMemory:  *requireMemory,
 			MemoryURL:      *memoryURL,
 			RunDir:         *runDir,
+			Provider:       p,
+			ProviderName:   providerName,
+			Model:          model,
+			Temperature:    *temperatureFlag,
+			MaxTokens:      *maxTokensFlag,
+			Timeout:        *timeoutFlag,
+			DryRunPrompt:   *dryRunPrompt,
 		})
 	case "health":
 		healthCmd.Parse(os.Args[2:])
 		executeHealth(*healthBusURL)
 	case "version":
-		fmt.Println("prism v0.1.0")
+		fmt.Println("prism v0.2.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -68,6 +104,15 @@ type runConfig struct {
 	RequireMemory  bool
 	MemoryURL      string
 	RunDir         string
+
+	// V2 LLM fields
+	Provider     provider.Provider
+	ProviderName string
+	Model        string
+	Temperature  float64
+	MaxTokens    int
+	Timeout      time.Duration
+	DryRunPrompt bool
 }
 
 func executeRun(cfg runConfig) {
@@ -87,28 +132,69 @@ func executeRun(cfg runConfig) {
 		RequireMemory:  cfg.RequireMemory,
 		MemoryURL:      cfg.MemoryURL,
 		RunDir:         cfg.RunDir,
+		Provider:       cfg.Provider,
+		ProviderName:   cfg.ProviderName,
+		Model:          cfg.Model,
+		Temperature:    cfg.Temperature,
+		MaxTokens:      cfg.MaxTokens,
+		Timeout:        cfg.Timeout,
+		DryRunPrompt:   cfg.DryRunPrompt,
 	})
 
 	result, err := runner.Run()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Run failed: %v\n", err)
-		if result != nil {
-			fmt.Fprintf(os.Stderr, "   Run ID: %s\n", result.RunID)
-			fmt.Fprintf(os.Stderr, "   Events: %s\n", result.EventsPath)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
+		fmt.Fprintln(os.Stderr, "  ❌ Prism V2 Run Failed")
+		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
+		fmt.Fprintf(os.Stderr, "  Run ID:          %s\n", result.RunID)
+		fmt.Fprintf(os.Stderr, "  Error:           %s\n", result.Error)
+		if result.Provider != "" {
+			fmt.Fprintf(os.Stderr, "  Provider:        %s\n", result.Provider)
 		}
+		if result.Model != "" {
+			fmt.Fprintf(os.Stderr, "  Model:           %s\n", result.Model)
+		}
+		fmt.Fprintf(os.Stderr, "  Events:          %s\n", result.EventsPath)
+		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
+		fmt.Fprintln(os.Stderr)
 		os.Exit(1)
 	}
 
-	// Print summary
+	// Print success summary
 	fmt.Println()
 	fmt.Println("═══════════════════════════════════════════")
-	fmt.Println("  ✅ Prism V1 Run Complete")
+
+	if result.DryRun {
+		fmt.Println("  ✅ Prism V2 Run Complete (dry-run)")
+	} else {
+		fmt.Println("  ✅ Prism V2 Run Complete")
+	}
+
 	fmt.Println("═══════════════════════════════════════════")
 	fmt.Printf("  Run ID:          %s\n", result.RunID)
 	fmt.Printf("  Status:          %s\n", result.Status)
+	if result.Provider != "" {
+		fmt.Printf("  Provider:        %s\n", result.Provider)
+	}
+	if result.Model != "" {
+		fmt.Printf("  Model:           %s\n", result.Model)
+	}
 	fmt.Printf("  Events emitted:  %d\n", result.EventCount)
 	fmt.Printf("  Event log:       %s\n", result.EventsPath)
+	if result.PromptPath != "" {
+		fmt.Printf("  Prompt:          %s\n", result.PromptPath)
+	}
+	if result.OutputPath != "" {
+		fmt.Printf("  Output:          %s\n", result.OutputPath)
+	}
 	fmt.Printf("  Summary:         %s\n", result.SummaryPath)
+
+	if result.DryRun {
+		fmt.Println("  (No LLM call — dry-run mode)")
+	}
+
+	fmt.Printf("  Duration:        %dms\n", result.DurationMs)
 	fmt.Println("═══════════════════════════════════════════")
 	fmt.Println()
 }
@@ -158,7 +244,7 @@ func printUsage() {
 	fmt.Println("Prism — Event-Native AI Agent Platform")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  prism run --task <description> [options]    Run a V1 task lifecycle")
+	fmt.Println("  prism run --task <description> [options]    Run a V2 task lifecycle")
 	fmt.Println("  prism health [options]                      Check bus health")
 	fmt.Println("  prism version                               Print version")
 	fmt.Println()
@@ -172,12 +258,22 @@ func printUsage() {
 	fmt.Println("  --memory-url <string>  Remembrance URL (default: http://localhost:18790)")
 	fmt.Println("  --run-dir <string>     Run output directory (default: ./runs)")
 	fmt.Println()
+	fmt.Println("V2 LLM provider options:")
+	fmt.Println("  --provider <string>    LLM provider: mock or ollama (default: mock)")
+	fmt.Println("  --model <string>       Model name (default: mock-model)")
+	fmt.Println("  --temperature <float>  LLM temperature (default: 0.2)")
+	fmt.Println("  --max-tokens <int>     Max output tokens (default: 2048)")
+	fmt.Println("  --timeout <duration>   LLM request timeout (default: 60s)")
+	fmt.Println("  --dry-run-prompt       Build prompt and artifacts but skip LLM call")
+	fmt.Println("  --ollama-url <string>  Ollama base URL (default: http://localhost:11434)")
+	fmt.Println()
 	fmt.Println("Health options:")
 	fmt.Println("  --bus-url <string>     NATS bus URL (default: nats://localhost:4222)")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  prism run --task \"Test V1 event lifecycle\"")
-	fmt.Println("  prism run --task \"Analyze code\" --memory-enabled --require-memory")
+	fmt.Println("  prism run --task \"Test V2 event lifecycle\"")
+	fmt.Println("  prism run --task \"Analyze code\" --provider ollama --model qwen2.5:7b")
+	fmt.Println("  prism run --task \"Test dry run\" --dry-run-prompt")
 	fmt.Println("  prism run --task \"Deploy service\" --project myapp --agent coder")
 	fmt.Println("  prism health")
 }

@@ -1,4 +1,5 @@
 # Prism build artifacts (binaries at repo root only)
+/prism
 /prism-cli
 /prism-bus
 /prism-agent
