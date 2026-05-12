@@ -36,6 +36,7 @@ type RunConfig struct {
 
 	// V2 LLM provider configuration
 	Provider     provider.Provider
+	ProviderName string        // Human-readable provider name for output/summaries
 	Model        string
 	Temperature  float64
 	MaxTokens    int
@@ -51,6 +52,14 @@ type RunResult struct {
 	EventsPath  string `json:"events_path"`
 	SummaryPath string `json:"summary_path"`
 	Error       string `json:"error,omitempty"`
+
+	// V2 fields for CLI output
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
+	PromptPath string `json:"prompt_path,omitempty"`
+	OutputPath string `json:"output_path,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	DryRun     bool   `json:"dry_run,omitempty"`
 }
 
 // Runner orchestrates the lifecycle.
@@ -290,6 +299,11 @@ func (r *Runner) Run() (*RunResult, error) {
 			EventCount:  len(r.events),
 			EventsPath:  eventsPath,
 			SummaryPath: summaryPath,
+			Provider:    r.config.ProviderName,
+			Model:       r.config.Model,
+			PromptPath:  filepath.Join(runDir, "prompt.md"),
+			DurationMs:  durationMs,
+			DryRun:      true,
 		}, nil
 	}
 
@@ -414,6 +428,12 @@ func (r *Runner) Run() (*RunResult, error) {
 		EventCount:  len(r.events),
 		EventsPath:  eventsPath,
 		SummaryPath: summaryPath,
+		Provider:    r.config.ProviderName,
+		Model:       r.config.Model,
+		PromptPath:  filepath.Join(runDir, "prompt.md"),
+		OutputPath:  outputPath,
+		DurationMs:  durationMs,
+		DryRun:      false,
 	}, nil
 }
 
@@ -473,6 +493,9 @@ func (r *Runner) failWithLLMError(msg string, llmError string) (*RunResult, erro
 		EventsPath:  eventsPath,
 		SummaryPath: summaryPath,
 		Error:       msg,
+		Provider:    r.config.ProviderName,
+		Model:       r.config.Model,
+		DurationMs:  durationMs,
 	}
 
 	return result, fmt.Errorf("run failed: %s", msg)
