@@ -98,6 +98,9 @@ func (r *Runner) Run() (*RunResult, error) {
 	// Default provider for V1 backward compat
 	if r.config.Provider == nil {
 		r.config.Provider = provider.NewMockProvider()
+		if r.config.ProviderName == "" {
+			r.config.ProviderName = "mock"
+		}
 	}
 	if r.config.Model == "" {
 		r.config.Model = "mock-model"
@@ -337,16 +340,16 @@ func (r *Runner) Run() (*RunResult, error) {
 		log.Printf("prism: LLM generate failed: %v", err)
 
 		// llm.failed
-		r.emitWithParent(event.V2EventTypes.LLMFailed, "prism-cli", map[string]any{
+		llmFailedEvt := r.emitWithParent(event.V2EventTypes.LLMFailed, "prism-cli", map[string]any{
 			"error":        err.Error(),
 			"context_done": errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled),
 		}, llmReqEvt.ID)
 
-		// agent.failed (V2)
+		// agent.failed (V2) — parent is llm.failed (causal chain: llm.requested → llm.failed → agent.failed)
 		r.emitWithParent(event.V2EventTypes.AgentFailed, "prism-cli", map[string]any{
 			"agent": r.config.Agent,
 			"error": err.Error(),
-		}, llmReqEvt.ID)
+		}, llmFailedEvt.ID)
 
 		return r.failWithLLMError(fmt.Sprintf("LLM generation failed: %v", err), err.Error())
 	}
@@ -383,7 +386,6 @@ func (r *Runner) Run() (*RunResult, error) {
 		"output_bytes": len(genResp.Text),
 	}, agentCompletedEvt.ID)
 
-	// 13. Emit task.completed
 	// 13. Emit task.completed
 	r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
 		"task":    r.config.Task,
