@@ -55,12 +55,12 @@ Run Artifacts
   └── output.md
 ```
 
-- **Go** owns runtime, events, orchestration, providers, CLI, and artifacts.
+- **Go** owns runtime, events, orchestration, providers, CLI, and artifacts. The orchestrator builds events in-memory and persists them directly to `events.jsonl` while also publishing to NATS in parallel.
 - **Python** owns Remembrance memory, vector search, embeddings, and future memory intelligence.
 
 ## Requirements
 
-- **Go 1.22+** (repo uses Go 1.26.2)
+- **Go 1.26+** (repo uses Go 1.26.2)
 - **Ollama** installed and running for real model execution (`ollama serve`)
 - **Optional:** Python 3.11+ for Remembrance development
 - **Optional:** Remembrance service for memory-enabled runs
@@ -92,7 +92,7 @@ go build -o prism-agent.exe ./cmd/prism-agent/
 go test ./...
 ```
 
-55+ tests across 5 packages:
+54 tests across 5 packages:
 - `internal/agent` — placeholder agent and delay
 - `internal/event` — IDs, event creation, JSON round-trip, security
 - `internal/prompt` — prompt builder, context injection, output writing
@@ -418,13 +418,7 @@ go build -o prism-agent.exe ./cmd/prism-agent/
 | `--memory-url` | `http://localhost:18790` | Remembrance API URL |
 | `--run-dir` | `./runs` | Run artifact output directory |
 
-### Environment
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PRISM_BUS_URL` | `nats://127.0.0.1:4222` | NATS connection URL |
-| (Ollama URL configured via `--ollama-url` flag) | | |
-| (Remembrance URL configured via `--memory-url` flag) | | |
+All configuration is done via CLI flags (see above). There are no required environment variables. `--bus-url`, `--ollama-url`, and `--memory-url` accept custom endpoints.
 
 ## Troubleshooting
 
