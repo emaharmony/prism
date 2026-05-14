@@ -32,7 +32,7 @@ func main() {
 	memoryURL := runCmd.String("memory-url", "http://localhost:18790", "Remembrance URL")
 	runDir := runCmd.String("run-dir", "./runs", "Directory for run outputs")
 
-	// V2 LLM flags
+	// LLM flags
 	providerFlag := runCmd.String("provider", "mock", "LLM provider: mock or ollama")
 	modelFlag := runCmd.String("model", "mock-model", "Model name")
 	temperatureFlag := runCmd.Float64("temperature", 0.2, "LLM temperature")
@@ -218,7 +218,7 @@ type runConfig struct {
 	MemoryURL      string
 	RunDir         string
 
-	// V2 LLM fields
+	// LLM fields
 	Provider     provider.Provider
 	ProviderName string
 	Model        string
@@ -258,7 +258,7 @@ func executeRun(cfg runConfig) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
-		fmt.Fprintln(os.Stderr, "  ❌ Prism V2 Run Failed")
+		fmt.Fprintln(os.Stderr, "  ❌ Prism Run Failed")
 		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
 		if result != nil {
 			fmt.Fprintf(os.Stderr, "  Run ID:          %s\n", result.RunID)
@@ -283,9 +283,9 @@ func executeRun(cfg runConfig) {
 	fmt.Println("═══════════════════════════════════════════")
 
 	if result.DryRun {
-		fmt.Println("  ✅ Prism V2 Run Complete (dry-run)")
+		fmt.Println("  ✅ Prism Run Complete (dry-run)")
 	} else {
-		fmt.Println("  ✅ Prism V2 Run Complete")
+		fmt.Println("  ✅ Prism Run Complete")
 	}
 
 	fmt.Println("═══════════════════════════════════════════")
@@ -638,7 +638,7 @@ func printUsage() {
 	fmt.Println("Prism — Event-Native AI Agent Platform")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  prism run --task <description> [options]    Run a V2 task lifecycle")
+	fmt.Println("  prism run --task <description> [options]    Run a task lifecycle")
 	fmt.Println("  prism tool list                               List available tools")
 	fmt.Println("  prism tool run <name> --input '{...}'         Run a tool directly")
 	fmt.Println("  prism health [options]                        Check bus health")
@@ -654,7 +654,7 @@ func printUsage() {
 	fmt.Println("  --memory-url <string>  Remembrance URL (default: http://localhost:18790)")
 	fmt.Println("  --run-dir <string>     Run output directory (default: ./runs)")
 	fmt.Println()
-	fmt.Println("V2 LLM provider options:")
+	fmt.Println("LLM provider options:")
 	fmt.Println("  --provider <string>    LLM provider: mock or ollama (default: mock)")
 	fmt.Println("  --model <string>       Model name (default: mock-model)")
 	fmt.Println("  --temperature <float>  LLM temperature (default: 0.2)")
@@ -675,7 +675,7 @@ func printUsage() {
 	fmt.Println("  --bus-url <string>     NATS bus URL (default: nats://localhost:4222)")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  prism run --task \"Test V2 event lifecycle\"")
+	fmt.Println("  prism run --task \"Test event lifecycle\"")
 	fmt.Println("  prism run --task \"Analyze code\" --provider ollama --model qwen2.5:7b")
 	fmt.Println("  prism run --task \"Test dry run\" --dry-run-prompt")
 	fmt.Println("  prism run --task \"Deploy service\" --project myapp --agent coder")
