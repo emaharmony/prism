@@ -2158,3 +2158,34 @@ func TestV5ReviewCannotApproveOrApply(t *testing.T) {
 		}
 	}
 }
+
+func TestV5PublishEventWithoutNATS(t *testing.T) {
+	// Verify that publishEvent does not panic when r.js is nil.
+	// This is critical for CLI commands like ApproveWithValidation that
+	// create a Runner without calling Run() (which sets up NATS).
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:         "V5 nil NATS test",
+		Project:      "prism",
+		Agent:        "lumi",
+		BusURL:       "",
+		RunDir:       tmpDir,
+		Provider:     provider.NewMockProvider(),
+		ProviderName: "mock",
+		Model:        "mock-model",
+	}
+
+	runner := run.NewRunner(cfg)
+
+	// publishEvent should not panic even though js is nil
+	evt := event.Event{
+		ID:        event.NewID(),
+		Type:      "prism.validation.completed",
+		Source:    "prism-test",
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+
+	// This must not panic
+	runner.PublishEvent(evt)
+}
