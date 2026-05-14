@@ -38,6 +38,9 @@ type PolicyResult struct {
 //   - list_dir → approved if path is within workspace root
 //   - read_file → approved if path is within workspace root and file size ≤ MaxFileSize
 //   - write_file_dry_run → always approved (no mutation)
+//   - write_file_proposal → requires_approval (mutation gate)
+//   - apply_patch_proposal → denied (V5 candidate, not implemented)
+//   - write_file (direct) → denied (must use write_file_proposal)
 //   - anything else → denied
 //   - Path traversal with ".." or absolute paths outside workspace → denied
 func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
@@ -48,6 +51,15 @@ func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) Pol
 	case "write_file_dry_run":
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 
+	case "write_file_proposal":
+		return evaluateV4ProposalPolicy(cfg, toolName, input)
+
+	case "apply_patch_proposal":
+		return PolicyResult{Decision: PolicyDenied, Reason: "apply_patch_proposal is not implemented (V5 candidate)"}
+
+	case "write_file":
+		return PolicyResult{Decision: PolicyDenied, Reason: "direct write_file is denied — use write_file_proposal for approval-gated mutations"}
+
 	case "list_dir":
 		return evaluatePathPolicy(cfg, toolName, input)
 
@@ -57,6 +69,56 @@ func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) Pol
 	default:
 		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("tool %q is not in the approved list", toolName)}
 	}
+}
+
+// evaluateV4ProposalPolicy validates a write_file_proposal or similar V4 mutation proposal.
+func evaluateV4ProposalPolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
+	pathVal, ok := input["path"]
+	if !ok {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s requires a 'path' parameter", toolName)}
+	}
+
+	pathStr, ok := pathVal.(string)
+	if !ok {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s 'path' must be a string", toolName)}
+	}
+
+	// Block path traversal
+	if strings.Contains(pathStr, "..") {
+		return PolicyResult{Decision: PolicyDenied, Reason: "path traversal with '..' is blocked"}
+	}
+
+	// Block absolute paths
+	if filepath.IsAbs(pathStr) {
+		return PolicyResult{Decision: PolicyDenied, Reason: "absolute paths are not allowed"}
+	}
+
+	// Resolve and check workspace bounds
+	absRoot, err := filepath.Abs(cfg.WorkspaceRoot)
+	if err != nil {
+		return PolicyResult{Decision: PolicyDenied, Reason: "invalid workspace root"}
+	}
+	absPath := filepath.Clean(filepath.Join(absRoot, pathStr))
+	if !isWithinRoot(absPath, absRoot) {
+		return PolicyResult{Decision: PolicyDenied, Reason: "path is outside the workspace root"}
+	}
+
+	// Check content parameter exists
+	_, ok = input["content"]
+	if !ok {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s requires a 'content' parameter", toolName)}
+	}
+
+	contentStr, ok := input["content"].(string)
+	if !ok {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s 'content' must be a string", toolName)}
+	}
+
+	if len(contentStr) > 1024*1024 {
+		return PolicyResult{Decision: PolicyDenied, Reason: "content exceeds maximum size of 1MB"}
+	}
+
+	return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s requires explicit approval to apply the mutation", toolName)}
 }
 
 // evaluatePathPolicy handles the path-based policy checks for list_dir and read_file.

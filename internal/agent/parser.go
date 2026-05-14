@@ -98,8 +98,9 @@ func extractJSON(text string) string {
 	return text
 }
 
-// BuildToolPromptSuffix appends V3 tool instructions to a prompt, telling the
+// BuildToolPromptSuffix appends tool instructions to a prompt, telling the
 // model to return JSON with either a "final" or "tool_request" shape.
+// V4: Includes approval-gated mutation instructions.
 func BuildToolPromptSuffix(availableTools []string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Tool Instructions\n")
@@ -115,5 +116,9 @@ func BuildToolPromptSuffix(availableTools []string) string {
 	sb.WriteString("- Final response: {\"type\": \"final\", \"content\": \"your text here\"}\n")
 	sb.WriteString("- Tool request: {\"type\": \"tool_request\", \"tool\": \"tool_name\", \"input\": {\"key\": \"value\"}}\n")
 	sb.WriteString("\nYou may make at most ONE tool request per response. If you need multiple tool calls, respond with the first one and the system will provide results.\n")
+	sb.WriteString("\n### V4: File Mutation Approval\n")
+	sb.WriteString("File mutations require approval. You may propose a file change using write_file_proposal.\n")
+	sb.WriteString("Do not claim that a file was changed unless Prism returns a successful mutation.applied event.\n")
+	sb.WriteString("If your proposal is approved, the file will be written by Prism and you will receive a mutation.applied confirmation.\n")
 	return sb.String()
 }
