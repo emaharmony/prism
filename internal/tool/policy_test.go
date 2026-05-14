@@ -1,6 +1,8 @@
 package tool
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -193,5 +195,81 @@ func TestPolicyV4_WriteFileProposalOversizedContent(t *testing.T) {
 	})
 	if result.Decision != PolicyDenied {
 		t.Errorf("write_file_proposal with oversized content should be denied, got %s", result.Decision)
+	}
+}
+
+// ── Symlink Traversal Policy Tests ────────────────────────────────────
+
+func TestIsWithinRoot_BlocksSymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a directory outside the workspace
+	outsideDir := filepath.Join(t.TempDir(), "outside")
+	os.MkdirAll(outsideDir, 0755)
+
+	// Create symlink inside workspace pointing outside
+	linkPath := filepath.Join(tmpDir, "escape_link")
+	os.Symlink(outsideDir, linkPath)
+
+	absRoot, _ := filepath.Abs(tmpDir)
+
+	// Path through symlink should be caught after resolving
+	absPath := filepath.Clean(filepath.Join(absRoot, "escape_link", "file.txt"))
+	if isWithinRoot(absPath, absRoot) {
+		t.Error("isWithinRoot should block symlink escape")
+	}
+}
+
+func TestIsWithinRoot_AllowsRegularFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "normal.txt"), []byte("hello"), 0644)
+
+	absRoot, _ := filepath.Abs(tmpDir)
+	absPath := filepath.Clean(filepath.Join(absRoot, "normal.txt"))
+
+	if !isWithinRoot(absPath, absRoot) {
+		t.Error("isWithinRoot should allow regular files within root")
+	}
+}
+
+func TestIsWithinRoot_AllowsSubdirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "sub", "deep"), 0755)
+
+	absRoot, _ := filepath.Abs(tmpDir)
+	absPath := filepath.Clean(filepath.Join(absRoot, "sub", "deep", "file.txt"))
+
+	if !isWithinRoot(absPath, absRoot) {
+		t.Error("isWithinRoot should allow nested subdirectories")
+	}
+}
+
+func TestIsWithinRoot_BlocksParentTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	absRoot, _ := filepath.Abs(tmpDir)
+	absPath := filepath.Clean(filepath.Join(absRoot, "..", "etc", "passwd"))
+
+	if isWithinRoot(absPath, absRoot) {
+		t.Error("isWithinRoot should block '..' traversal")
+	}
+}
+
+func TestIsWithinRoot_BlocksDirectSymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file outside the workspace
+	outsideFile := filepath.Join(t.TempDir(), "outside_secret.txt")
+	os.WriteFile(outsideFile, []byte("secret"), 0644)
+
+	// Create symlink inside workspace pointing directly to outside file
+	linkPath := filepath.Join(tmpDir, "secret_link")
+	os.Symlink(outsideFile, linkPath)
+
+	absRoot, _ := filepath.Abs(tmpDir)
+	absPath := filepath.Clean(filepath.Join(absRoot, "secret_link"))
+
+	if isWithinRoot(absPath, absRoot) {
+		t.Error("isWithinRoot should block direct symlink escape")
 	}
 }

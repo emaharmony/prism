@@ -252,3 +252,98 @@ func containsSubstr(s, substr string) bool {
 	}
 	return false
 }
+
+// ── Symlink Traversal Security Tests ────────────────────────────────
+
+func TestReadFileTool_BlocksSymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file outside the workspace
+	outsideDir := filepath.Join(t.TempDir(), "outside")
+	os.MkdirAll(outsideDir, 0755)
+	os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret data"), 0644)
+
+	// Create symlink inside workspace pointing outside
+	linkPath := filepath.Join(tmpDir, "escape_link")
+	os.Symlink(outsideDir, linkPath)
+
+	tool := &ReadFileTool{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "escape_link/secret.txt"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Error("ReadFileTool should block symlink escape")
+	}
+}
+
+func TestReadFileTool_BlocksDirectSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a file outside the workspace
+	outsideFile := filepath.Join(t.TempDir(), "outside_secret.txt")
+	os.WriteFile(outsideFile, []byte("secret data"), 0644)
+
+	// Create symlink inside workspace pointing directly to outside file
+	linkPath := filepath.Join(tmpDir, "secret_link")
+	os.Symlink(outsideFile, linkPath)
+
+	tool := &ReadFileTool{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "secret_link"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Error("ReadFileTool should block direct symlink to outside file")
+	}
+}
+
+func TestReadFileTool_AllowsNormalFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "normal.txt"), []byte("hello world"), 0644)
+
+	tool := &ReadFileTool{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "normal.txt"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("ReadFileTool should allow normal files, got error: %s", result.Error)
+	}
+}
+
+func TestListDirTool_BlocksSymlinkEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a directory outside the workspace
+	outsideDir := filepath.Join(t.TempDir(), "outside_dir")
+	os.MkdirAll(outsideDir, 0755)
+
+	// Create symlink inside workspace pointing outside
+	linkPath := filepath.Join(tmpDir, "escape_link")
+	os.Symlink(outsideDir, linkPath)
+
+	tool := &ListDirTool{WorkspaceRoot: tmpDir}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "escape_link"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Error("ListDirTool should block symlink escape")
+	}
+}
+
+func TestListDirTool_AllowsNormalDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("data"), 0644)
+
+	tool := &ListDirTool{WorkspaceRoot: tmpDir}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "."})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("ListDirTool should allow normal directories, got error: %s", result.Error)
+	}
+}
