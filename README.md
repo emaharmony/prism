@@ -1,35 +1,45 @@
 # Prism — Event-Native AI Agent Platform
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 adds real single-agent LLM execution through a provider interface while preserving durable event logs, correlation IDs, and run artifacts.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 adds controlled tool execution — giving agents safe, observable, policy-gated hands while keeping the framework in control.
 
-## V2 Status
+## V3 Status
 
-V2 focuses on real single-agent LLM execution inside the existing V1 event lifecycle.
+V3 adds controlled tool execution with a deterministic permission policy. The model may request a tool, but Prism decides whether it runs.
 
-**Included in V2:**
-- Single-agent LLM execution
-- Provider interface (abstract, swappable)
-- Mock provider for deterministic tests
-- Ollama provider for local model execution
-- Prompt builder with deterministic `prompt.md` artifacts
-- Optional Remembrance context injection (graceful or strict)
-- LLM lifecycle events (`prism.llm.requested`, `prism.llm.completed`, `prism.llm.failed`)
-- Context injection events (`prism.context.requested`, `prism.context.injected`, `prism.context.failed`)
-- Run artifacts: `events.jsonl`, `summary.json`, `prompt.md`, `output.md`
-- `--dry-run-prompt` mode for prompt inspection without LLM calls
-- Provider/model metadata in `summary.json`
-- Parent chain integrity across success and failure paths
+**Included in V3:**
+- Everything in V1 and V2
+- Tool registry (`internal/tool/`) — register, list, resolve, validate, execute
+- Built-in safe tools: `echo`, `list_dir`, `read_file`, `write_file_dry_run`
+- Deterministic permission policy (approved/denied/requires_approval)
+- Path traversal blocking for `list_dir` and `read_file`
+- Tool events: `prism.tool.requested`, `prism.tool.approved`, `prism.tool.denied`, `prism.tool.started`, `prism.tool.completed`, `prism.tool.failed`
+- Agent tool request parsing (`{"type": "tool_request", "tool": "...", "input": {...}}`)
+- CLI tool subcommands: `prism-cli tool list`, `prism-cli tool run <name> --input '{...}'`
+- `tool_result.json` artifact for tool execution results
+- `tool_calls` array in `summary.json`
+- One tool call per run (no recursive loops in V3)
 
-**Not included yet:**
+**Safety model:**
+- `echo` → always approved (returns input text)
+- `list_dir` → approved only if path is within workspace root
+- `read_file` → approved if path within workspace root and file ≤ 1MB
+- `write_file_dry_run` → always approved (returns preview, does NOT write to disk)
+- All other tools → denied
+- Path traversal with `..` or absolute paths outside workspace → denied
+- Policy is deterministic — the LLM does NOT decide policy
+
+**Not included in V3:**
 - Multi-agent orchestration
-- Tool execution and approval gates
+- Real file writes or shell execution
+- Approval UI or human approval workflow
+- Recursive autonomous tool loops
 - Dashboard
 - Discord/Telegram channel workflows
 - OpenClaw migration
 - Cron scheduler
 - State manager / CQRS
 - ACP/A2A gateway
-- Full autonomous memory intelligence (Remembrance provides context injection only)
+- Full autonomous memory intelligence
 
 ## Architecture Overview
 
@@ -92,12 +102,13 @@ go build -o prism-agent.exe ./cmd/prism-agent/
 go test ./...
 ```
 
-54 tests across 5 packages:
-- `internal/agent` — placeholder agent and delay
+104 tests across 6 packages:
+- `internal/agent` — placeholder agent, delay, V3 tool request parsing
 - `internal/event` — IDs, event creation, JSON round-trip, security
 - `internal/prompt` — prompt builder, context injection, output writing
 - `internal/provider` — mock provider, failing mock, Ollama provider (httptest)
-- `internal/run` — V1 lifecycle, V2 lifecycle, memory, correlation, parent chains, LLM failure
+- `internal/run` — V1 lifecycle, V2 lifecycle, V3 tool lifecycle, memory, correlation, parent chains
+- `internal/tool` — registry, policy, executor, built-in tools, path traversal protection
 
 ### 3. Start the Bus
 
@@ -256,6 +267,38 @@ prism.agent.failed
 prism.task.failed
 ```
 
+### V3 Success with Tool Call
+
+```text
+prism.task.created
+prism.task.started
+prism.agent.started
+prism.llm.requested
+prism.llm.completed
+prism.tool.requested
+prism.tool.approved
+prism.tool.started
+prism.tool.completed
+prism.agent.completed
+prism.output.written
+prism.task.completed
+```
+
+### V3 Tool Denied by Policy
+
+```text
+prism.task.created
+prism.task.started
+prism.agent.started
+prism.llm.requested
+prism.llm.completed
+prism.tool.requested
+prism.tool.denied
+prism.agent.completed
+prism.output.written
+prism.task.completed
+```
+
 ### V2 Dry-Run
 
 ```text
@@ -266,6 +309,54 @@ prism.agent.completed      ← no LLM events
 prism.task.completed
 ```
 
+### V3 Tool Approved
+
+```text
+prism.task.created
+prism.task.started
+prism.agent.started
+prism.llm.requested
+prism.llm.completed
+prism.tool.requested
+prism.tool.approved
+prism.tool.started
+prism.tool.completed
+prism.agent.completed
+prism.output.written
+prism.task.completed
+```
+
+### V3 Tool Denied
+
+```text
+prism.task.created
+prism.task.started
+prism.agent.started
+prism.llm.requested
+prism.llm.completed
+prism.tool.requested
+prism.tool.denied
+prism.agent.completed
+prism.output.written
+prism.task.completed
+```
+
+### V3 Tool Execution Failure
+
+```text
+prism.task.created
+prism.task.started
+prism.agent.started
+prism.llm.requested
+prism.llm.completed
+prism.tool.requested
+prism.tool.approved
+prism.tool.started
+prism.tool.failed
+prism.agent.failed
+prism.task.failed
+```
+
 Every event carries a `parent_id` linking it to its direct causal predecessor, forming a traceable chain from `task.created` to `task.completed/failed`.
 
 ## Run Artifacts
@@ -274,16 +365,18 @@ Each run creates a directory under `runs/`:
 
 ```text
 runs/<run_id>/
-  events.jsonl     ← durable event audit trail (one JSON object per line)
-  summary.json     ← run metadata: status, provider, model, duration, artifact paths
-  prompt.md        ← exact prompt sent to the provider
-  output.md        ← model-generated output
+  events.jsonl       ← durable event audit trail (one JSON object per line)
+  summary.json       ← run metadata: status, provider, model, duration, tool_calls, artifact paths
+  prompt.md           ← exact prompt sent to the provider
+  output.md           ← model-generated output
+  tool_result.json     ← tool execution result (if a tool was called)
 ```
 
 - `events.jsonl` — every event in the lifecycle, with IDs, types, timestamps, payloads, and parent chains
-- `summary.json` — includes V2 fields: `provider`, `model`, `prompt_path`, `output_path`, `memory_status`, `llm_latency_ms`, `llm_error`
+- `summary.json` — includes V2 fields: `provider`, `model`, `prompt_path`, `output_path`, `memory_status`, `llm_latency_ms`, `llm_error`; V3 adds: `tool_calls` array
 - `prompt.md` — assembled from task, project, agent identity, and optional Remembrance context
-- `output.md` — the raw text returned by the provider
+- `output.md` — the raw text returned by the provider (or combined LLM + tool result in V3)
+- `tool_result.json` — (V3, when a tool was called) the tool execution result, including success/failure, output data, and any error message
 
 ## Providers
 
@@ -325,30 +418,93 @@ The `--dry-run-prompt` flag builds `prompt.md` and `events.jsonl` but skips the 
 ./prism run --task "Test prompt assembly" --project prism --agent lumi --dry-run-prompt
 ```
 
+## Tool Commands (V3)
+
+Prism V3 includes built-in safe tools that can be invoked directly from the CLI for testing:
+
+```bash
+# List all registered tools
+./prism tool list
+
+# Run the echo tool
+./prism tool run echo --input '{"text":"hello world"}'
+
+# List files in the project workspace
+./prism tool run list_dir --input '{"path":"."}' --project prism
+
+# Read a file in the project workspace
+./prism tool run read_file --input '{"path":"README.md"}' --project prism
+
+# Preview a file write (does NOT write to disk)
+./prism tool run write_file_dry_run --input '{"path":"test.txt","content":"hello"}' --project prism
+```
+
+All path-based tools are scoped to the project workspace root. Path traversal with `..` or absolute paths outside the workspace is blocked by the policy layer.
+
+When a tool is invoked via the CLI, it emits the same event lifecycle (`prism.tool.requested` → `prism.tool.approved` → `prism.tool.started` → `prism.tool.completed`) and produces the same audit trail.
+
+## Agent Tool Requests (V3)
+
+When using `--provider mock` or `--provider ollama`, the prompt now includes tool instructions. The model can respond with:
+
+```json
+{"type": "final", "content": "Here is my answer..."}
+```
+
+or:
+
+```json
+{"type": "tool_request", "tool": "read_file", "input": {"path": "README.md"}}
+```
+
+If a tool request is detected, Prism:
+1. Emits `prism.tool.requested`
+2. Evaluates the permission policy
+3. Emits `prism.tool.approved` or `prism.tool.denied`
+4. If approved, executes the tool and emits `prism.tool.started` → `prism.tool.completed`
+5. If denied, completes the run with the denial reason
+6. Captures the tool result in `tool_result.json` and `summary.json`
+
+V3 supports **one tool call per run** (no recursive loops).
+
 ## Testing
 
 ```bash
 # Run all tests
-go test ./...
+ go test ./...
 
 # Run V2 lifecycle tests specifically
-go test ./internal/run/... -v -run "TestV2"
+ go test ./internal/run/... -v -run "TestV2"
+
+# Run V3 tool tests specifically
+ go test ./internal/tool/... -v
+ go test ./internal/agent/... -v -run "TestParse"
+ go test ./internal/run/... -v -run "TestV3"
 
 # Run provider tests
-go test ./internal/provider/... -v
+ go test ./internal/provider/... -v
 
 # Run prompt builder tests
-go test ./internal/prompt/... -v
+ go test ./internal/prompt/... -v
 ```
 
-V2 test coverage includes:
-- Mock provider success and failure
-- LLM lifecycle event ordering and parent chains
-- Prompt and output artifact creation
-- Memory-enabled graceful fallback
-- `--require-memory` strict failure
-- Ollama provider: success, timeout, HTTP error, model error, connection refused, token fallback
-- Dry-run prompt mode
+V3 test coverage includes:
+- Tool registry: register, list, resolve, duplicate, unknown tool
+- Tool policy: echo approved, list_dir allowed/denied, read_file allowed/denied, write_file_dry_run approved, shell denied, path traversal blocked
+- Tool execution: echo, list_dir, read_file, write_file_dry_run (verifies no disk write), execution failure
+- Tool event lifecycle: requested, approved, denied, started, completed, failed events
+- Agent output parsing: final response, tool request, invalid JSON fallback, markdown fence extraction
+- Run artifacts: tool_calls in summary.json, tool_result.json, tool events in events.jsonl
+- Path traversal protection: `..` paths and absolute paths blocked
+
+V3 test coverage includes:
+- Tool registry: register, list, resolve, unknown tool
+- Policy: echo approved, list_dir allowed/denied, read_file allowed/denied, dangerous tool denied, path traversal
+- Built-in tools: echo, list_dir, read_file, write_file_dry_run (verifies no disk write)
+- Executor: approved tool execution, denied tool, path traversal denied, event emission
+- Agent parser: final JSON, tool_request JSON, invalid JSON fallback, markdown fence extraction
+- Run lifecycle: tool call in summary.json, tool_result.json artifact, tool events in events.jsonl, denied policy events
+- One tool call per run limit
 
 Ollama integration is tested with `httptest` mocks — a running Ollama instance is **not** required for CI.
 
@@ -384,6 +540,14 @@ go test ./...
 
 # Run with verbose event output
 ./prism run --task "Debug lifecycle" --project prism --agent lumi --provider mock
+
+# V3: List available tools
+./prism tool list
+
+# V3: Run a tool directly
+./prism tool run echo --input '{"text": "hello world"}'
+./prism tool run read_file --input '{"path": "README.md"}' --workspace .
+./prism tool run list_dir --input '{"path": "."}' --workspace .
 ```
 
 Windows equivalents:
@@ -480,11 +644,16 @@ ollama pull qwen2.5:7b
 - `--dry-run-prompt` mode
 - Strict `--require-memory` failure mode
 
-### V3 — Planned
+### V3 — Current
 - Tool registry and execution
-- Permission hooks
-- Approval events
-- Safer file/shell operations
+- Deterministic permission policy
+- Built-in safe tools (echo, list_dir, read_file, write_file_dry_run)
+- Tool lifecycle events
+- Agent tool request parsing
+- CLI tool commands
+- Path traversal protection
+- One tool call per run
+- tool_result.json and tool_calls in summary.json
 
 ### V4 — Planned
 - Multi-agent orchestration
@@ -514,11 +683,12 @@ prism/
 │   ├── prism-bus/        # Embedded NATS JetStream server
 │   └── prism-agent/      # Agent runtime (subscribes, processes, publishes)
 ├── internal/
-│   ├── event/            # Canonical event schema (V1 + V2 types)
-│   ├── run/              # Run orchestrator (V1 + V2 lifecycle)
+│   ├── event/            # Canonical event schema (V1 + V2 + V3 types)
+│   ├── run/              # Run orchestrator (V1 + V2 + V3 lifecycle)
 │   ├── prompt/           # Prompt builder (prompt.md assembly)
 │   ├── provider/         # Provider interface, MockProvider, OllamaProvider
-│   ├── agent/            # Placeholder agent (V1 compat)
+│   ├── agent/            # Placeholder agent + V3 tool request parser
+│   ├── tool/             # Tool registry, policy, executor, builtins (V3)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
@@ -546,9 +716,9 @@ prism/
 | Agent Output | `prism.agent.output` | Agent produces result |
 | Agent Completed | `prism.agent.completed` | Agent finished |
 | Agent Failed | `prism.agent.failed` | Agent failed |
-| Tool Called | `prism.tool.called` | Tool invocation *(not yet implemented)* |
-| Tool Result | `prism.tool.result` | Tool returned result *(not yet implemented)* |
-| Tool Failed | `prism.tool.failed` | Tool invocation failed *(not yet implemented)* |
+| Tool Called | `prism.tool.called` | Tool invocation *(V1 compat, not emitted in V3)* |
+| Tool Result | `prism.tool.result` | Tool returned result *(V1 compat, not emitted in V3)* |
+| Tool Failed | `prism.tool.failed` | Tool invocation failed *(V1 compat, not emitted in V3)* |
 | System Health | `prism.system.health` | Health check event |
 
 ### V2 Events (new)
@@ -562,6 +732,17 @@ prism/
 | Context Injected | `prism.context.injected` | V2 context injected into prompt |
 | Context Failed | `prism.context.failed` | V2 context injection failed |
 | Output Written | `prism.output.written` | Output artifact written to disk |
+
+### V3 Events (tool execution)
+
+| Event | Subject | Description |
+|-------|---------|-------------|
+| Tool Requested | `prism.tool.requested` | Agent requests a tool call |
+| Tool Approved | `prism.tool.approved` | Policy approves the tool call |
+| Tool Denied | `prism.tool.denied` | Policy denies the tool call |
+| Tool Started | `prism.tool.started` | Tool execution begins |
+| Tool Completed | `prism.tool.completed` | Tool execution succeeds |
+| Tool Failed | `prism.tool.failed` | Tool execution fails |
 
 ## Event Schema
 

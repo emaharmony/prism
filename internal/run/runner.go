@@ -21,6 +21,9 @@ import (
 	"github.com/emaharmony/prism/internal/prompt"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/remembrance"
+	"github.com/emaharmony/prism/internal/tool"
+
+	agentpkg "github.com/emaharmony/prism/internal/agent"
 )
 
 // RunConfig holds the configuration for a run.
@@ -42,6 +45,11 @@ type RunConfig struct {
 	MaxTokens    int
 	Timeout      time.Duration
 	DryRunPrompt bool // If true, build prompt and artifacts but skip LLM call
+
+	// V3 tool execution configuration
+	ToolRegistry *tool.Registry
+	ToolPolicy   tool.PolicyConfig
+	ToolExecutor *tool.Executor
 }
 
 // RunResult holds the result of a completed run.
@@ -60,6 +68,9 @@ type RunResult struct {
 	OutputPath string `json:"output_path,omitempty"`
 	DurationMs int64  `json:"duration_ms,omitempty"`
 	DryRun     bool   `json:"dry_run,omitempty"`
+
+	// V3 tool execution result
+	ToolCallResult *tool.ToolResult `json:"tool_result,omitempty"`
 }
 
 // Runner orchestrates the lifecycle.
@@ -113,6 +124,13 @@ func (r *Runner) Run() (*RunResult, error) {
 	}
 	if r.config.Timeout == 0 {
 		r.config.Timeout = 60 * time.Second
+	}
+
+	// V3: Wire tool executor event emitter into the runner's event system
+	if r.config.ToolExecutor != nil {
+		r.config.ToolExecutor.SetEmitter(func(eventType, source string, payload map[string]any) {
+			r.emit(eventType, source, payload)
+		})
 	}
 
 	// 1. Connect to NATS
@@ -364,6 +382,68 @@ func (r *Runner) Run() (*RunResult, error) {
 		"text_length":    len(genResp.Text),
 	}, llmReqEvt.ID)
 
+	// 10b. V3: Parse LLM output for tool request
+	var toolCallSummaries []event.ToolCallSummary
+	var toolResult *tool.ToolResult
+	outputText := genResp.Text // default: use raw LLM output
+
+	if r.config.ToolExecutor != nil {
+		agentResp := agentpkg.ParseAgentOutput(genResp.Text)
+
+		if agentResp.Type == agentpkg.ResponseToolRequest {
+			log.Printf("prism: LLM requested tool %q", agentResp.ToolName)
+
+			toolResultVal, execErr := r.config.ToolExecutor.ExecuteWithPolicy(
+				context.Background(),
+				agentResp.ToolName,
+				r.config.Agent,
+				r.config.Project,
+				r.correlationID,
+				agentResp.ToolInput,
+			)
+			if execErr != nil {
+				log.Printf("prism: tool execution failed: %v", execErr)
+			}
+			toolResult = &toolResultVal
+			err = execErr
+
+			// Build tool call summary
+			toolCallSummaries = append(toolCallSummaries, event.ToolCallSummary{
+				ToolName:       agentResp.ToolName,
+				PolicyDecision: string(tool.EvaluatePolicy(r.config.ToolPolicy, agentResp.ToolName, agentResp.ToolInput).Decision),
+				Status:         toolResultStatus(toolResult, err),
+			})
+
+			// Write tool_result.json
+			if toolResult != nil {
+				toolResultPath := filepath.Join(runDir, "tool_result.json")
+				if toolData, jsonErr := json.MarshalIndent(toolResult, "", "  "); jsonErr == nil {
+					if writeErr := os.WriteFile(toolResultPath, append(toolData, '\n'), 0644); writeErr != nil {
+						log.Printf("prism: failed to write tool_result.json: %v", writeErr)
+					}
+				}
+			}
+
+			// Build output text combining LLM response and tool result
+			var outputBuilder strings.Builder
+			outputBuilder.WriteString(genResp.Text)
+			outputBuilder.WriteString("\n\n---\n**Tool Result:**\n")
+			if toolResult != nil {
+				if toolResult.Success {
+					outputBuilder.WriteString(fmt.Sprintf("Tool `%s` executed successfully.\n", agentResp.ToolName))
+					for k, v := range toolResult.Output {
+						outputBuilder.WriteString(fmt.Sprintf("- %s: %v\n", k, v))
+					}
+				} else {
+					outputBuilder.WriteString(fmt.Sprintf("Tool `%s` failed: %s\n", agentResp.ToolName, toolResult.Error))
+				}
+			} else {
+				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` execution error: %v\n", agentResp.ToolName, err))
+			}
+			outputText = outputBuilder.String()
+		}
+	}
+
 	// 11. Emit agent.completed (V1 backward compat)
 	// Parent is llm.completed (V2 causal chain: agent started → llm requested → llm completed → agent completed)
 	agentCompletedEvt := r.emitWithParent(event.V1EventTypes.AgentCompleted, "prism-cli", map[string]any{
@@ -374,7 +454,7 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// 12. Write output.md
 	outputPath := filepath.Join(runDir, "output.md")
-	if err := prompt.WriteOutput(runDir, genResp.Text); err != nil {
+	if err := prompt.WriteOutput(runDir, outputText); err != nil {
 		log.Printf("prism: failed to write output.md: %v", err)
 		return r.fail(fmt.Sprintf("failed to write output: %v", err))
 	}
@@ -383,7 +463,7 @@ func (r *Runner) Run() (*RunResult, error) {
 	r.emitWithParent(event.V2EventTypes.OutputWritten, "prism-cli", map[string]any{
 		"path":         outputPath,
 		"agent":        r.config.Agent,
-		"output_bytes": len(genResp.Text),
+		"output_bytes": len(outputText),
 	}, agentCompletedEvt.ID)
 
 	// 13. Emit task.completed
@@ -417,6 +497,7 @@ func (r *Runner) Run() (*RunResult, error) {
 		PromptPath:   filepath.Join(runDir, "prompt.md"),
 		MemoryStatus: memoryStatus,
 		LLMLatencyMs: genResp.LatencyMS,
+		ToolCalls:    toolCallSummaries,
 	}
 
 	eventsPath, summaryPath, err := r.persist(summary)
@@ -438,6 +519,7 @@ func (r *Runner) Run() (*RunResult, error) {
 		OutputPath:  outputPath,
 		DurationMs:  durationMs,
 		DryRun:      false,
+		ToolCallResult: toolResult,
 	}, nil
 }
 
@@ -631,4 +713,18 @@ func (r *Runner) calculateDuration() int64 {
 		return 0
 	}
 	return time.Since(start).Milliseconds()
+}
+
+// toolResultStatus returns a human-readable status from a tool result and error.
+func toolResultStatus(result *tool.ToolResult, err error) string {
+	if err != nil {
+		return "failed"
+	}
+	if result == nil {
+		return "unknown"
+	}
+	if result.Success {
+		return "completed"
+	}
+	return "failed"
 }
