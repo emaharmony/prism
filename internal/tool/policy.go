@@ -164,9 +164,32 @@ func resolvePath(workspaceRoot, relPath string) string {
 }
 
 // isWithinRoot checks that absPath is within absRoot (both must be absolute).
+// It resolves symlinks before checking to prevent symlink traversal attacks.
 func isWithinRoot(absPath, absRoot string) bool {
-	// Ensure root ends with separator for proper prefix matching
-	rel, err := filepath.Rel(absRoot, absPath)
+	// Resolve symlinks in both paths to prevent symlink escape
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		// If root can't be resolved, fall back to original
+		resolvedRoot = absRoot
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		// If the path doesn't exist yet (e.g., a write target),
+		// resolve the parent and join with the base name
+		parentDir := filepath.Dir(absPath)
+		resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
+		if parentErr != nil {
+			// Parent doesn't resolve either — reject for safety
+			return false
+		}
+		resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
+	}
+
+	// Clean resolved paths
+	resolvedRoot = filepath.Clean(resolvedRoot)
+	resolvedPath = filepath.Clean(resolvedPath)
+
+	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
 	if err != nil {
 		return false
 	}
