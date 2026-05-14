@@ -179,15 +179,19 @@ func executeRun(cfg runConfig) {
 		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
 		fmt.Fprintln(os.Stderr, "  ❌ Prism V2 Run Failed")
 		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
-		fmt.Fprintf(os.Stderr, "  Run ID:          %s\n", result.RunID)
-		fmt.Fprintf(os.Stderr, "  Error:           %s\n", result.Error)
-		if result.Provider != "" {
-			fmt.Fprintf(os.Stderr, "  Provider:        %s\n", result.Provider)
+		if result != nil {
+			fmt.Fprintf(os.Stderr, "  Run ID:          %s\n", result.RunID)
+			fmt.Fprintf(os.Stderr, "  Error:           %s\n", result.Error)
+			if result.Provider != "" {
+				fmt.Fprintf(os.Stderr, "  Provider:        %s\n", result.Provider)
+			}
+			if result.Model != "" {
+				fmt.Fprintf(os.Stderr, "  Model:           %s\n", result.Model)
+			}
+			fmt.Fprintf(os.Stderr, "  Events:          %s\n", result.EventsPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "  Error:           %s\n", err)
 		}
-		if result.Model != "" {
-			fmt.Fprintf(os.Stderr, "  Model:           %s\n", result.Model)
-		}
-		fmt.Fprintf(os.Stderr, "  Events:          %s\n", result.EventsPath)
 		fmt.Fprintln(os.Stderr, "═══════════════════════════════════════════")
 		fmt.Fprintln(os.Stderr)
 		os.Exit(1)

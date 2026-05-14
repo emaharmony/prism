@@ -120,6 +120,8 @@ Starts an embedded NATS server with JetStream on `localhost:4222`. Data stored i
 
 ### 4. Run with Mock Provider
 
+The NATS bus **must be running** before executing any `prism run` command (including mock provider runs). If the bus is not running, Prism will exit with an error.
+
 ```bash
 ./prism run \
   --task "Explain the Prism event lifecycle in 5 bullets" \
