@@ -46,7 +46,35 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	// Evaluate policy
 	policyResult := EvaluatePolicy(e.Policy, toolName, input)
 
-	// Emit approved or denied event
+	// Handle requires_approval — this is not a denial, it's a request for human approval
+	if policyResult.Decision == PolicyRequiresApproval {
+		e.emitEvent("prism.tool.approved", map[string]any{
+			"tool_name":       toolName,
+			"agent":           agent,
+			"project":         project,
+			"correlation_id":  correlationID,
+			"policy_decision": string(policyResult.Decision),
+			"policy_reason":   policyResult.Reason,
+		})
+
+		// Execute the tool (which will return approval_id)
+		result, err := e.Registry.Execute(ctx, toolName, input)
+		if err != nil {
+			return ToolResult{
+				Success: false,
+				Output:  nil,
+				Error:   err.Error(),
+			}, err
+		}
+
+		// Mark as pending_approval status
+		result.Output["policy_decision"] = string(PolicyRequiresApproval)
+		result.Output["policy_reason"] = policyResult.Reason
+
+		return result, nil
+	}
+
+	// Emit denied event
 	if policyResult.Decision == PolicyDenied {
 		e.emitEvent("prism.tool.denied", map[string]any{
 			"tool_name":       toolName,

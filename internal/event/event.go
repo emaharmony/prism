@@ -195,6 +195,30 @@ func EventFromBytes(data []byte) (Event, error) {
 	return evt, err
 }
 
+// V4EventTypes defines the event types introduced in V4 (approval-gated mutations).
+var V4EventTypes = struct {
+	// Approval lifecycle
+	ApprovalRequested string
+	ApprovalGranted   string
+	ApprovalDenied    string
+	ApprovalExpired   string
+
+	// Mutation lifecycle
+	MutationProposed  string
+	MutationValidated string
+	MutationApplied   string
+	MutationFailed    string
+}{
+	ApprovalRequested: "prism.approval.requested",
+	ApprovalGranted:   "prism.approval.granted",
+	ApprovalDenied:    "prism.approval.denied",
+	ApprovalExpired:   "prism.approval.expired",
+	MutationProposed:  "prism.mutation.proposed",
+	MutationValidated: "prism.mutation.validated",
+	MutationApplied:   "prism.mutation.applied",
+	MutationFailed:    "prism.mutation.failed",
+}
+
 // Summary represents a V1 run summary written to summary.json.
 type Summary struct {
 	RunID         string `json:"run_id"`
@@ -219,6 +243,10 @@ type Summary struct {
 
 	// V3 tool execution fields
 	ToolCalls []ToolCallSummary `json:"tool_calls,omitempty"`
+
+	// V4 approval and mutation fields
+	Approvals []ApprovalSummary `json:"approvals,omitempty"`
+	Mutations []MutationSummary `json:"mutations,omitempty"`
 }
 
 // ToolCallSummary records a single tool call in the run summary.
@@ -227,4 +255,23 @@ type ToolCallSummary struct {
 	PolicyDecision string `json:"policy_decision"`
 	Status         string `json:"status"` // "approved", "denied", "completed", "failed"
 	EventID        string `json:"event_id,omitempty"`
+}
+
+// ApprovalSummary records an approval in the run summary.
+type ApprovalSummary struct {
+	ApprovalID    string `json:"approval_id"`
+	MutationType  string `json:"mutation_type"`
+	TargetPath    string `json:"target_path"`
+	Status        string `json:"status"`
+	RequestedBy   string `json:"requested_by"`
+	PolicyDecision string `json:"policy_decision"`
+}
+
+// MutationSummary records a mutation result in the run summary.
+type MutationSummary struct {
+	ApprovalID   string `json:"approval_id"`
+	MutationType string `json:"mutation_type"`
+	TargetPath   string `json:"target_path"`
+	Success      bool   `json:"success"`
+	Message      string `json:"message,omitempty"`
 }
