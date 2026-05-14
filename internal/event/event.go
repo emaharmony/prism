@@ -56,6 +56,24 @@ var V1EventTypes = struct {
 	SystemHealth:           "prism.system.health",
 }
 
+// V3EventTypes defines the event types introduced in V3 (controlled tool execution).
+var V3EventTypes = struct {
+	// Tool lifecycle
+	ToolRequested      string
+	ToolApproved       string
+	ToolDenied          string
+	ToolStarted         string
+	ToolCompleted       string
+	ToolFailed          string
+}{
+	ToolRequested: "prism.tool.requested",
+	ToolApproved:  "prism.tool.approved",
+	ToolDenied:    "prism.tool.denied",
+	ToolStarted:   "prism.tool.started",
+	ToolCompleted: "prism.tool.completed",
+	ToolFailed:    "prism.tool.failed",
+}
+
 // V2EventTypes defines the event types introduced in V2 (real LLM agent execution).
 var V2EventTypes = struct {
 	// LLM request lifecycle
@@ -197,5 +215,16 @@ type Summary struct {
 	PromptPath    string `json:"prompt_path,omitempty"`
 	MemoryStatus  string `json:"memory_status,omitempty"` // "none", "injected", "failed"
 	LLMLatencyMs  int64  `json:"llm_latency_ms,omitempty"`
-	LLMError      string `json:"llm_error,omitempty"`
+	LLMError      string    `json:"llm_error,omitempty"`
+
+	// V3 tool execution fields
+	ToolCalls []ToolCallSummary `json:"tool_calls,omitempty"`
+}
+
+// ToolCallSummary records a single tool call in the run summary.
+type ToolCallSummary struct {
+	ToolName       string `json:"tool_name"`
+	PolicyDecision string `json:"policy_decision"`
+	Status         string `json:"status"` // "approved", "denied", "completed", "failed"
+	EventID        string `json:"event_id,omitempty"`
 }
