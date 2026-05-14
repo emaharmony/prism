@@ -67,7 +67,36 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 
 	absPath := filepath.Clean(filepath.Join(t.WorkspaceRoot, pathVal))
 
-	entries, err := os.ReadDir(absPath)
+	// Defense-in-depth: resolve symlinks and verify the path stays within root
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   fmt.Sprintf("failed to resolve path: %v", err),
+		}, nil
+	}
+	absRoot, err := filepath.Abs(t.WorkspaceRoot)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   "invalid workspace root",
+		}, nil
+	}
+	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
+	if resolvedRoot == "" {
+		resolvedRoot = absRoot
+	}
+	if !isWithinRoot(resolvedPath, resolvedRoot) {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   "path is outside workspace root (symlink escape blocked)",
+		}, nil
+	}
+
+	entries, err := os.ReadDir(resolvedPath)
 	if err != nil {
 		return ToolResult{
 			Success: false,
@@ -129,13 +158,51 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 
 	absPath := filepath.Clean(filepath.Join(t.WorkspaceRoot, pathVal))
 
-	// Check file size before reading
-	info, err := os.Stat(absPath)
+	// Defense-in-depth: resolve symlinks and verify the path stays within root
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   fmt.Sprintf("failed to resolve path: %v", err),
+		}, nil
+	}
+	absRoot, err := filepath.Abs(t.WorkspaceRoot)
+	if err != nil {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   "invalid workspace root",
+		}, nil
+	}
+	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
+	if resolvedRoot == "" {
+		resolvedRoot = absRoot
+	}
+	if !isWithinRoot(resolvedPath, resolvedRoot) {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   "path is outside workspace root (symlink escape blocked)",
+		}, nil
+	}
+
+	// Use Lstat to check size without following symlinks at the final component
+	info, err := os.Lstat(resolvedPath)
 	if err != nil {
 		return ToolResult{
 			Success: false,
 			Output:  nil,
 			Error:   fmt.Sprintf("failed to stat file: %v", err),
+		}, nil
+	}
+
+	// Reject symlinks at the final path component
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ToolResult{
+			Success: false,
+			Output:  nil,
+			Error:   "symlink at final path component is not allowed",
 		}, nil
 	}
 
@@ -152,7 +219,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 		}, nil
 	}
 
-	data, err := os.ReadFile(absPath)
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return ToolResult{
 			Success: false,
@@ -294,6 +361,27 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 	}
 	if filepath.IsAbs(pathVal) {
 		return ToolResult{Success: false, Error: "absolute paths not allowed"}, nil
+	}
+
+	// Defense-in-depth: resolve symlinks in the target path
+	absRoot, err := filepath.Abs(t.WorkspaceRoot)
+	if err != nil {
+		return ToolResult{Success: false, Error: "invalid workspace root"}, nil
+	}
+	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
+	if resolvedRoot == "" {
+		resolvedRoot = absRoot
+	}
+	absPath := filepath.Clean(filepath.Join(resolvedRoot, pathVal))
+	// For write targets that don't exist yet, resolve parent
+	parentDir := filepath.Dir(absPath)
+	resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
+	if parentErr != nil {
+		return ToolResult{Success: false, Error: "cannot resolve parent directory for write target"}, nil
+	}
+	resolvedAbsPath := filepath.Join(resolvedParent, filepath.Base(absPath))
+	if !isWithinRoot(resolvedAbsPath, resolvedRoot) {
+		return ToolResult{Success: false, Error: "path is outside workspace root (symlink escape blocked)"}, nil
 	}
 
 	// Check content size
