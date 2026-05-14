@@ -341,3 +341,64 @@ func TestEmptyApply(t *testing.T) {
 		t.Error("expected error from Apply without runID")
 	}
 }
+
+func TestExecutorSymlinkEscapeBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+
+	// Create a directory outside the workspace
+	outsideDir := t.TempDir()
+	secretPath := filepath.Join(outsideDir, "secret.txt")
+	os.WriteFile(secretPath, []byte("secret data"), 0644)
+
+	// Create symlink inside workspace pointing outside
+	linkPath := filepath.Join(tmpDir, "escape_link")
+	os.Symlink(outsideDir, linkPath)
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_symlink", "corr_symlink", "test-cli", "prism", "write_file", "escape_link/malicious.txt", "malicious content", policy)
+	store.Save(a)
+
+	executor := NewExecutor(tmpDir, store)
+
+	result, err := executor.ApplyWithRun(context.Background(), "run_symlink", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Error("mutation through symlink escape should be blocked")
+	}
+
+	// Verify file was NOT written
+	maliciousPath := filepath.Join(outsideDir, "malicious.txt")
+	if _, statErr := os.Stat(maliciousPath); !os.IsNotExist(statErr) {
+		t.Error("file should NOT have been written outside workspace")
+	}
+}
+
+func TestExecutorDirectSymlinkBlocked(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+
+	// Create a file outside the workspace
+	outsideFile := filepath.Join(t.TempDir(), "outside_target.txt")
+	os.WriteFile(outsideFile, []byte("original"), 0644)
+
+	// Create symlink inside workspace pointing directly to outside file
+	linkPath := filepath.Join(tmpDir, "target_link")
+	os.Symlink(outsideFile, linkPath)
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_sym2", "corr_sym2", "test-cli", "prism", "write_file", "target_link", "overwritten", policy)
+	store.Save(a)
+
+	executor := NewExecutor(tmpDir, store)
+
+	result, err := executor.ApplyWithRun(context.Background(), "run_sym2", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Error("mutation targeting symlink should be blocked")
+	}
+}
