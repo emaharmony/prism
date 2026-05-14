@@ -718,10 +718,17 @@ func (r *Runner) buildEvent(eventType, source string, payload map[string]any) ev
 }
 
 // publishEvent publishes a fully-built event to NATS (best effort for V1).
+// If NATS is not connected (r.js is nil), the event is still recorded in-memory
+// but not published to the bus. This allows CLI commands like ApproveWithValidation
+// to work without requiring a NATS connection.
 func (r *Runner) publishEvent(evt event.Event) {
 	data, err := evt.ToJSON()
 	if err != nil {
 		log.Printf("prism: failed to marshal event %s: %v", evt.ID, err)
+		return
+	}
+	if r.js == nil {
+		log.Printf("prism: event %s not published (no NATS connection)", evt.ID[:24])
 		return
 	}
 	if _, err := r.js.Publish(evt.Type, data); err != nil {
@@ -729,6 +736,13 @@ func (r *Runner) publishEvent(evt event.Event) {
 	} else {
 		log.Printf("  💎 [%s] id=%s", evt.Type, evt.ID[:24])
 	}
+}
+
+// PublishEvent publishes an event via NATS. If NATS is not connected,
+// the event is logged but not published. This is safe to call even when
+// the runner has not established a NATS connection (e.g., CLI-only usage).
+func (r *Runner) PublishEvent(evt event.Event) {
+	r.publishEvent(evt)
 }
 
 // emit builds and publishes an event to NATS.
