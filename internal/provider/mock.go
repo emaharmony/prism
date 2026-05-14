@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -51,11 +52,50 @@ func (m *MockProvider) Generate(ctx context.Context, req GenerateRequest) (Gener
 		Raw: map[string]any{
 			"mock": true,
 			"request_echo": map[string]string{
-				"run_id":    req.RunID,
-				"agent":     req.Agent,
-				"project":   req.Project,
-				"task":      req.Task,
+				"run_id":  req.RunID,
+				"agent":   req.Agent,
+				"project": req.Project,
+				"task":    req.Task,
 			},
 		},
+	}, nil
+}
+
+// ToolRequestMockProvider returns JSON simulating an LLM that requests a tool call.
+// This is used for V3 tool execution tests.
+type ToolRequestMockProvider struct {
+	toolName  string
+	toolInput map[string]any
+}
+
+// NewToolRequestMockProvider creates a provider that returns a tool_request JSON response.
+func NewToolRequestMockProvider(toolName string, toolInput map[string]any) *ToolRequestMockProvider {
+	return &ToolRequestMockProvider{
+		toolName:  toolName,
+		toolInput: toolInput,
+	}
+}
+
+// Generate returns a JSON string representing a tool request.
+func (p *ToolRequestMockProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
+	start := time.Now()
+	select {
+	case <-ctx.Done():
+		return GenerateResponse{}, ctx.Err()
+	case <-time.After(10 * time.Millisecond):
+	}
+	latency := time.Since(start).Milliseconds()
+
+	// Build tool_request JSON
+	inputJSON, _ := json.Marshal(p.toolInput)
+	text := fmt.Sprintf(`{"type": "tool_request", "tool": "%s", "input": %s}`, p.toolName, string(inputJSON))
+
+	return GenerateResponse{
+		Text:         text,
+		Model:        "mock-model",
+		Provider:     MockProviderName,
+		LatencyMS:    latency,
+		PromptTokens: len(req.Prompt) / 4,
+		OutputTokens: 50,
 	}, nil
 }
