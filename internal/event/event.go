@@ -195,6 +195,34 @@ func EventFromBytes(data []byte) (Event, error) {
 	return evt, err
 }
 
+// V5EventTypes defines the event types introduced in V5 (validation + review pipeline).
+var V5EventTypes = struct {
+	// Validation lifecycle
+	ValidationRequested string
+	ValidationStarted   string
+	ValidationCompleted string
+	ValidationFailed    string
+	ValidationSkipped   string
+	ValidationTimeout   string
+
+	// Review lifecycle
+	ReviewRequested string
+	ReviewStarted   string
+	ReviewCompleted string
+	ReviewFailed    string
+}{
+	ValidationRequested: "prism.validation.requested",
+	ValidationStarted:   "prism.validation.started",
+	ValidationCompleted: "prism.validation.completed",
+	ValidationFailed:    "prism.validation.failed",
+	ValidationSkipped:   "prism.validation.skipped",
+	ValidationTimeout:   "prism.validation.timeout",
+	ReviewRequested:     "prism.review.requested",
+	ReviewStarted:       "prism.review.started",
+	ReviewCompleted:     "prism.review.completed",
+	ReviewFailed:        "prism.review.failed",
+}
+
 // V4EventTypes defines the event types introduced in V4 (approval-gated mutations).
 var V4EventTypes = struct {
 	// Approval lifecycle
@@ -247,6 +275,27 @@ type Summary struct {
 	// V4 approval and mutation fields
 	Approvals []ApprovalSummary `json:"approvals,omitempty"`
 	Mutations []MutationSummary `json:"mutations,omitempty"`
+
+	// V5 validation and review fields
+	Validations []ValidationSummary `json:"validations,omitempty"`
+	Reviews     []ReviewSummary     `json:"reviews,omitempty"`
+}
+
+// ValidationSummary records a validation run in the summary.
+type ValidationSummary struct {
+	Profile    string `json:"profile"`
+	Status     string `json:"status"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMs int64  `json:"duration_ms"`
+	ResultPath string `json:"result_path,omitempty"`
+}
+
+// ReviewSummary records a review in the summary.
+type ReviewSummary struct {
+	Reviewer       string `json:"reviewer"`
+	Status         string `json:"status"`
+	Recommendation string `json:"recommendation"`
+	ArtifactPath   string `json:"artifact_path,omitempty"`
 }
 
 // ToolCallSummary records a single tool call in the run summary.
