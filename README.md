@@ -1,37 +1,41 @@
 # Prism — Event-Native AI Agent Platform
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 adds controlled tool execution — giving agents safe, observable, policy-gated hands while keeping the framework in control.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations — the agent may propose a file change, but Prism will not apply it until a human operator explicitly approves.
 
-## V3 Status
+## V4 Status
 
-V3 adds controlled tool execution with a deterministic permission policy. The model may request a tool, but Prism decides whether it runs.
+V4 adds approval-gated mutations. The agent may propose a file change, but Prism will not apply it until a human operator explicitly approves. Every step is evented and auditable.
 
-**Included in V3:**
-- Everything in V1 and V2
-- Tool registry (`internal/tool/`) — register, list, resolve, validate, execute
-- Built-in safe tools: `echo`, `list_dir`, `read_file`, `write_file_dry_run`
-- Deterministic permission policy (approved/denied/requires_approval)
-- Path traversal blocking for `list_dir` and `read_file`
-- Tool events: `prism.tool.requested`, `prism.tool.approved`, `prism.tool.denied`, `prism.tool.started`, `prism.tool.completed`, `prism.tool.failed`
-- Agent tool request parsing (`{"type": "tool_request", "tool": "...", "input": {...}}`)
-- CLI tool subcommands: `prism-cli tool list`, `prism-cli tool run <name> --input '{...}'`
-- `tool_result.json` artifact for tool execution results
-- `tool_calls` array in `summary.json`
-- One tool call per run (no recursive loops in V3)
+**Included in V4:**
+- Everything in V1, V2, and V3
+- Approval model (`internal/approval/`) — pending → approved/denied state machine, ID generation, file-based persistence
+- Mutation executor (`internal/mutation/`) — safe file write after approval, workspace-scoped, path traversal protection
+- `write_file_proposal` tool — validates path/content, creates pending approval, emits events, returns approval_id
+- Approval events: `prism.approval.requested`, `prism.approval.granted`, `prism.approval.denied`, `prism.approval.expired`
+- Mutation events: `prism.mutation.proposed`, `prism.mutation.validated`, `prism.mutation.applied`, `prism.mutation.failed`
+- CLI approval commands: `prism approval list`, `prism approval show`, `prism approval approve`, `prism approval deny`
+- Approval artifacts: `runs/<run_id>/approvals/<approval_id>.json`
+- `approvals` and `mutations` arrays in `summary.json`
+- Updated prompt builder with V4 mutation instructions
+- Updated policy: `write_file_proposal` → requires_approval, direct write → denied
 
-**Safety model:**
-- `echo` → always approved (returns input text)
-- `list_dir` → approved only if path is within workspace root
-- `read_file` → approved if path within workspace root and file ≤ 1MB
-- `write_file_dry_run` → always approved (returns preview, does NOT write to disk)
-- All other tools → denied
-- Path traversal with `..` or absolute paths outside workspace → denied
-- Policy is deterministic — the LLM does NOT decide policy
+**Safety model (V4 additions):**
+- `write_file_proposal` → requires_approval (creates pending approval, does NOT write to disk)
+- Direct `write_file` without approval → denied
+- No LLM self-approval — the model proposes, a human operator approves
+- No writes outside project workspace root
+- No path traversal (`..`) or absolute paths outside workspace
+- No destructive deletes
+- No shell execution
+- No recursive autonomous loops
+- If ambiguous, deny the operation
 
-**Not included in V3:**
+**Not included in V4:**
 - Multi-agent orchestration
-- Real file writes or shell execution
-- Approval UI or human approval workflow
+- Shell command execution
+- `apply_patch` proposal (documented as V5 candidate)
+- Approval UI / web dashboard
+- Background approval workers
 - Recursive autonomous tool loops
 - Dashboard
 - Discord/Telegram channel workflows
@@ -102,13 +106,15 @@ go build -o prism-agent.exe ./cmd/prism-agent/
 go test ./...
 ```
 
-104 tests across 6 packages:
-- `internal/agent` — placeholder agent, delay, V3 tool request parsing
+134 tests across 8 packages:
+- `internal/agent` — placeholder agent, delay, V3 tool request parsing, V4 mutation prompt
+- `internal/approval` — approval model, state machine, store, transitions, ID generation
 - `internal/event` — IDs, event creation, JSON round-trip, security
+- `internal/mutation` — executor, approved write, denied/pending/unsafe paths, failed mutation
 - `internal/prompt` — prompt builder, context injection, output writing
 - `internal/provider` — mock provider, failing mock, Ollama provider (httptest)
-- `internal/run` — V1 lifecycle, V2 lifecycle, V3 tool lifecycle, memory, correlation, parent chains
-- `internal/tool` — registry, policy, executor, built-in tools, path traversal protection
+- `internal/run` — V1 lifecycle, V2 lifecycle, V3 tool lifecycle, V4 approval lifecycle, memory, correlation, parent chains
+- `internal/tool` — registry, policy, executor, built-in tools, path traversal protection, write_file_proposal
 
 ### 3. Start the Bus
 
@@ -359,6 +365,47 @@ prism.agent.failed
 prism.task.failed
 ```
 
+### V4 Mutation Proposal
+
+```text
+prism.task.created
+prism.task.started
+prism.agent.started
+prism.llm.requested
+prism.llm.completed
+prism.tool.requested
+prism.tool.approved
+prism.tool.started
+prism.mutation.proposed
+prism.approval.requested
+prism.tool.completed
+prism.agent.completed
+prism.output.written
+prism.task.completed
+```
+
+### V4 Approval Granted and Mutation Applied
+
+```text
+prism.approval.granted
+prism.mutation.validated
+prism.mutation.applied
+```
+
+### V4 Approval Denied
+
+```text
+prism.approval.denied
+```
+
+### V4 Mutation Failed After Approval
+
+```text
+prism.approval.granted
+prism.mutation.validated
+prism.mutation.failed
+```
+
 Every event carries a `parent_id` linking it to its direct causal predecessor, forming a traceable chain from `task.created` to `task.completed/failed`.
 
 ## Run Artifacts
@@ -368,10 +415,12 @@ Each run creates a directory under `runs/`:
 ```text
 runs/<run_id>/
   events.jsonl       ← durable event audit trail (one JSON object per line)
-  summary.json       ← run metadata: status, provider, model, duration, tool_calls, artifact paths
+  summary.json       ← run metadata: status, provider, model, duration, tool_calls, approvals, mutations, artifact paths
   prompt.md           ← exact prompt sent to the provider
   output.md           ← model-generated output
   tool_result.json     ← tool execution result (if a tool was called)
+  approvals/
+    <approval_id>.json  ← approval request artifact (if a mutation was proposed)
 ```
 
 - `events.jsonl` — every event in the lifecycle, with IDs, types, timestamps, payloads, and parent chains
@@ -673,12 +722,18 @@ ollama pull qwen2.5:7b
 - One tool call per run
 - tool_result.json and tool_calls in summary.json
 
-### V4 — Planned
-- Multi-agent orchestration
-- Agent handoff events
-- Planner/developer/reviewer workflows
+### V4 — Current
+- Approval-gated mutations
+- `write_file_proposal` tool
+- Approval state machine (pending → approved/denied)
+- CLI approval commands (list, show, approve, deny)
+- Mutation executor with safety checks
+- Approval/mutation events
+- Approval artifacts persisted to runs/
+- `apply_patch` support planned for V5
 
 ### V5 — Planned
+- `apply_patch` proposal tool
 - Dashboard
 - Channel workflows (Discord, Telegram)
 - OpenClaw migration
@@ -701,12 +756,14 @@ prism/
 │   ├── prism-bus/        # Embedded NATS JetStream server
 │   └── prism-agent/      # Agent runtime (subscribes, processes, publishes)
 ├── internal/
-│   ├── event/            # Canonical event schema (V1 + V2 + V3 types)
-│   ├── run/              # Run orchestrator (V1 + V2 + V3 lifecycle)
+│   ├── approval/         # Approval model, state machine, file-based store (V4)
+│   ├── event/            # Canonical event schema (V1 + V2 + V3 + V4 types)
+│   ├── mutation/         # Mutation executor — safe file write after approval (V4)
+│   ├── run/              # Run orchestrator (V1 + V2 + V3 + V4 lifecycle)
 │   ├── prompt/           # Prompt builder (prompt.md assembly)
 │   ├── provider/         # Provider interface, MockProvider, OllamaProvider
-│   ├── agent/            # Placeholder agent + V3 tool request parser
-│   ├── tool/             # Tool registry, policy, executor, builtins (V3)
+│   ├── agent/            # Placeholder agent + V3/V4 tool/mutation request parser
+│   ├── tool/             # Tool registry, policy, executor, builtins (V3+V4)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
@@ -761,6 +818,52 @@ prism/
 | Tool Started | `prism.tool.started` | Tool execution begins |
 | Tool Completed | `prism.tool.completed` | Tool execution succeeds |
 | Tool Failed | `prism.tool.failed` | Tool execution fails |
+
+### V4 Events (approval and mutation)
+
+| Event | Subject | Description |
+|-------|---------|-------------|
+| Approval Requested | `prism.approval.requested` | Mutation proposal requires approval |
+| Approval Granted | `prism.approval.granted` | Operator approves the mutation |
+| Approval Denied | `prism.approval.denied` | Operator denies the mutation |
+| Approval Expired | `prism.approval.expired` | Approval request expired |
+| Mutation Proposed | `prism.mutation.proposed` | File mutation proposal created |
+| Mutation Validated | `prism.mutation.validated` | Mutation passed safety validation |
+| Mutation Applied | `prism.mutation.applied` | Mutation successfully written to disk |
+| Mutation Failed | `prism.mutation.failed` | Mutation application failed |
+
+## Approval Commands (V4)
+
+Prism V4 includes CLI commands for managing approval-gated mutations:
+
+```bash
+# List all pending approvals
+./prism approval list
+
+# List approvals for a specific run
+./prism approval list --run run_01KRC7AQXBM1Y5ZY0QEBG56JTC
+
+# Show approval details
+./prism approval show appr_01KRC7AQT3WNFK0PV7 --run run_01KRC7AQXBM1Y5ZY0QEBG56JTC
+
+# Approve a mutation (writes file to disk)
+./prism approval approve appr_01KRC7AQT3WNFK0PV7 --by ema --run run_01KRC7AQXBM1Y5ZY0QEBG56JTC
+
+# Deny a mutation (does not write)
+./prism approval deny appr_01KRC7AQT3WNFK0PV7 --by ema --run run_01KRC7AQXBM1Y5ZY0QEBG56JTC --reason "Not needed"
+```
+
+When a mutation is approved, Prism:
+1. Validates the target path is within workspace root
+2. Emits `prism.approval.granted`
+3. Emits `prism.mutation.validated`
+4. Writes the file to disk
+5. Emits `prism.mutation.applied`
+
+When denied, Prism:
+1. Emits `prism.approval.denied`
+2. Marks the approval as denied
+3. Does NOT write to disk
 
 ## Event Schema
 
