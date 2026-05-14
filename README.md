@@ -582,6 +582,22 @@ go build -o prism-agent.exe ./cmd/prism-agent/
 | `--memory-url` | `http://localhost:18790` | Remembrance API URL |
 | `--run-dir` | `./runs` | Run artifact output directory |
 
+### V3 Tool CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `prism tool list` | List all registered built-in tools |
+| `prism tool run <name> --input '{...}'` | Run a tool directly |
+
+Tool run flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--input` | `{}` | JSON input for the tool |
+| `--project` | `prism` | Project name for the tool call |
+| `--workspace` | `.` | Workspace root directory (constrains path-based tools) |
+| `--max-file-size` | `1048576` | Max file size in bytes for read_file |
+
 All configuration is done via CLI flags (see above). There are no required environment variables. `--bus-url`, `--ollama-url`, and `--memory-url` accept custom endpoints.
 
 ## Troubleshooting
