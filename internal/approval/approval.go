@@ -1,0 +1,148 @@
+// Package approval implements Prism V4's approval-gated mutation model.
+// Approvals are the gate between an agent proposing a file change and Prism
+// actually performing it. Every approval is persisted as a JSON artifact and
+// every state transition is emitted as an event.
+package approval
+
+import (
+	"crypto/rand"
+	"fmt"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+)
+
+// Status constants for the approval state machine.
+const (
+	StatusPending  = "pending"
+	StatusApproved = "approved"
+	StatusDenied   = "denied"
+	StatusExpired  = "expired"
+)
+
+// MutationType constants.
+const (
+	MutationWriteFile  = "write_file"
+	MutationApplyPatch = "apply_patch"
+)
+
+// PolicyDecision constants.
+const (
+	DecisionRequiresApproval = "requires_approval"
+	DecisionApproved         = "approved"
+	DecisionDenied           = "denied"
+)
+
+// Approval represents a pending, approved, or denied file mutation.
+type Approval struct {
+	ApprovalID    string     `json:"approval_id"`
+	RunID         string     `json:"run_id"`
+	CorrelationID string     `json:"correlation_id"`
+	Status        string     `json:"status"` // pending, approved, denied, expired
+	RequestedBy   string     `json:"requested_by"`
+	Project       string     `json:"project"`
+	MutationType  string     `json:"mutation_type"` // write_file, apply_patch
+	TargetPath    string     `json:"target_path"`
+	Content       string     `json:"content,omitempty"`
+	Preview       string     `json:"preview,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	ApprovedBy    string     `json:"approved_by,omitempty"`
+	ApprovedAt    *time.Time `json:"approved_at,omitempty"`
+	DeniedBy      string     `json:"denied_by,omitempty"`
+	DeniedAt      *time.Time `json:"denied_at,omitempty"`
+	DenialReason  string     `json:"denial_reason,omitempty"`
+	Policy        PolicyDecision `json:"policy"`
+}
+
+// PolicyDecision captures the policy outcome that led to this approval request.
+type PolicyDecision struct {
+	Decision string `json:"decision"` // requires_approval, approved, denied
+	Reason   string `json:"reason"`
+}
+
+// NewApprovalID generates a unique approval ID.
+// Format: appr_<ulid>
+func NewApprovalID() string {
+	id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader)
+	return fmt.Sprintf("appr_%s", id.String())
+}
+
+// NewApproval creates a new Approval in pending status.
+func NewApproval(runID, correlationID, requestedBy, project, mutationType, targetPath, content string, policy PolicyDecision) *Approval {
+	now := time.Now().UTC()
+	var preview string
+	if content != "" {
+		// Show first 500 chars of content as preview
+		previewLen := len(content)
+		if previewLen > 500 {
+			previewLen = 500
+		}
+		preview = content[:previewLen]
+		if len(content) > 500 {
+			preview += "..."
+		}
+	}
+
+	return &Approval{
+		ApprovalID:    NewApprovalID(),
+		RunID:         runID,
+		CorrelationID: correlationID,
+		Status:        StatusPending,
+		RequestedBy:   requestedBy,
+		Project:       project,
+		MutationType:  mutationType,
+		TargetPath:    targetPath,
+		Content:       content,
+		Preview:       preview,
+		CreatedAt:     now,
+		Policy:        policy,
+	}
+}
+
+// Approve transitions the approval from pending to approved.
+// Returns an error if the status is not pending or is already denied.
+func (a *Approval) Approve(approvedBy string) error {
+	if a.Status == StatusDenied {
+		return fmt.Errorf("cannot approve approval %s: already denied", a.ApprovalID)
+	}
+	if a.Status == StatusApproved {
+		return fmt.Errorf("cannot approve approval %s: already approved", a.ApprovalID)
+	}
+	if a.Status == StatusExpired {
+		return fmt.Errorf("cannot approve approval %s: already expired", a.ApprovalID)
+	}
+	if a.Status != StatusPending {
+		return fmt.Errorf("cannot approve approval %s: status is %q", a.ApprovalID, a.Status)
+	}
+
+	now := time.Now().UTC()
+	a.Status = StatusApproved
+	a.ApprovedBy = approvedBy
+	a.ApprovedAt = &now
+	return nil
+}
+
+// Deny transitions the approval from pending to denied.
+// Returns an error if the status is not pending or is already approved.
+func (a *Approval) Deny(deniedBy, reason string) error {
+	if a.Status == StatusApproved {
+		return fmt.Errorf("cannot deny approval %s: already approved", a.ApprovalID)
+	}
+	if a.Status == StatusDenied {
+		return fmt.Errorf("cannot deny approval %s: already denied", a.ApprovalID)
+	}
+	if a.Status == StatusExpired {
+		return fmt.Errorf("cannot deny approval %s: already expired", a.ApprovalID)
+	}
+	if a.Status != StatusPending {
+		return fmt.Errorf("cannot deny approval %s: status is %q", a.ApprovalID, a.Status)
+	}
+
+	now := time.Now().UTC()
+	a.Status = StatusDenied
+	a.DeniedBy = deniedBy
+	a.DeniedAt = &now
+	a.DenialReason = reason
+	return nil
+}

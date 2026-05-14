@@ -50,6 +50,9 @@ type RunConfig struct {
 	ToolRegistry *tool.Registry
 	ToolPolicy   tool.PolicyConfig
 	ToolExecutor *tool.Executor
+
+	// V4 approval-gated mutation configuration
+	ApprovalStoreDir string // directory for approval artifacts (default: derived from RunDir)
 }
 
 // RunResult holds the result of a completed run.
@@ -384,8 +387,11 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// 10b. V3: Parse LLM output for tool request
 	var toolCallSummaries []event.ToolCallSummary
+	var approvalSummaries []event.ApprovalSummary
+	var mutationSummaries []event.MutationSummary
 	var toolResult *tool.ToolResult
 	outputText := genResp.Text // default: use raw LLM output
+	pendingApproval := false   // V4: whether the run is pending approval
 
 	if r.config.ToolExecutor != nil {
 		agentResp := agentpkg.ParseAgentOutput(genResp.Text)
@@ -407,10 +413,61 @@ func (r *Runner) Run() (*RunResult, error) {
 			toolResult = &toolResultVal
 			err = execErr
 
+			policyResult := tool.EvaluatePolicy(r.config.ToolPolicy, agentResp.ToolName, agentResp.ToolInput)
+
+			// V4: Check if this is pending approval
+			if policyResult.Decision == tool.PolicyRequiresApproval {
+				pendingApproval = true
+
+				// Capture content for approval artifact
+				proposalContent := ""
+				if c, ok := agentResp.ToolInput["content"]; ok {
+					if cs, ok := c.(string); ok {
+						proposalContent = cs
+					}
+				}
+
+				// Emit mutation.proposed
+				r.emit(event.V4EventTypes.MutationProposed, "prism-cli", map[string]any{
+					"tool_name":       agentResp.ToolName,
+					"mutation_type":   "write_file",
+					"target_path":     agentResp.ToolInput["path"],
+					"correlation_id":  r.correlationID,
+					"policy_decision": string(policyResult.Decision),
+					"policy_reason":   policyResult.Reason,
+				})
+
+				// Emit approval.requested
+				r.emit(event.V4EventTypes.ApprovalRequested, "prism-cli", map[string]any{
+					"tool_name":       agentResp.ToolName,
+					"correlation_id":  r.correlationID,
+					"policy_decision": string(policyResult.Decision),
+					"policy_reason":   policyResult.Reason,
+				})
+
+				// Build approval summary
+				if toolResult != nil && toolResult.Output != nil {
+					approvalID, _ := toolResult.Output["approval_id"].(string)
+					targetPath, _ := toolResult.Output["target_path"].(string)
+
+					// Store content in tool result output for later artifact writing
+					toolResult.Output["_proposal_content"] = proposalContent
+
+					approvalSummaries = append(approvalSummaries, event.ApprovalSummary{
+						ApprovalID:    approvalID,
+						MutationType:  "write_file",
+						TargetPath:    targetPath,
+						Status:        "pending",
+						RequestedBy:   r.config.Agent,
+						PolicyDecision: string(policyResult.Decision),
+					})
+				}
+			}
+
 			// Build tool call summary
 			toolCallSummaries = append(toolCallSummaries, event.ToolCallSummary{
 				ToolName:       agentResp.ToolName,
-				PolicyDecision: string(tool.EvaluatePolicy(r.config.ToolPolicy, agentResp.ToolName, agentResp.ToolInput).Decision),
+				PolicyDecision: string(policyResult.Decision),
 				Status:         toolResultStatus(toolResult, err),
 			})
 
@@ -466,22 +523,63 @@ func (r *Runner) Run() (*RunResult, error) {
 		"output_bytes": len(outputText),
 	}, agentCompletedEvt.ID)
 
-	// 13. Emit task.completed
-	r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
-		"task":    r.config.Task,
-		"project": r.config.Project,
-		"agent":   r.config.Agent,
-		"status":  "completed",
-	}, agentCompletedEvt.ID)
+	// 13. Determine run status (V4: pending_approval if mutation requires approval)
+	runStatus := "completed"
+	if pendingApproval {
+		runStatus = "pending_approval"
+	}
 
-	// 14. Persist event log and summary
+	// 14. Emit task.completed
+	taskCompletedEvt := r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
+		"task":             r.config.Task,
+		"project":          r.config.Project,
+		"agent":            r.config.Agent,
+		"status":           runStatus,
+	}, agentCompletedEvt.ID)
+	_ = taskCompletedEvt
+
+	// Emit approval.expired if applicable (when approval has expiration)
+	if pendingApproval && toolResult != nil {
+		// For now, no expiration in basic V4
+	}
+
+	// 15. Persist event log and summary
 	completedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	durationMs := r.calculateDuration()
+
+	// Write approval artifact if one was created
+	if pendingApproval && toolResult != nil && toolResult.Output != nil {
+		// Write approval.json alongside the run artifacts
+		if approvalID, ok := toolResult.Output["approval_id"].(string); ok {
+			approvalDir := filepath.Join(runDir, "approvals")
+			os.MkdirAll(approvalDir, 0755)
+			approvalPath := filepath.Join(approvalDir, fmt.Sprintf("%s.json", approvalID))
+			approvalData, _ := json.MarshalIndent(map[string]any{
+				"approval_id":     approvalID,
+				"run_id":          r.runID,
+				"correlation_id":  r.correlationID,
+				"status":          "pending",
+				"requested_by":    r.config.Agent,
+				"project":         r.config.Project,
+				"mutation_type":   toolResult.Output["mutation_type"],
+				"target_path":     toolResult.Output["target_path"],
+				"content":         toolResult.Output["_proposal_content"],
+				"preview":         toolResult.Output["preview"],
+				"created_at":      time.Now().UTC().Format(time.RFC3339Nano),
+				"policy":          map[string]any{
+					"decision": "requires_approval",
+					"reason":   "file writes require explicit approval",
+				},
+			}, "", "  ")
+			os.WriteFile(approvalPath, append(approvalData, '\n'), 0644)
+			log.Printf("prism: approval artifact written to %s", approvalPath)
+		}
+	}
 
 	summary := event.Summary{
 		RunID:         r.runID,
 		CorrelationID: r.correlationID,
-		Status:        "completed",
+		Status:        runStatus,
 		EventCount:    len(r.events),
 		StartedAt:     r.startedAt,
 		CompletedAt:   completedAt,
@@ -498,6 +596,9 @@ func (r *Runner) Run() (*RunResult, error) {
 		MemoryStatus: memoryStatus,
 		LLMLatencyMs: genResp.LatencyMS,
 		ToolCalls:    toolCallSummaries,
+		// V4 fields
+		Approvals: approvalSummaries,
+		Mutations: mutationSummaries,
 	}
 
 	eventsPath, summaryPath, err := r.persist(summary)
