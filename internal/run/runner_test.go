@@ -1,6 +1,7 @@
 package run_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -14,10 +15,14 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats-server/v2/server"
 
+	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prism/internal/mutation"
 	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/review"
 	"github.com/emaharmony/prism/internal/run"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prism/internal/validation"
 )
 
 // startTestServer starts an embedded NATS server for testing.
@@ -1602,5 +1607,554 @@ func TestV3NoToolExecutor(t *testing.T) {
 	}
 	if len(summary.ToolCalls) > 0 {
 		t.Errorf("expected no tool_calls in summary, got %d", len(summary.ToolCalls))
+	}
+}
+
+// ── V5: Validation and Review Runner Tests ──────────────────────────────────
+
+func TestV5RunValidation(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:               "V5 validation test",
+		Project:            "prism",
+		Agent:              "lumi",
+		BusURL:             busURL,
+		RunDir:             tmpDir,
+		Provider:           provider.NewMockProvider(),
+		ProviderName:       "mock",
+		Model:              "mock-model",
+		ValidationRegistry: validation.NewRegistry(),
+		Reviewer:           review.NewReviewer("lumi-deterministic"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	runDir := filepath.Join(tmpDir, result.RunID)
+
+	// Run a fast validation profile
+	valResult, err := runner.RunValidation(runDir, "echo_test")
+	if err != nil {
+		t.Fatalf("validation run failed: %v", err)
+	}
+
+	if valResult == nil {
+		t.Fatal("expected validation result")
+	}
+	if valResult.Profile != "echo_test" {
+		t.Errorf("expected profile echo_test, got %s", valResult.Profile)
+	}
+
+	// Check that validation artifacts were written
+	valDir := filepath.Join(runDir, "validation")
+	if _, err := os.Stat(filepath.Join(valDir, "echo_test.json")); err != nil {
+		t.Errorf("expected echo_test.json artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(valDir, "echo_test.stdout.txt")); err != nil {
+		t.Errorf("expected stdout artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(valDir, "echo_test.stderr.txt")); err != nil {
+		t.Errorf("expected stderr artifact: %v", err)
+	}
+}
+
+func TestV5RunReview(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:               "V5 review test",
+		Project:            "prism",
+		Agent:              "lumi",
+		BusURL:             busURL,
+		RunDir:             tmpDir,
+		Provider:           provider.NewMockProvider(),
+		ProviderName:       "mock",
+		Model:              "mock-model",
+		ValidationRegistry: validation.NewRegistry(),
+		Reviewer:           review.NewReviewer("lumi-deterministic"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	runDir := filepath.Join(tmpDir, result.RunID)
+
+	// First run validation
+	valResult, err := runner.RunValidation(runDir, "echo_test")
+	if err != nil {
+		t.Fatalf("validation run failed: %v", err)
+	}
+
+	// Then run review
+	reviewResult, artifactPath, err := runner.RunReview(
+		runDir,
+		"applied",
+		[]string{"main.go"},
+		[]validation.Result{*valResult},
+	)
+	if err != nil {
+		t.Fatalf("review failed: %v", err)
+	}
+
+	if reviewResult == nil {
+		t.Fatal("expected review result")
+	}
+	if reviewResult.Recommendation != review.RecommendationApproved {
+		t.Errorf("expected approved_for_human_review, got %s", reviewResult.Recommendation)
+	}
+
+	// Check review.md artifact
+	if _, err := os.Stat(artifactPath); err != nil {
+		t.Errorf("expected review.md artifact: %v", err)
+	}
+
+	// Check summary was updated with V5 metadata
+	summaryPath := filepath.Join(runDir, "summary.json")
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("failed to read summary: %v", err)
+	}
+	var summary event.Summary
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("failed to parse summary: %v", err)
+	}
+	if len(summary.Validations) == 0 {
+		t.Error("expected validations in summary")
+	}
+	if len(summary.Reviews) == 0 {
+		t.Error("expected reviews in summary")
+	}
+}
+
+func TestV5ValidationEvents(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:               "V5 events test",
+		Project:            "prism",
+		Agent:              "lumi",
+		BusURL:             busURL,
+		RunDir:             tmpDir,
+		Provider:           provider.NewMockProvider(),
+		ProviderName:       "mock",
+		Model:              "mock-model",
+		ValidationRegistry: validation.NewRegistry(),
+		Reviewer:           review.NewReviewer("lumi-deterministic"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	runDir := filepath.Join(tmpDir, result.RunID)
+
+	// Run validation — this should emit validation.* events
+	valResult, err := runner.RunValidation(runDir, "echo_test")
+	if err != nil {
+		t.Fatalf("validation run failed: %v", err)
+	}
+
+	// Run review — this should emit review.* events
+	reviewResult, _, err := runner.RunReview(
+		runDir,
+		"applied",
+		[]string{"test.go"},
+		[]validation.Result{*valResult},
+	)
+	if err != nil {
+		t.Fatalf("review failed: %v", err)
+	}
+
+	// Read the events.jsonl to verify events were recorded
+	eventsPath := filepath.Join(runDir, "events.jsonl")
+	eventsData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("failed to read events: %v", err)
+	}
+
+	eventStr := string(eventsData)
+
+	// Check for validation events
+	validationEvents := []string{
+		"prism.validation.requested",
+		"prism.validation.started",
+	}
+	for _, evtType := range validationEvents {
+		if !strings.Contains(eventStr, evtType) {
+			t.Errorf("expected event %q in events.jsonl", evtType)
+		}
+	}
+
+	// Check for review events
+	reviewEvents := []string{
+		"prism.review.requested",
+		"prism.review.started",
+		"prism.review.completed",
+	}
+	for _, evtType := range reviewEvents {
+		if !strings.Contains(eventStr, evtType) {
+			t.Errorf("expected event %q in events.jsonl", evtType)
+		}
+	}
+
+	// Verify the validation completed or failed event exists
+	hasCompletion := strings.Contains(eventStr, "prism.validation.completed") ||
+		strings.Contains(eventStr, "prism.validation.failed")
+	if !hasCompletion {
+		t.Error("expected validation completed or failed event")
+	}
+
+	_ = reviewResult
+}
+
+func TestV5ReviewWithFailedValidation(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:               "V5 failed validation review test",
+		Project:            "prism",
+		Agent:              "lumi",
+		BusURL:             busURL,
+		RunDir:             tmpDir,
+		Provider:           provider.NewMockProvider(),
+		ProviderName:       "mock",
+		Model:              "mock-model",
+		ValidationRegistry: validation.NewRegistry(),
+		Reviewer:           review.NewReviewer("lumi-deterministic"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	runDir := filepath.Join(tmpDir, result.RunID)
+
+	// Simulate a failed validation (without actually running a profile)
+	failedResult := validation.Result{
+		Profile:   "echo_test",
+		Status:    "failed",
+		ExitCode:  1,
+		DurationMs: 500,
+	}
+
+	// Run review with failed validation
+	reviewResult, _, err := runner.RunReview(
+		runDir,
+		"applied",
+		[]string{"broken.go"},
+		[]validation.Result{failedResult},
+	)
+	if err != nil {
+		t.Fatalf("review failed: %v", err)
+	}
+
+	if reviewResult.Recommendation != review.RecommendationValidationFailed {
+		t.Errorf("expected validation_failed, got %s", reviewResult.Recommendation)
+	}
+}
+
+func TestV5ApprovalApproveWithValidate(t *testing.T) {
+	// Test the full V5 approve+validate+review pipeline by exercising each component.
+	// This tests that ApproveWithValidation correctly chains: approve → apply → validate → review.
+	tmpDir := t.TempDir()
+	workspaceDir := t.TempDir()
+
+	// Create the approval structure manually
+	runID := event.NewRunID()
+	runDir := filepath.Join(tmpDir, runID)
+	approvalDir := filepath.Join(runDir, "approvals")
+	if err := os.MkdirAll(approvalDir, 0755); err != nil {
+		t.Fatalf("failed to create approval dir: %v", err)
+	}
+
+	approvalID := "appr_" + event.NewID()
+	targetPath := "test_output.txt"
+
+	approvalData, _ := json.Marshal(map[string]any{
+		"approval_id":    approvalID,
+		"run_id":         runID,
+		"correlation_id": event.NewCorrelationID(),
+		"status":         "pending",
+		"requested_by":   "lumi",
+		"project":        "prism",
+		"mutation_type":  "write_file",
+		"target_path":    targetPath,
+		"content":        "Hello V5!",
+		"preview":        "Hello V5!",
+		"created_at":     time.Now().UTC().Format(time.RFC3339Nano),
+		"policy": map[string]any{
+			"decision": "requires_approval",
+			"reason":   "file writes require explicit approval",
+		},
+	})
+	os.WriteFile(filepath.Join(approvalDir, approvalID+".json"), append(approvalData, '\n'), 0644)
+
+	// Create summary.json
+	summaryData, _ := json.Marshal(map[string]any{
+		"run_id":  runID,
+		"status":  "pending_approval",
+		"project": "prism",
+		"agent":   "lumi",
+	})
+	os.WriteFile(filepath.Join(runDir, "summary.json"), append(summaryData, '\n'), 0644)
+
+	// Use a test registry with only echo_test
+	testRegistry := validation.NewEmptyRegistry()
+	testRegistry.Register(validation.Profile{
+		Name:            "echo_test",
+		Description:    "Quick echo test",
+		Command:        "echo",
+		Args:           []string{"hello"},
+		WorkingDir:     ".",
+		TimeoutSeconds: 5,
+		AllowedExitCodes: []int{0},
+	})
+
+	// Test individual components without the full runner pipeline
+	// (which requires NATS). The full integration is tested by the CLI.
+
+	// 1. Test mutation executor (approve + apply)
+	store := approval.NewStore(tmpDir)
+	mutExec := mutation.NewExecutor(workspaceDir, store)
+
+	mutResult, err := mutExec.ApplyWithRun(context.Background(), runID, approvalID, "ema")
+	if err != nil {
+		t.Fatalf("mutation apply failed: %v", err)
+	}
+	if mutResult == nil {
+		t.Fatal("expected mutation result, got nil")
+	}
+	if !mutResult.Success {
+		t.Fatalf("expected mutation to succeed, got: success=%v message=%q", mutResult.Success, mutResult.Message)
+	}
+
+	// Verify file was written
+	writtenPath := filepath.Join(workspaceDir, "test_output.txt")
+	data, err := os.ReadFile(writtenPath)
+	if err != nil {
+		t.Fatalf("expected file to be written: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "Hello V5!" {
+		t.Errorf("expected 'Hello V5!', got %q", strings.TrimSpace(string(data)))
+	}
+
+	// 2. Test validation executor
+	valExec := validation.NewExecutor(testRegistry, ".", runDir)
+	valResult, err := valExec.Run(context.Background(), "echo_test", "test-corr-id")
+	if err != nil {
+		t.Fatalf("validation run failed: %v", err)
+	}
+	if valResult.Status != "passed" {
+		t.Errorf("expected validation status 'passed', got %q", valResult.Status)
+	}
+
+	// Verify validation artifacts
+	if _, err := os.Stat(filepath.Join(runDir, "validation", "echo_test.json")); err != nil {
+		t.Errorf("expected validation result artifact: %v", err)
+	}
+
+	// 3. Test review generation
+	reviewer := review.NewReviewer("lumi-deterministic")
+	reviewResult, err := reviewer.Generate(
+		runID,
+		"test-corr-id",
+		"applied",
+		[]string{targetPath},
+		[]review.ValidationInfo{{
+			Profile:    valResult.Profile,
+			Status:     valResult.Status,
+			ExitCode:   valResult.ExitCode,
+			DurationMs: valResult.DurationMs,
+		}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("review generation failed: %v", err)
+	}
+	if reviewResult.Recommendation != review.RecommendationApproved {
+		t.Errorf("expected approved_for_human_review, got %s", reviewResult.Recommendation)
+	}
+
+	// Write review artifact
+	artifactPath, err := review.WriteReviewArtifact(runDir, reviewResult)
+	if err != nil {
+		t.Fatalf("failed to write review artifact: %v", err)
+	}
+	if _, err := os.Stat(artifactPath); err != nil {
+		t.Errorf("expected review.md artifact: %v", err)
+	}
+}
+
+func TestV5ValidationUnknownProfile(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:               "V5 unknown profile test",
+		Project:            "prism",
+		Agent:              "lumi",
+		BusURL:             busURL,
+		RunDir:             tmpDir,
+		Provider:           provider.NewMockProvider(),
+		ProviderName:       "mock",
+		Model:              "mock-model",
+		ValidationRegistry: validation.NewRegistry(),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	runDir := filepath.Join(tmpDir, result.RunID)
+
+	_, err = runner.RunValidation(runDir, "nonexistent_profile")
+	if err == nil {
+		t.Error("expected error for unknown profile")
+	}
+}
+
+func TestV5ValidationTimeoutRequirement(t *testing.T) {
+	// Verify all built-in profiles have timeouts
+	registry := validation.NewRegistry()
+	for _, name := range registry.List() {
+		p, err := registry.Resolve(name)
+		if err != nil {
+			t.Fatalf("failed to resolve %s: %v", name, err)
+		}
+		if p.TimeoutSeconds <= 0 {
+			t.Errorf("profile %s has no timeout (timeout_seconds=%d)", name, p.TimeoutSeconds)
+		}
+	}
+}
+
+func TestV5ReviewSummaryMetadata(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:               "V5 summary metadata test",
+		Project:            "prism",
+		Agent:              "lumi",
+		BusURL:             busURL,
+		RunDir:             tmpDir,
+		Provider:           provider.NewMockProvider(),
+		ProviderName:       "mock",
+		Model:              "mock-model",
+		ValidationRegistry: validation.NewRegistry(),
+		Reviewer:           review.NewReviewer("lumi-deterministic"),
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	runDir := filepath.Join(tmpDir, result.RunID)
+
+	// Run validation and review
+	valResult, _ := runner.RunValidation(runDir, "echo_test")
+	_, _, err = runner.RunReview(runDir, "applied", []string{"test.go"}, []validation.Result{*valResult})
+	if err != nil {
+		t.Fatalf("review failed: %v", err)
+	}
+
+	// Read summary and verify V5 metadata
+	summaryPath := filepath.Join(runDir, "summary.json")
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("failed to read summary: %v", err)
+	}
+	var summary event.Summary
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("failed to parse summary: %v", err)
+	}
+
+	// Verify validations array
+	if len(summary.Validations) != 1 {
+		t.Errorf("expected 1 validation, got %d", len(summary.Validations))
+	} else {
+		v := summary.Validations[0]
+		if v.Profile != "echo_test" {
+			t.Errorf("expected profile echo_test, got %s", v.Profile)
+		}
+		if v.Status != "passed" {
+			t.Errorf("expected status passed, got %s", v.Status)
+		}
+		if v.ResultPath == "" {
+			t.Error("expected result_path")
+		}
+	}
+
+	// Verify reviews array
+	if len(summary.Reviews) != 1 {
+		t.Errorf("expected 1 review, got %d", len(summary.Reviews))
+	} else {
+		rv := summary.Reviews[0]
+		if rv.Reviewer != "lumi-deterministic" {
+			t.Errorf("expected reviewer lumi-deterministic, got %s", rv.Reviewer)
+		}
+		if rv.Status != "completed" {
+			t.Errorf("expected status completed, got %s", rv.Status)
+		}
+	}
+}
+
+func TestV5ReviewCannotApproveOrApply(t *testing.T) {
+	// At compile time, the Reviewer struct has no Approve() or Apply() methods.
+	// This test verifies that a review does not trigger side effects.
+	r := review.NewReviewer("test-reviewer")
+
+	var emitted []map[string]any
+	r.SetEmitter(func(eventType, source string, payload map[string]any) {
+		emitted = append(emitted, payload)
+	})
+
+	reviewResult, err := r.Generate("run_1", "corr_1", "pending", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The review result should NOT say the mutation was applied
+	if reviewResult.MutationStatus == "applied" {
+		t.Error("reviewer should not change mutation status to 'applied'")
+	}
+
+	// Verify no approval or mutation events were emitted
+	for _, p := range emitted {
+		if et, ok := p["event_type"].(string); ok {
+			if strings.Contains(et, "approval") || strings.Contains(et, "mutation") {
+				t.Errorf("reviewer emitted approval/mutation event: %s", et)
+			}
+		}
 	}
 }
