@@ -17,6 +17,7 @@ import (
 	"github.com/emaharmony/prism/internal/event"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/run"
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 // startTestServer starts an embedded NATS server for testing.
@@ -1272,5 +1273,334 @@ func startMockMemoryServer(t *testing.T) *mockMemoryServer {
 		URL:      fmt.Sprintf("http://%s", listener.Addr().String()),
 		listener: listener,
 		server:   server,
+	}
+}
+// ============================================================================
+// V3 Tests — Tool Execution
+// ============================================================================
+
+func TestV3ToolCallSummaryInSummary(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	// Set up tool registry and executor
+	registry := tool.NewRegistry()
+	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
+	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	executor := tool.NewExecutor(registry, policyConfig)
+
+	cfg := run.RunConfig{
+		Task:          "Test V3 tool call",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: false,
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      provider.NewToolRequestMockProvider("read_file", map[string]any{"path": "test.txt"}),
+		ProviderName:  "mock",
+		Model:         "mock-model",
+		ToolExecutor:  executor,
+		ToolPolicy:    policyConfig,
+	}
+
+	// Create a test file in the workspace
+	os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("hello world"), 0644)
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+
+	if err != nil {
+		t.Fatalf("V3 run failed: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", result.Status)
+	}
+
+	// Verify summary.json has tool_calls
+	summaryPath := filepath.Join(tmpDir, "runs", result.RunID, "summary.json")
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("failed to read summary.json: %v", err)
+	}
+
+	var summary event.Summary
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("failed to parse summary.json: %v", err)
+	}
+
+	if len(summary.ToolCalls) == 0 {
+		t.Error("expected at least 1 tool call in summary")
+	} else {
+		tc := summary.ToolCalls[0]
+		if tc.ToolName != "read_file" {
+			t.Errorf("expected tool_name 'read_file', got %s", tc.ToolName)
+		}
+		if tc.PolicyDecision != "approved" {
+			t.Errorf("expected policy_decision 'approved', got %s", tc.PolicyDecision)
+		}
+		if tc.Status != "completed" {
+			t.Errorf("expected status 'completed', got %s", tc.Status)
+		}
+	}
+}
+
+func TestV3ToolResultFileWritten(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	registry := tool.NewRegistry()
+	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
+	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	executor := tool.NewExecutor(registry, policyConfig)
+
+	// Create test file
+	os.WriteFile(filepath.Join(tmpDir, "hello.txt"), []byte("hello from prism"), 0644)
+
+	cfg := run.RunConfig{
+		Task:          "Test V3 tool result file",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: false,
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      provider.NewToolRequestMockProvider("read_file", map[string]any{"path": "hello.txt"}),
+		ProviderName:  "mock",
+		Model:         "mock-model",
+		ToolExecutor:  executor,
+		ToolPolicy:    policyConfig,
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+
+	if err != nil {
+		t.Fatalf("V3 run failed: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", result.Status)
+	}
+
+	// Verify tool_result.json exists
+	toolResultPath := filepath.Join(tmpDir, "runs", result.RunID, "tool_result.json")
+	if _, err := os.Stat(toolResultPath); os.IsNotExist(err) {
+		t.Error("tool_result.json should exist after tool execution")
+	}
+
+	toolData, err := os.ReadFile(toolResultPath)
+	if err != nil {
+		t.Fatalf("failed to read tool_result.json: %v", err)
+	}
+
+	var toolResult tool.ToolResult
+	if err := json.Unmarshal(toolData, &toolResult); err != nil {
+		t.Fatalf("failed to parse tool_result.json: %v", err)
+	}
+	if !toolResult.Success {
+		t.Errorf("expected tool_result.Success=true, got false: %s", toolResult.Error)
+	}
+	if toolResult.Output["content"] != "hello from prism" {
+		t.Errorf("expected content 'hello from prism', got %v", toolResult.Output["content"])
+	}
+}
+
+func TestV3ToolEventsInEventLog(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	registry := tool.NewRegistry()
+	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
+	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	executor := tool.NewExecutor(registry, policyConfig)
+
+	cfg := run.RunConfig{
+		Task:          "Test V3 tool events",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: false,
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      provider.NewToolRequestMockProvider("echo", map[string]any{"text": "hello"}),
+		ProviderName:  "mock",
+		Model:         "mock-model",
+		ToolExecutor:  executor,
+		ToolPolicy:    policyConfig,
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+
+	if err != nil {
+		t.Fatalf("V3 run failed: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", result.Status)
+	}
+
+	// Verify events.jsonl includes tool events
+	events := parseEventsFile(t, filepath.Join(tmpDir, "runs", result.RunID, "events.jsonl"))
+
+	// Find tool events
+	toolEventTypes := map[string]bool{
+		event.V3EventTypes.ToolRequested: false,
+		event.V3EventTypes.ToolApproved: false,
+		event.V3EventTypes.ToolStarted:  false,
+		event.V3EventTypes.ToolCompleted: false,
+	}
+
+	for _, evt := range events {
+		if _, ok := toolEventTypes[evt.Type]; ok {
+			toolEventTypes[evt.Type] = true
+		}
+	}
+
+	for eventType, found := range toolEventTypes {
+		if !found {
+			t.Errorf("expected tool event %s in event log, not found", eventType)
+		}
+	}
+
+	// Verify all events share the same correlation_id
+	if len(events) > 0 {
+		corrID := events[0].CorrelationID
+		for _, evt := range events {
+			if evt.CorrelationID != corrID {
+				t.Errorf("event %s has different correlation_id: %s != %s", evt.Type, evt.CorrelationID, corrID)
+			}
+		}
+	}
+}
+
+func TestV3ToolDeniedPolicy(t *testing.T) {
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	registry := tool.NewRegistry()
+	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
+	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	executor := tool.NewExecutor(registry, policyConfig)
+
+	// Request a tool that should be denied (shell)
+	cfg := run.RunConfig{
+		Task:          "Test V3 tool denied",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: false,
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      provider.NewToolRequestMockProvider("shell", map[string]any{"command": "rm -rf /"}),
+		ProviderName:  "mock",
+		Model:         "mock-model",
+		ToolExecutor:  executor,
+		ToolPolicy:    policyConfig,
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+
+	if err != nil {
+		t.Fatalf("V3 run with denied tool should not error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed' (run completes, tool denied), got %s", result.Status)
+	}
+
+	// Verify events include tool.denied
+	events := parseEventsFile(t, filepath.Join(tmpDir, "runs", result.RunID, "events.jsonl"))
+
+	foundDenied := false
+	for _, evt := range events {
+		if evt.Type == event.V3EventTypes.ToolDenied {
+			foundDenied = true
+			if evt.Payload["policy_decision"] != "denied" {
+				t.Errorf("expected policy_decision 'denied', got %v", evt.Payload["policy_decision"])
+			}
+		}
+	}
+	if !foundDenied {
+		t.Error("expected tool.denied event in event log")
+	}
+
+	// Verify summary has tool_call with denied status
+	summaryPath := filepath.Join(tmpDir, "runs", result.RunID, "summary.json")
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("failed to read summary.json: %v", err)
+	}
+	var summary event.Summary
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("failed to parse summary.json: %v", err)
+	}
+	if len(summary.ToolCalls) == 0 {
+		t.Fatal("expected at least 1 tool call in summary")
+	}
+	if summary.ToolCalls[0].PolicyDecision != "denied" {
+		t.Errorf("expected policy_decision 'denied', got %s", summary.ToolCalls[0].PolicyDecision)
+	}
+}
+
+func TestV3NoToolExecutor(t *testing.T) {
+	// When ToolExecutor is nil, the run should complete normally (V2 behavior)
+	s, busURL := startTestServer(t)
+	defer s.Shutdown()
+
+	tmpDir := t.TempDir()
+
+	cfg := run.RunConfig{
+		Task:          "Test V3 no tool executor",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: false,
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      provider.NewMockProvider(),
+		ProviderName:  "mock",
+		Model:         "mock-model",
+		// ToolExecutor is nil — should behave like V2
+	}
+
+	runner := run.NewRunner(cfg)
+	result, err := runner.Run()
+
+	if err != nil {
+		t.Fatalf("V3 run without tool executor should not error: %v", err)
+	}
+	if result.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", result.Status)
+	}
+
+	// Verify no tool events in the event log
+	events := parseEventsFile(t, filepath.Join(tmpDir, "runs", result.RunID, "events.jsonl"))
+	for _, evt := range events {
+		if strings.HasPrefix(evt.Type, "prism.tool.") {
+			t.Errorf("expected no tool events when ToolExecutor is nil, found %s", evt.Type)
+		}
+	}
+
+	// Verify no tool_result.json exists
+	toolResultPath := filepath.Join(tmpDir, "runs", result.RunID, "tool_result.json")
+	if _, err := os.Stat(toolResultPath); !os.IsNotExist(err) {
+		t.Error("tool_result.json should NOT exist when no tool executor")
+	}
+
+	// Verify summary has no tool_calls
+	summaryPath := filepath.Join(tmpDir, "runs", result.RunID, "summary.json")
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("failed to read summary.json: %v", err)
+	}
+	var summary event.Summary
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("failed to parse summary.json: %v", err)
+	}
+	if len(summary.ToolCalls) > 0 {
+		t.Errorf("expected no tool_calls in summary, got %d", len(summary.ToolCalls))
 	}
 }
