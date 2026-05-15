@@ -1,9 +1,22 @@
+# IDE
+.idea/
+
 # Prism build artifacts (binaries at repo root only)
 /prism
 /prism-cli
 /prism-bus
 /prism-agent
 prism-data/
+
+# Environment files
+.env
+.env.*
+
+# OS & temp files
+.DS_Store
+*.tmp
+*.bak
+*.log
 
 # Run outputs (keep directory structure)
 runs/*

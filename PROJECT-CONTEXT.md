@@ -18,7 +18,7 @@
 - **Event backbone:** NATS JetStream (embedded, persistence + replay + wildcards)
 - **Memory:** Remembrance (LanceDB + SQLite + Ollama nomic-embed-text) — Python FastAPI
 - **State:** SQLite (local) / PostgreSQL (server) — event sourcing + projection tables
-- **License:** Open core (platform OSS, hosted/managed/enterprise as revenue)
+- **License:** Source-available, all-rights-reserved, permission-required (see LICENSE)
 
 ## Implemented Components
 
@@ -102,7 +102,7 @@
 ## Key Decisions
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Scope | Full platform, event-native, open core | Ema controls the whole stack |
+| Scope | Full platform, event-native, source-available | Ema controls the whole stack |
 | Runtime | Go core + Python SDK | Go for event backbone; Python for agent ergonomics |
 | Event bus | NATS JetStream | Persistence, replay, consumer groups, wildcards, Go-native |
 | Migration | OpenClaw config import | Read openclaw.json → emit Prism config |

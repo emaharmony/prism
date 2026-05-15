@@ -113,13 +113,15 @@ Prism is guided by the following design principles:
 4. **Modular reactions over hardcoded workflows** - subscribers and hooks should extend behavior cleanly.
 5. **Local-first, company-ready later** - the framework should work locally first but be designed for future team and enterprise use.
 6. **Safety and auditability are core features** - tool calls, memory writes, and agent actions should be traceable.
-7. **Open core philosophy** - the core framework should remain accessible while future hosted, managed, or enterprise services may provide revenue opportunities.
+7. **Source-available philosophy** — the core framework is public to view while future hosted, managed, or enterprise services may provide revenue opportunities. The current license is all-rights-reserved and permission-required; future licensing or commercial models may be evaluated later.
 
 ---
 
 ## Attribution
 
 Prism was conceived, directed, and architected by **Emmanuel Vinas**.
+
+Use, copying, modification, distribution, hosting, or incorporation into other software is governed by the repository [LICENSE](LICENSE).
 
 Any future documentation, public release, derivative work, funding pitch, portfolio material, or resume reference should preserve attribution to Emmanuel Vinas as the originator and primary system designer of the Prism framework concept and implementation direction.
 
