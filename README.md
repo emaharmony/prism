@@ -1,6 +1,26 @@
 # Prism — Event-Native AI Agent Platform
 
+> **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
+
 Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review — after a mutation is applied, Prism can run allowlisted validation profiles and generate a deterministic review artifact.
+
+## Why Prism?
+
+Most AI agent systems hide important work inside prompt chains. Prism makes the workflow observable by turning tasks, context retrieval, model calls, tool requests, approvals, mutations, validation, and reviews into canonical events.
+
+This makes AI workflows easier to debug, audit, extend, replay, and control.
+
+Prism's core idea is simple: the framework controls the lifecycle, while models generate outputs inside that lifecycle.
+
+## Project Status
+
+Prism is experimental, local-first, source-available AI infrastructure.
+
+The repository is public for portfolio, review, and early feedback purposes, but use requires written permission under the current license. See [LICENSE](./LICENSE) for details.
+
+It is not production-ready and should not be used for unattended high-risk automation, trading, deployment, destructive file operations, or financial decision execution.
+
+Current development focuses on local workflows, event observability, approval gates, validation, and safe orchestration patterns.
 
 ## V5 Status
 
@@ -18,7 +38,7 @@ V5 adds the validation and review pipeline. After an approved mutation is applie
 - CLI commands: `prism validation list`, `prism validation run`, `prism approval approve --validate`
 - `validations` and `reviews` arrays in `summary.json`
 - Command safety: no arbitrary shell, no pipes/redirects/chaining, timeout required, path containment
-- 180 tests across 10 packages
+- Tests passing with `go test ./...`
 
 **Safety model (V5 additions):**
 - Validation commands come only from named, allowlisted profiles — no LLM-provided commands
@@ -34,7 +54,7 @@ V5 adds the validation and review pipeline. After an approved mutation is applie
 - No recursive autonomous loops
 - If ambiguous, deny the operation
 
-**Not included in V4:**
+**Not included yet:**
 - Multi-agent orchestration
 - Shell command execution
 - `apply_patch` proposal (documented as V5 candidate)
@@ -110,7 +130,7 @@ go build -o prism-agent.exe ./cmd/prism-agent/
 go test ./...
 ```
 
-134 tests across 8 packages:
+All Go tests pass with `go test ./...`. See individual package test coverage below:
 - `internal/agent` — placeholder agent, delay, V3 tool request parsing, V4 mutation prompt
 - `internal/approval` — approval model, state machine, store, transitions, ID generation
 - `internal/event` — IDs, event creation, JSON round-trip, security
@@ -119,6 +139,8 @@ go test ./...
 - `internal/provider` — mock provider, failing mock, Ollama provider (httptest)
 - `internal/run` — V1 lifecycle, V2 lifecycle, V3 tool lifecycle, V4 approval lifecycle, memory, correlation, parent chains
 - `internal/tool` — registry, policy, executor, built-in tools, path traversal protection, write_file_proposal
+
+All Go tests pass with `go test ./...`.
 
 ### 3. Start the Bus
 
@@ -433,6 +455,10 @@ runs/<run_id>/
 - `output.md` — the raw text returned by the provider (or combined LLM + tool result in V3)
 - `tool_result.json` — (V3, when a tool was called) the tool execution result, including success/failure, output data, and any error message
 
+A sanitized example run is available in `examples/runs/sample-run/`.
+
+Generated real run artifacts are written to `runs/<run_id>/` and are ignored by git.
+
 ## Providers
 
 V2 introduces a provider interface so Prism is not locked to one model backend.
@@ -704,7 +730,7 @@ ollama pull qwen2.5:7b
 - Event log persistence (`events.jsonl` + `summary.json`)
 - Python SDK for event consumption
 
-### V2 — Current
+### V2 — Complete ✅
 - Real single-agent LLM execution
 - Provider interface (mock + Ollama)
 - Prompt builder with deterministic `prompt.md` artifacts
@@ -715,7 +741,7 @@ ollama pull qwen2.5:7b
 - `--dry-run-prompt` mode
 - Strict `--require-memory` failure mode
 
-### V3 — Current
+### V3 — Complete ✅
 - Tool registry and execution
 - Deterministic permission policy
 - Built-in safe tools (echo, list_dir, read_file, write_file_dry_run)
@@ -726,7 +752,7 @@ ollama pull qwen2.5:7b
 - One tool call per run
 - tool_result.json and tool_calls in summary.json
 
-### V4 — Current
+### V4 — Complete ✅
 - Approval-gated mutations
 - `write_file_proposal` tool
 - Approval state machine (pending → approved/denied)
@@ -736,7 +762,7 @@ ollama pull qwen2.5:7b
 - Approval artifacts persisted to runs/
 - `apply_patch` support planned for V6+
 
-### V5 — Validation + Review Pipeline
+### V5 — Complete ✅ (current)
 
 V5 adds post-mutation validation and deterministic review:
 
@@ -749,7 +775,6 @@ V5 adds post-mutation validation and deterministic review:
 - **Review artifact** — `runs/<run_id>/review.md` with recommendation
 - **CLI commands** — `prism validation list`, `prism validation run <profile>`, `prism approval approve --validate`
 - **Summary.json** updated with `validations` and `reviews` arrays
-- **180 tests** across 10 packages (up from 154)
 
 Safety model: the LLM never chooses commands. Only allowlisted profiles can run. The reviewer (even if Lumi) cannot approve or apply mutations.
 
@@ -1027,4 +1052,12 @@ Every event follows this canonical structure:
 
 ## License
 
-Copyright © 2025–2026 Emmanuel Vinas. All rights reserved. See [LICENSE](LICENSE) for details.
+Prism is currently **source-available** under an all-rights-reserved, permission-required license.
+
+You may view the public repository, but use, copying, modification, distribution, hosting, commercial use, non-commercial use, or incorporation into other software requires prior written permission from **Emmanuel Vinas**.
+
+See [LICENSE](./LICENSE) for the full terms.
+
+For permission requests, contact Emmanuel Vinas through [GitHub](https://github.com/emaharmony).
+
+Created and architected by Emmanuel Vinas.

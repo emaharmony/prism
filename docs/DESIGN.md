@@ -33,7 +33,7 @@ Event → [Prism Bus] → Agent A (fire element)
 | Agent SDK | Python | LLM ecosystem lives in Python (LangGraph, AutoGen, CrewAI) |
 | Event backbone | NATS (JetStream) | Built-in persistence, replay, consumer groups, wildcards, Go-native |
 | Migration | OpenClaw config import | Read `openclaw.json` → emit Prism config |
-| License | Open core | Platform OSS, hosted/managed/enterprise as revenue |
+| License | Source-available | All-rights-reserved, permission-required. Future licensing may be evaluated |
 | State storage | SQLite (local) / PostgreSQL (server) | Event sourcing + projection tables |
 
 ## System Architecture
@@ -245,15 +245,15 @@ Mapping:
 | Cron jobs | `prism.cron.triggered.*` with schedule config |
 | Sub-agent spawns | `prism.agent.spawned` with parent correlation |
 
-## Monetization Model (Open Core)
+## Monetization Model (Future Evaluation)
 
 | Tier | What's Included | Price |
 |------|----------------|-------|
-| **Community** | Full Prism runtime, event bus, agent SDK, memory, basic tools | Free (OSS) |
+| **Community** | Full Prism runtime, event bus, agent SDK, memory, basic tools | Source-available, permission-required |
 | **Cloud** | Managed Prism hosting, auto-scaling, monitoring dashboard | Usage-based |
 | **Enterprise** | SSO, audit logging, custom retention, SLA, priority support | Annual license |
 
-The event bus, agent runtime, SDK, memory store, and basic channel adapters are always free. You pay for hosting, scale, and enterprise features — never for the core.
+The current license is all-rights-reserved and permission-required. Future licensing or commercial models may be evaluated later. The core framework is source-available for review and feedback; use requires written permission.
 
 ## What This Solves (vs OpenClaw)
 
