@@ -13,11 +13,22 @@ import (
 )
 
 // Status constants for the approval state machine.
+// The state machine is intentionally simple: pending → approved OR denied.
+// There is no "un-approve" or "un-deny" — once a decision is made, it's final.
+// This prevents race conditions where a mutation could be approved, applied,
+// then "un-approved" after the file is already on disk.
+//
+// State transitions:
+//   pending → approved (human says yes, mutation is applied)
+//   pending → denied  (human says no, mutation is NOT applied)
+//   pending → expired (optional: approval request timed out, mutation is NOT applied)
+//   approved → ✗ (locked — cannot be reversed)
+//   denied → ✗ (locked — cannot be reversed)
 const (
-	StatusPending  = "pending"
-	StatusApproved = "approved"
-	StatusDenied   = "denied"
-	StatusExpired  = "expired"
+	StatusPending  = "pending"  // Awaiting human decision
+	StatusApproved = "approved" // Human approved — mutation can be applied
+	StatusDenied   = "denied"   // Human denied — mutation is discarded
+	StatusExpired  = "expired"  // Approval request timed out — mutation is discarded
 )
 
 // MutationType constants.

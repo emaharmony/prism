@@ -1,6 +1,23 @@
-// Package event defines the canonical Prism event schema and utilities.
-// All Prism components (bus, agent, CLI) share this package to ensure
-// consistent event structure across the system.
+// Package event defines the canonical Prism event schema — the shared vocabulary
+// that every component (CLI, runner, tool executor, validation engine) uses to
+// communicate. Events are Prism's universal language.
+//
+// Why events? Instead of components calling each other directly (tight coupling),
+// everything emits events to NATS. This means:
+//   - Any consumer can listen to any event without the producer knowing about it
+//   - The event log (events.jsonl) IS the audit trail — replay it to rebuild state
+//   - New features (like a web dashboard) can plug in by just subscribing
+//
+// The parent chain concept: every event has an optional ParentID that points to
+// the event that caused it. This creates a causal DAG you can trace from task
+// creation all the way down to the final review artifact. For example:
+//   task.created → task.started → agent.started → llm.requested → llm.completed
+// If llm.requested fails, the failure event still links back so you know what broke.
+//
+// Versioned event types (V1-V5) represent the platform's evolution, not API
+// breaking changes. V1 is the foundation; each version adds more specific events.
+// New consumers should use the latest version's event types; old consumers still
+// work because V1 events are always emitted alongside newer ones for backward compat.
 package event
 
 import (
@@ -102,8 +119,11 @@ var V2EventTypes = struct {
 	OutputWritten:    "prism.output.written",
 }
 
-// Event is the canonical Prism event schema.
-// Every action, decision, and state change flows as one of these.
+// Event is the canonical Prism event — the atomic unit of communication.
+// Every action, decision, and state change flows as one of these. An event
+// has a unique ULID-based ID, belongs to a type namespace (e.g., prism.task.started),
+// optionally links to a parent event (causal trace), and carries arbitrary
+// payload data. The CorrelationID groups all events from the same logical request.
 type Event struct {
 	ID            string         `json:"id"`
 	Type          string         `json:"type"`
@@ -248,6 +268,9 @@ var V4EventTypes = struct {
 }
 
 // Summary represents a V1 run summary written to summary.json.
+// It's the human-readable digest of an entire run — status, timing, what
+// happened, and links to all artifacts (prompt, output, review). This is
+// what you'd check first when reviewing a run's outcome.
 type Summary struct {
 	RunID         string `json:"run_id"`
 	CorrelationID string `json:"correlation_id"`
@@ -281,7 +304,10 @@ type Summary struct {
 	Reviews     []ReviewSummary     `json:"reviews,omitempty"`
 }
 
-// ValidationSummary records a validation run in the summary.
+// ValidationSummary records a single validation run in the summary.
+// Each validation profile (e.g., "go_test_all", "go_lint") produces
+// one of these. The exit code and status tell the reviewer whether
+// the code passes automated checks.
 type ValidationSummary struct {
 	Profile    string `json:"profile"`
 	Status     string `json:"status"`
@@ -290,7 +316,10 @@ type ValidationSummary struct {
 	ResultPath string `json:"result_path,omitempty"`
 }
 
-// ReviewSummary records a review in the summary.
+// ReviewSummary records a deterministic review in the summary.
+// Unlike an LLM-generated review, this is rule-based: "all validations
+// passed? → approve for review" / "validations failed? → needs fix".
+// The recommendation field is the reviewer's verdict.
 type ReviewSummary struct {
 	Reviewer       string `json:"reviewer"`
 	Status         string `json:"status"`
@@ -299,6 +328,9 @@ type ReviewSummary struct {
 }
 
 // ToolCallSummary records a single tool call in the run summary.
+// Each time the agent invokes a tool (echo, read_file, write_file_dry_run,
+// write_file_proposal), we record which tool was called, what policy decided,
+// and whether the call succeeded.
 type ToolCallSummary struct {
 	ToolName       string `json:"tool_name"`
 	PolicyDecision string `json:"policy_decision"`
@@ -306,7 +338,10 @@ type ToolCallSummary struct {
 	EventID        string `json:"event_id,omitempty"`
 }
 
-// ApprovalSummary records an approval in the run summary.
+// ApprovalSummary records an approval request in the run summary.
+// When the agent proposes a mutation that requires human approval
+// (e.g., writing a file), we record the approval ID, what's being changed,
+// and its current status (pending/approved/denied).
 type ApprovalSummary struct {
 	ApprovalID    string `json:"approval_id"`
 	MutationType  string `json:"mutation_type"`
@@ -316,7 +351,9 @@ type ApprovalSummary struct {
 	PolicyDecision string `json:"policy_decision"`
 }
 
-// MutationSummary records a mutation result in the run summary.
+// MutationSummary records an applied mutation result in the summary.
+// Once a human approves a mutation and it's applied, this records
+// what file was changed and whether the write succeeded.
 type MutationSummary struct {
 	ApprovalID   string `json:"approval_id"`
 	MutationType string `json:"mutation_type"`

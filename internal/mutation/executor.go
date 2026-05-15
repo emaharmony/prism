@@ -200,6 +200,12 @@ func (e *Executor) validateSafety(a *approval.Approval) error {
 	}
 
 	// Check: path stays within workspace root (with symlink resolution)
+	// This is defense-in-depth against path traversal attacks. We resolve ALL symlinks
+	// in both the root and the target path before comparing, so an attacker can't
+	// create a symlink inside the workspace that points outside it.
+	// Why EvalSymlinks instead of just checking string prefixes? Because
+	// `workspace/safe_link → /etc/passwd` would pass a string prefix check but
+	// EvalSymlinks resolves it to /etc/passwd, which is clearly outside the root.
 	absRoot, err := filepath.Abs(e.workspaceRoot)
 	if err != nil {
 		return fmt.Errorf("invalid workspace root: %w", err)
