@@ -57,19 +57,19 @@ You don't need to understand NATS to read the code. Just know:
 
 A **run** is one complete execution of a task. Every run gets its own directory under `runs/`:
 
-```
+```text
 runs/
-└── run_01KRC7AQXBM1Y5ZY0QEBG56JTC/
+└── run_01KRC7AQXBM1Y5ZY0QEBG56JTC/   ← One directory per run
     ├── events.jsonl        ← All events, one JSON per line
     ├── summary.json        ← Run status, event counts, version info
     ├── output.md           ← What the LLM wrote
     ├── approvals/          ← V4: Approval requests and decisions
     │   └── appr_01KR...json
-    ├── validation/         ← V5: Validation results
+    ├── validation/         ← V5: Validation results (inside the run directory)
     │   ├── go_test_all.json
     │   ├── go_test_all.stdout.txt
     │   └── go_test_all.stderr.txt
-    └── review.md           ← V5: Review artifact with recommendation
+    └── review.md           ← V5: Review artifact (inside the run directory)
 ```
 
 ### Versions (V1 → V5)
@@ -272,6 +272,11 @@ prism approval approve appr_01KR --by ema --validate  # Approve + validate
                               │  (JetStream)    │
                               └─────────────────┘
 ```
+
+> **Note:** `prism-agent` (in `cmd/prism-agent/`) is a separate component that subscribes
+> to the NATS event bus and processes events autonomously. It's currently a placeholder —
+> the real processing happens in the Runner. When activated, it would appear alongside
+> `prism-cli` at the top of the diagram.
 
 ## Contributing
 
