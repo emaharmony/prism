@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -16,8 +17,10 @@ import (
 	"github.com/emaharmony/prism/internal/event"
 	"github.com/emaharmony/prism/internal/mutation"
 	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/review"
 	"github.com/emaharmony/prism/internal/run"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prism/internal/validation"
 )
 
 func main() {
@@ -169,6 +172,7 @@ func main() {
 			approvalApproveRun := approvalApproveCmd.String("run", "", "Run ID (required)")
 			approvalApproveWorkspace := approvalApproveCmd.String("workspace", ".", "Workspace root directory")
 			approvalApproveRunsDir := approvalApproveCmd.String("run-dir", "./runs", "Directory for run outputs")
+			approvalValidate := approvalApproveCmd.Bool("validate", false, "Run validation and review after approving the mutation")
 			approvalApproveCmd.Parse(os.Args[4:])
 
 			if len(os.Args) < 4 {
@@ -176,7 +180,11 @@ func main() {
 				os.Exit(1)
 			}
 			approveID := os.Args[3]
-			executeApprovalApprove(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir)
+			if *approvalValidate {
+				executeApprovalApproveWithValidation(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir)
+			} else {
+				executeApprovalApprove(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir)
+			}
 
 		case "deny":
 			approvalDenyCmd := flag.NewFlagSet("approval deny", flag.ExitOnError)
@@ -200,6 +208,32 @@ func main() {
 	case "health":
 		healthCmd.Parse(os.Args[2:])
 		executeHealth(*healthBusURL)
+	case "validation":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: validation subcommand required (list or run)")
+			fmt.Fprintln(os.Stderr, "Usage: prism validation list")
+			fmt.Fprintln(os.Stderr, "       prism validation run <profile_name> --project <project>")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "list":
+			executeValidationList()
+		case "run":
+			validationRunCmd := flag.NewFlagSet("validation run", flag.ExitOnError)
+			validationProject := validationRunCmd.String("project", "prism", "Project name")
+			validationRunDir := validationRunCmd.String("run-dir", "./runs", "Directory for run outputs")
+			validationRunID := validationRunCmd.String("run-id", "", "Run ID (optional, generates one if not provided)")
+			validationRunCmd.Parse(os.Args[4:])
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: profile name required")
+				os.Exit(1)
+			}
+			profileName := os.Args[3]
+			executeValidationRun(profileName, *validationProject, *validationRunDir, *validationRunID)
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown validation subcommand '%s'\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Println("prism v0.3.0")
 	default:
@@ -641,6 +675,12 @@ func printUsage() {
 	fmt.Println("  prism run --task <description> [options]    Run a task lifecycle")
 	fmt.Println("  prism tool list                               List available tools")
 	fmt.Println("  prism tool run <name> --input '{...}'         Run a tool directly")
+	fmt.Println("  prism validation list                         List validation profiles")
+	fmt.Println("  prism validation run <name>                   Run a validation profile")
+	fmt.Println("  prism approval list                           List pending approvals")
+	fmt.Println("  prism approval show <id> --run <run_id>       Show approval details")
+	fmt.Println("  prism approval approve <id> --by <name>       Approve a mutation")
+	fmt.Println("  prism approval deny <id> --by <name>          Deny a mutation")
 	fmt.Println("  prism health [options]                        Check bus health")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println()
@@ -682,5 +722,159 @@ func printUsage() {
 	fmt.Println("  prism tool list")
 	fmt.Println("  prism tool run echo --input '{\"text\": \"hello\"}'")
 	fmt.Println("  prism tool run read_file --input '{\"path\": \"README.md\"}' --workspace .")
+	fmt.Println("  prism validation list")
+	fmt.Println("  prism validation run go_test_all --project .")
 	fmt.Println("  prism health")
+	fmt.Println("  prism approval approve appr_xxx --by ema --run run_xxx --validate")
+}
+
+// ── V5: Validation CLI Functions ──────────────────────────────────────────
+
+func executeValidationList() {
+	registry := validation.NewRegistry()
+	profiles := registry.List()
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  Prism V5 Validation Profiles")
+	fmt.Println("═══════════════════════════════════════════")
+	for _, name := range profiles {
+		p, err := registry.Resolve(name)
+		if err != nil {
+			fmt.Printf("  %-20s (error: %v)\n", name, err)
+			continue
+		}
+		fmt.Printf("  %-20s %s\n", p.Name, p.Description)
+		fmt.Printf("    Command:  %s %s\n", p.Command, fmtArgs(p.Args))
+		fmt.Printf("    Timeout:  %ds\n", p.TimeoutSeconds)
+		fmt.Printf("    Allowed Exit Codes: %v\n", p.AllowedExitCodes)
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+func fmtArgs(args []string) string {
+	result := ""
+	for i, a := range args {
+		if i > 0 {
+			result += " "
+		}
+		result += a
+	}
+	return result
+}
+
+func executeValidationRun(profileName, project, runDir, runID string) {
+	registry := validation.NewRegistry()
+
+	// Generate a run ID if not provided
+	if runID == "" {
+		runID = event.NewRunID()
+	}
+
+	artifactDir := filepath.Join(runDir, runID)
+	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create run directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	executor := validation.NewExecutor(registry, project, artifactDir)
+	executor.SetEmitter(func(eventType, source string, payload map[string]any) {
+		fmt.Printf("  💎 [%s] ", eventType)
+		if pn, ok := payload["profile_name"].(string); ok {
+			fmt.Printf("profile=%s ", pn)
+		}
+		fmt.Println()
+	})
+
+	ctx := context.Background()
+	result, err := executor.Run(ctx, profileName, event.NewCorrelationID())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════════")
+	if result.Status == "passed" {
+		fmt.Println("  ✅ Validation Passed")
+	} else {
+		fmt.Printf("  ❌ Validation %s\n", result.Status)
+	}
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Profile:    %s\n", result.Profile)
+	fmt.Printf("  Status:     %s\n", result.Status)
+	fmt.Printf("  Exit Code:  %d\n", result.ExitCode)
+	fmt.Printf("  Duration:   %dms\n", result.DurationMs)
+	if result.StdoutPath != "" {
+		fmt.Printf("  Stdout:     %s\n", result.StdoutPath)
+	}
+	if result.StderrPath != "" {
+		fmt.Printf("  Stderr:     %s\n", result.StderrPath)
+	}
+	if result.Error != "" {
+		fmt.Printf("  Error:      %s\n", result.Error)
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+// ── V5: Approve with Validation ───────────────────────────────────────────
+
+func executeApprovalApproveWithValidation(approvalID, approvedBy, runID, workspace, runsDir string) {
+	if approvedBy == "" {
+		fmt.Fprintln(os.Stderr, "Error: --by flag is required")
+		os.Exit(1)
+	}
+	if runID == "" {
+		fmt.Fprintln(os.Stderr, "Error: --run flag is required")
+		os.Exit(1)
+	}
+
+	log.SetFlags(log.Ltime | log.Lshortfile)
+
+	runDir := filepath.Join(runsDir, runID)
+
+	// Create a minimal runner for the V5 pipeline
+	runner := run.NewRunner(run.RunConfig{
+		Project:            "prism",
+		RunDir:             runsDir,
+		BusURL:             "nats://localhost:4222",
+		ValidationRegistry: validation.NewRegistry(),
+		Reviewer:           review.NewReviewer("lumi-deterministic"),
+	})
+
+	result, err := runner.ApproveWithValidation(runDir, approvalID, approvedBy, workspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  ✅ Mutation Approved + Validated + Reviewed")
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Run ID:       %s\n", runID)
+	fmt.Printf("  Status:       %s\n", result.Status)
+
+	if len(result.ValidationResults) > 0 {
+		fmt.Println("  ── Validations ──")
+		for _, vr := range result.ValidationResults {
+			statusIcon := "✅"
+			if vr.Status != "passed" {
+				statusIcon = "❌"
+			}
+			fmt.Printf("    %s %s: %s (%dms)\n", statusIcon, vr.Profile, vr.Status, vr.DurationMs)
+		}
+	}
+
+	if result.Review != nil {
+		fmt.Println("  ── Review ──")
+		fmt.Printf("    Reviewer:      %s\n", result.Review.Reviewer)
+		fmt.Printf("    Recommendation: %s\n", result.Review.Recommendation)
+		fmt.Printf("    Summary:        %s\n", result.Review.Summary)
+		if result.ReviewArtifactPath != "" {
+			fmt.Printf("    Artifact:       %s\n", result.ReviewArtifactPath)
+		}
+	}
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println()
 }
