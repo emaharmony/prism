@@ -1027,4 +1027,4 @@ Every event follows this canonical structure:
 
 ## License
 
-Private — Emmanuel Harmony
+Private — Emmanuel Vinas
