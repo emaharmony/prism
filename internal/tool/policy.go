@@ -1,3 +1,22 @@
+// Package tool implements Prism's tool execution system (V3+) — the controlled way
+// an AI agent interacts with the outside world.
+//
+// The key insight: the LLM doesn't decide what tools can do. A deterministic Policy
+// decides. There are three possible decisions:
+//   - "allowed" → the tool runs immediately, no human involvement
+//   - "requires_approval" → the tool creates a pending approval; a human must approve before it executes
+//   - "denied" → the tool is blocked entirely
+//
+// Why is the LLM NOT in charge of policy? Because an LLM can be tricked via prompt
+// injection. If the LLM could decide "yes, write to /etc/passwd", a clever prompt
+// could make it say yes. By keeping policy deterministic, Prism is safe even if
+// the model is compromised.
+//
+// Current policies (V4):
+//   echo, list_dir, read_file → allowed (read-only, no risk)
+//   write_file_dry_run → allowed (preview only, writes nothing)
+//   write_file_proposal → requires_approval (creates a pending approval, human must approve)
+//   write_file (direct, no proposal) → denied (bypassing approval is never allowed)
 package tool
 
 import (

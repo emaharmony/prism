@@ -1,3 +1,19 @@
+// Package validation implements Prism V5's validation pipeline — running allowlisted
+// commands after a mutation to verify the change didn't break anything.
+//
+// Why allowlisted commands only? An LLM could propose running `rm -rf /` as a
+// "validation step." By restricting validation to named profiles defined at startup,
+// the LLM has zero control over what commands execute. It can't inject flags, pipes,
+// or redirects — IsSafeCommandString blocks all of those.
+//
+// A validation profile is: a name, a command, args, a working directory, and a timeout.
+// Profiles are registered at startup (NewRegistry) and looked up by name at runtime.
+// The two built-in profiles are:
+//   echo_test — runs `echo hello`, used for integration testing (5s timeout)
+//   go_test_all — runs `go test ./...`, used for Go projects (120s timeout)
+//
+// Validation events (prism.validation.requested/started/completed/failed/skipped/timeout)
+// track each step. Results are persisted as JSON artifacts under runs/<run_id>/validation/.
 package validation
 
 import (
@@ -153,7 +169,10 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	cmd.Stdout = stdoutFile
 	cmd.Stderr = stderrFile
 
-	// Explicitly clear env to a minimal safe set
+	// Explicitly clear env to a minimal safe set — this prevents environment injection
+	// where a malicious or misconfigured system could set env vars that change command
+	// behavior (e.g., LD_PRELOAD, GIT_EXEC_PATH, NODE_OPTIONS). Only vars needed for
+	// typical Go/toolchain operations are forwarded.
 	cmd.Env = []string{
 		"HOME=" + os.Getenv("HOME"),
 		"PATH=" + os.Getenv("PATH"),
@@ -179,9 +198,9 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else if execCtx.Err() == context.DeadlineExceeded {
-			exitCode = -1 // timeout
+			exitCode = -1 // timeout: -1 is our convention for "command was killed before finishing" (not a real Unix exit code)
 		} else {
-			exitCode = -1
+			exitCode = -1 // unknown error (e.g., command not found, permission denied)
 		}
 	}
 

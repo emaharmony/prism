@@ -1,3 +1,20 @@
+// Package tool provides Prism's built-in tools — the actions an AI agent can request
+// during a run. Each tool is a named function that takes JSON input and returns a result.
+//
+// Built-in tools (V1): echo, list_dir, read_file — read-only, always allowed.
+// Built-in tools (V4): write_file_dry_run (preview a write), write_file_proposal
+// (propose a file change for human approval). Direct write_file is denied by policy.
+//
+// Path safety (defense-in-depth):
+// Every tool that touches the filesystem resolves symlinks with filepath.EvalSymlinks
+// before checking that the target is within the workspace root. This logic appears in
+// multiple tools intentionally — it's defense-in-depth, not duplication. If one tool's
+// check has a bug, the others still protect their own paths. Centralizing it into one
+// function would create a single point of failure for security.
+//
+// Why does write_file_proposal use ApprovalStorer as `any` instead of *approval.Approval?
+// Because importing the approval package would create a circular dependency (tool →
+// approval → event → tool). The `any` type breaks the cycle at the cost of type safety.
 package tool
 
 import (
@@ -11,6 +28,9 @@ import (
 )
 
 // EchoTool returns whatever text is passed in. Always approved by policy.
+// EchoTool is the simplest tool — it returns its input unchanged.
+// Used for testing the tool execution pipeline end-to-end without side effects.
+// Policy: always allowed (read-only, no filesystem access).
 type EchoTool struct{}
 
 func (t *EchoTool) Name() string        { return "echo" }
@@ -40,6 +60,10 @@ func (t *EchoTool) Execute(ctx context.Context, input map[string]any) (ToolResul
 
 // ListDirTool lists files and directories under a given path within the
 // workspace root. Path traversal is blocked by policy.
+// ListDirTool lists files and directories under a given path.
+// The path must be within the workspace root — path traversal (..) is blocked.
+// Symlinks are resolved with EvalSymlinks before the containment check.
+// Policy: always allowed (read-only, no modifications).
 type ListDirTool struct {
 	// WorkspaceRoot is the root directory that constrains allowed paths.
 	WorkspaceRoot string
@@ -129,6 +153,10 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 
 // ReadFileTool reads a text file within the workspace root. Policy blocks
 // path traversal and enforces a maximum file size.
+// ReadFileTool reads a text file's contents within the workspace root.
+// Enforces a maximum file size (default 1MB) to prevent reading huge files.
+// Path traversal and symlink escapes are blocked the same way as ListDirTool.
+// Policy: always allowed (read-only, no modifications).
 type ReadFileTool struct {
 	// WorkspaceRoot is the root directory that constrains allowed paths.
 	WorkspaceRoot string
@@ -240,6 +268,14 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 
 // WriteFileDryRunTool previews what a file write would look like. It does NOT
 // write to disk. Always approved by policy (no mutation).
+// WriteFileDryRun shows what a file write would look like without actually writing.
+// It returns a "diff-style" preview: the content that would be written and the
+// target path. No bytes are written to disk.
+// Policy: always allowed (preview only, harmless).
+//
+// The 500-character preview truncation keeps the tool result from flooding
+// the LLM's context window. The full content is in the output, just truncated
+// in the preview field.
 type WriteFileDryRun struct{}
 
 func (t *WriteFileDryRun) Name() string        { return "write_file_dry_run" }
@@ -296,6 +332,16 @@ func (t *WriteFileDryRun) Execute(ctx context.Context, input map[string]any) (To
 // WriteFileProposalTool validates a file write proposal and returns an approval request.
 // It does NOT write to disk. Instead, it emits mutation.proposed and approval.requested
 // events, and returns an approval_id that can be used to approve or deny the mutation.
+// WriteFileProposal proposes a file write and creates a pending approval.
+// The file is NOT written — instead, a pending approval is saved to
+// runs/<run_id>/approvals/<approval_id>.json with the proposed content.
+// A human operator must review and approve before the file is actually written.
+//
+// This is the core of V4's safety model: the model proposes, Prism validates,
+// the human decides.
+//
+// Policy: requires_approval (creates a pending approval, blocks until human decides).
+// Direct write_file without proposal → denied by policy.
 type WriteFileProposal struct {
 	WorkspaceRoot string
 	// ApprovalStore is used to persist the approval artifact.

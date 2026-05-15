@@ -1,4 +1,25 @@
-// Package main implements the prism CLI with run, health, and tool commands for V3.
+// Package main implements the prism CLI — the human-facing entry point to the Prism
+// agent platform. Every interaction starts here.
+//
+// Subcommands:
+//   prism run           — Execute a full V1→V5 run (task → LLM → tools → approval → validation → review)
+//   prism health        — Check if the NATS event bus is reachable
+//   prism tool list      — List available tools and their policies
+//   prism tool run       — Execute a single tool directly (for testing)
+//   prism approval list  — List pending/approved/denied approvals
+//   prism approval show  — Show details of a specific approval
+//   prism approval approve — Approve a pending mutation (writes file to disk)
+//   prism approval deny  — Deny a pending mutation (file is NOT written)
+//   prism validation list — List available validation profiles
+//   prism validation run — Run a validation profile (e.g., go_test_all)
+//
+// Why raw os.Args instead of a CLI framework (cobra, etc.)? Prism's CLI surface is
+// small and stable — 10 subcommands with simple flag sets. A framework would add
+// a dependency for no real benefit. If the CLI grows significantly, cobra would be
+// worth adopting.
+//
+// Output formatting: Uses Unicode symbols (✅ ❌ 💎 ═══) for visual structure.
+// These are cosmetic — the actual data is always in JSON artifacts under runs/.
 package main
 
 import (
