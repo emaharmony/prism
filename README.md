@@ -1027,4 +1027,4 @@ Every event follows this canonical structure:
 
 ## License
 
-Private — Emmanuel Harmony
+Copyright © 2025–2026 Emmanuel Vinas. All rights reserved. See [LICENSE](LICENSE) for details.
