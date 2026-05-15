@@ -1,3 +1,21 @@
+// Package validation provides command safety checks for Prism V5's validation pipeline.
+//
+// IsSafeCommandString inspects a command string and rejects anything that could be used
+// for shell injection or privilege escalation. This is the security layer that ensures
+// validation profiles can only run simple commands — not shell metacharacter exploits.
+//
+// What it blocks and why:
+//   - Pipe (|) — could chain a second command after the intended one
+//   - Redirect (> >> <) — could overwrite files or read secrets
+//   - Semicolon (;) — could run a separate command after the intended one
+//   - AND/OR (&& ||) — could conditionally chain commands
+//   - Backtick (`) and $() — could execute subshells
+//   - Newline (\n) — could inject a second command on a new line
+//   - Path traversal (..) — could escape the working directory
+//
+// IsWithinRoot checks that a resolved path stays inside the project root directory,
+// using filepath.EvalSymlinks to resolve symlinks before comparison. This prevents
+// a profile from reading or writing outside the project.
 package validation
 
 import (
