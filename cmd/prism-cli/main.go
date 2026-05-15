@@ -12,6 +12,8 @@
 //   prism approval deny  — Deny a pending mutation (file is NOT written)
 //   prism validation list — List available validation profiles
 //   prism validation run — Run a validation profile (e.g., go_test_all)
+//   prism gate list      — List registered gate adapters
+//   prism gate evaluate  — Evaluate a gate proposal (e.g., trading)
 //
 // Why raw os.Args instead of a CLI framework (cobra, etc.)? Prism's CLI surface is
 // small and stable — 10 subcommands with simple flag sets. A framework would add
@@ -35,7 +37,9 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/emaharmony/prism/internal/approval"
+	"github.com/emaharmony/prism/internal/domain/trading"
 	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prism/internal/gate"
 	"github.com/emaharmony/prism/internal/mutation"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/review"
@@ -253,6 +257,37 @@ func main() {
 			executeValidationRun(profileName, *validationProject, *validationRunDir, *validationRunID)
 		default:
 			fmt.Fprintf(os.Stderr, "Error: unknown validation subcommand '%s'\n", os.Args[2])
+			os.Exit(1)
+		}
+	case "gate":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: gate subcommand required (list or evaluate)")
+			fmt.Fprintln(os.Stderr, "Usage: prism gate list")
+			fmt.Fprintln(os.Stderr, "       prism gate evaluate trading --input trade_proposal.json")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "list":
+			executeGateList()
+		case "evaluate":
+			gateEvalCmd := flag.NewFlagSet("gate evaluate", flag.ExitOnError)
+			gateInput := gateEvalCmd.String("input", "", "JSON input file for the gate proposal (required)")
+			gateRunDir := gateEvalCmd.String("run-dir", "./runs", "Directory for run outputs")
+			gateEvalCmd.Parse(os.Args[4:])
+
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: gate name required")
+				fmt.Fprintln(os.Stderr, "Usage: prism gate evaluate <gate_name> --input trade_proposal.json")
+				os.Exit(1)
+			}
+			gateName := os.Args[3]
+			if *gateInput == "" {
+				fmt.Fprintln(os.Stderr, "Error: --input flag is required")
+				os.Exit(1)
+			}
+			executeGateEvaluate(gateName, *gateInput, *gateRunDir)
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown gate subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
 	case "version":
@@ -689,6 +724,143 @@ func executeApprovalDeny(approvalID, deniedBy, reason, runID, runsDir string) {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// ── Gate: List and Evaluate ─────────────────────────────────────────────────
+
+// newGateRegistry creates a gate registry with all built-in domain adapters registered.
+func newGateRegistry() *gate.Registry {
+	registry := gate.NewRegistry()
+
+	// Register the trading gate with default configuration.
+	// Future domain adapters (deployment, publishing, etc.) register here too.
+	tradingGate := trading.NewTradingGate(trading.DefaultConfig())
+	registry.Register(tradingGate) //nolint:errcheck // trading is the first adapter, no collision
+
+	return registry
+}
+
+func executeGateList() {
+	registry := newGateRegistry()
+	names := registry.List()
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  Prism Gate Adapters")
+	fmt.Println("═══════════════════════════════════════════")
+	for _, name := range names {
+		g, err := registry.Resolve(name)
+		if err != nil {
+			fmt.Printf("  %-20s (error: %v)\n", name, err)
+			continue
+		}
+		fmt.Printf("  %-20s domain=%s\n", g.Name(), g.Domain())
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+func executeGateEvaluate(gateName, inputFile, runDir string) {
+	// Read input JSON file
+	data, err := os.ReadFile(inputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to read input file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Parse as GateInput
+	var input gate.GateInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid gate input JSON: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Override the gate name from the CLI arg (allows input file to omit it)
+	if gateName != "" {
+		input.Gate = gateName
+	}
+
+	// Create run directory for artifacts
+	runID := event.NewRunID()
+	artifactDir := filepath.Join(runDir, runID)
+	if err := os.MkdirAll(artifactDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create run directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Set up gate evaluator with event emitter
+	registry := newGateRegistry()
+	emitter := func(eventType, source string, payload map[string]any) {
+		fmt.Printf("  💎 [%s] ", eventType)
+		if g, ok := payload["gate"].(string); ok {
+			fmt.Printf("gate=%s ", g)
+		}
+		if d, ok := payload["decision"].(string); ok {
+			fmt.Printf("decision=%s", d)
+		}
+		fmt.Println()
+	}
+	evaluator := gate.NewEvaluator(registry, emitter)
+
+	// Evaluate
+	ctx := context.Background()
+	result, err := evaluator.Evaluate(ctx, input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Persist artifacts
+	if err := gate.WriteGateArtifacts(artifactDir, input, *result); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write gate artifacts: %v\n", err)
+	}
+
+	// If trading domain, also persist the trade proposal
+	if input.Domain == "trading" {
+		proposal, propErr := trading.FromGateInput(input)
+		if propErr == nil && proposal != nil {
+			if artErr := trading.WriteTradeProposalArtifact(artifactDir, proposal); artErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write trade proposal artifact: %v\n", artErr)
+			}
+		}
+	}
+
+	// Print result
+	fmt.Println()
+	fmt.Println("═══════════════════════════════════════════")
+	switch result.Decision {
+	case gate.DecisionAllowed:
+		fmt.Println("  ✅ Gate: ALLOWED")
+	case gate.DecisionDenied:
+		fmt.Println("  ❌ Gate: DENIED")
+	case gate.DecisionRequiresApproval:
+		fmt.Println("  ⚠️  Gate: REQUIRES APPROVAL")
+	}
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Gate:       %s\n", result.GateName)
+	fmt.Printf("  Domain:     %s\n", result.Domain)
+	fmt.Printf("  Action:     %s\n", result.Action)
+	fmt.Printf("  Decision:   %s\n", result.Decision)
+	fmt.Printf("  Reason:     %s\n", result.Reason)
+	fmt.Printf("  Risk Score: %.2f\n", result.RiskScore)
+	if result.ApprovalID != "" {
+		fmt.Printf("  Approval ID: %s\n", result.ApprovalID)
+	}
+	if len(result.Checks) > 0 {
+		fmt.Println("  ── Policy Checks ──")
+		for _, c := range result.Checks {
+			icon := "✅"
+			switch c.Status {
+			case "denied":
+				icon = "❌"
+			case "requires_approval":
+				icon = "⚠️"
+			}
+			fmt.Printf("    %s %s: %s (%s)\n", icon, c.Name, c.Status, c.Details)
+		}
+	}
+	fmt.Printf("  Run ID:     %s\n", runID)
+	fmt.Printf("  Artifacts:  %s\n", artifactDir)
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println()
+}
+
 func printUsage() {
 	fmt.Println("Prism — Event-Native AI Agent Platform")
 	fmt.Println()
@@ -702,6 +874,8 @@ func printUsage() {
 	fmt.Println("  prism approval show <id> --run <run_id>       Show approval details")
 	fmt.Println("  prism approval approve <id> --by <name>       Approve a mutation")
 	fmt.Println("  prism approval deny <id> --by <name>          Deny a mutation")
+	fmt.Println("  prism gate list                                 List registered gate adapters")
+	fmt.Println("  prism gate evaluate <gate> --input <file.json>    Evaluate a gate proposal")
 	fmt.Println("  prism health [options]                        Check bus health")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println()
@@ -747,6 +921,12 @@ func printUsage() {
 	fmt.Println("  prism validation run go_test_all --project .")
 	fmt.Println("  prism health")
 	fmt.Println("  prism approval approve appr_xxx --by ema --run run_xxx --validate")
+	fmt.Println()
+	fmt.Println("Gate options:")
+	fmt.Println("  prism gate list                                     List registered gate adapters")
+	fmt.Println("  prism gate evaluate trading --input trade.json       Evaluate a trading proposal")
+	fmt.Println("    --input <file.json>    JSON input file (required)")
+	fmt.Println("    --run-dir <string>    Run output directory (default: ./runs)")
 }
 
 // ── V5: Validation CLI Functions ──────────────────────────────────────────
