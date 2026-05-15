@@ -1,7 +1,19 @@
-// Package run implements the lifecycle orchestrator for Prism V2.
-// It accepts a task, emits the complete event lifecycle through NATS,
-// optionally retrieves Remembrance context, calls an LLM provider,
-// and persists the event log with artifacts.
+// Package run implements the lifecycle orchestrator for Prism — the central engine
+// that takes a task, runs the full V1→V5 pipeline, and produces an event log.
+//
+// What is Prism? An event-native AI agent platform. Every user request becomes a
+// "run" that flows through a deterministic lifecycle of events published to NATS.
+//
+// The V1→V5 versioning represents the platform's evolution, not API versions:
+//   V1 — Mock agent + event emission (the skeleton)
+//   V2 — Real LLM integration (Ollama provider, dry-run mode, context injection)
+//   V3 — Controlled tool execution (the agent can call tools; policy decides what runs)
+//   V4 — Approval-gated mutations (tools that modify files require human approval)
+//   V5 — Validation + deterministic review (run tests, lint, get a verdict)
+//
+// A single Runner instance represents one invocation. It emits ~15+ events in
+// sequence, each with a parent chain for tracing. Everything is persisted as
+// JSONL (events), JSON (summary), and Markdown (prompt/output/review artifacts).
 package run
 
 import (
@@ -89,7 +101,9 @@ type RunResult struct {
 	ReviewArtifactPath string               `json:"review_artifact_path,omitempty"`
 }
 
-// Runner orchestrates the lifecycle.
+// Runner orchestrates a single run's complete lifecycle.
+// It owns the event slice, NATS connection, and all sub-components needed
+// to take a task from creation through to persisted artifacts.
 type Runner struct {
 	config        RunConfig
 	runID         string
@@ -111,8 +125,27 @@ func NewRunner(config RunConfig) *Runner {
 	}
 }
 
-// Run executes the complete lifecycle.
-// It returns a RunResult and an error if the lifecycle failed.
+// Run executes the complete lifecycle pipeline. Here's the 15-step overview:
+//
+//   1. Connect to NATS (event bus)
+//   2. Emit task.created
+//   3. Emit task.started (parent: task.created)
+//   4. Optional: Fetch Remembrance context (memory), emit V1+V2 context events
+//   5. Emit agent.started
+//   6. Build & write prompt.md artifact
+//   7. [dry-run gate] If --dry-run-prompt, stop here and complete
+//   8. Emit llm.requested
+//   9. Call the LLM provider with timeout
+//  10. Emit llm.completed (or llm.failed → abort)
+//  10b. V3: Parse LLM output for tool requests, execute if present
+//  10c. V4: If tool requires approval, emit mutation.proposed + approval.requested
+//  11. Emit agent.completed (V1 backward compat)
+//  12. Write output.md artifact
+//  13. Determine run status (completed or pending_approval)
+//  14. Emit task.completed
+//  15. Persist event log (events.jsonl) and summary (summary.json)
+//
+// Returns a RunResult and an error if the lifecycle failed.
 func (r *Runner) Run() (*RunResult, error) {
 	// Generate IDs
 	r.runID = event.NewRunID()
@@ -182,6 +215,11 @@ func (r *Runner) Run() (*RunResult, error) {
 	r.taskStartedID = evt.ID
 
 	// 4. Optional: Remembrance context hook
+	// Remembrance is Prism's memory service — it fetches relevant past context
+	// for the current task. When enabled, we emit BOTH V1 and V2 context events.
+	// Why duplicate? V1 (`prism.memory.context_requested`) exists for backward
+	// compatibility with early consumers. V2 (`prism.context.requested`) is the
+	// canonical new-style event. New consumers should listen to V2 events only.
 	var contextStr string
 	memoryStatus := "none" // "none", "injected", "failed"
 
@@ -398,13 +436,23 @@ func (r *Runner) Run() (*RunResult, error) {
 		"text_length":    len(genResp.Text),
 	}, llmReqEvt.ID)
 
-	// 10b. V3: Parse LLM output for tool request
+	// 10b. V3: Parse LLM output for tool requests
+	// The LLM's raw output is parsed for a structured JSON block that tells
+	// Prism which tool to call. The expected format is a JSON object with:
+	//   {"type": "tool_request", "tool_name": "...", "tool_input": {...}}
+	// If the LLM just provides a plain text answer (no tool request), we use
+	// the raw output directly as the final response.
 	var toolCallSummaries []event.ToolCallSummary
 	var approvalSummaries []event.ApprovalSummary
 	var mutationSummaries []event.MutationSummary
 	var toolResult *tool.ToolResult
 	outputText := genResp.Text // default: use raw LLM output
-	pendingApproval := false   // V4: whether the run is pending approval
+
+	// pendingApproval gates the run status. When a tool's policy result is
+	// PolicyRequiresApproval, this flips to true. It changes the run from
+	// a "completed" flow to a "pending_approval" flow — the run pauses
+	// waiting for a human to approve or deny via the CLI.
+	pendingApproval := false // V4: whether the run is pending approval
 
 	if r.config.ToolExecutor != nil {
 		agentResp := agentpkg.ParseAgentOutput(genResp.Text)
@@ -429,10 +477,15 @@ func (r *Runner) Run() (*RunResult, error) {
 			policyResult := tool.EvaluatePolicy(r.config.ToolPolicy, agentResp.ToolName, agentResp.ToolInput)
 
 			// V4: Check if this is pending approval
+			// The approval workflow: agent proposes a mutation → Prism emits
+			// mutation.proposed + approval.requested → a human reviews and
+			// runs `prism approval approve <id>` or `prism approval deny <id>`.
+			// Until the human acts, the run stays in pending_approval status.
 			if policyResult.Decision == tool.PolicyRequiresApproval {
 				pendingApproval = true
 
-				// Capture content for approval artifact
+				// Capture the proposed content for the approval artifact.
+				// This is the actual file content the agent wants to write.
 				proposalContent := ""
 				if c, ok := agentResp.ToolInput["content"]; ok {
 					if cs, ok := c.(string); ok {
@@ -463,7 +516,15 @@ func (r *Runner) Run() (*RunResult, error) {
 					approvalID, _ := toolResult.Output["approval_id"].(string)
 					targetPath, _ := toolResult.Output["target_path"].(string)
 
-					// Store content in tool result output for later artifact writing
+					// Store content under _proposal_content for later artifact writing.
+					// This is an internal key — not returned to the LLM. It's extracted when
+					// writing the approval.json artifact so the full proposed content is persisted
+					// even if the tool result output is truncated or reformatted.
+					// This key is NOT part of the public API — it's an internal marker
+					// that bridges the gap between tool execution and approval artifact
+					// persistence. The underscore prefix signals "internal, don't display".
+					// Lifecycle: set here → read during persist (step 15) → written to
+					// the approval.json artifact → never shown to the user directly.
 					toolResult.Output["_proposal_content"] = proposalContent
 
 					approvalSummaries = append(approvalSummaries, event.ApprovalSummary{
@@ -516,10 +577,16 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// 11. Emit agent.completed (V1 backward compat)
 	// Parent is llm.completed (V2 causal chain: agent started → llm requested → llm completed → agent completed)
+	//
+	// The summary is truncated to 200 characters. Why 200? It's a balance:
+	// enough characters to give a meaningful preview of the agent's output
+	// (roughly 2-3 sentences), but short enough to keep event payloads compact
+	// in NATS. Events are the communication backbone — bloated events slow
+	// everything downstream. The full output lives in output.md.
 	agentCompletedEvt := r.emitWithParent(event.V1EventTypes.AgentCompleted, "prism-cli", map[string]any{
 		"agent":   r.config.Agent,
 		"status":  "completed",
-		"summary": genResp.Text[:min(len(genResp.Text), 200)],
+		"summary": genResp.Text[:min(len(genResp.Text), 200)], // Truncate to 200 chars — this is for the event payload only, not the full output. The complete text is saved in output.md.
 	}, llmCompletedEvt.ID)
 
 	// 12. Write output.md
@@ -752,9 +819,17 @@ func (r *Runner) emit(eventType, source string, payload map[string]any) event.Ev
 	return evt
 }
 
-// emitWithParent builds an event with a parent_id, then publishes to NATS.
-// Unlike the old implementation, parent_id is set BEFORE publishing, so both
-// the in-memory slice and the NATS-published event include it.
+// emitWithParent builds an event with a parent_id and publishes to NATS.
+//
+// The parent chain pattern: every event links to the event that caused it.
+// This creates a causal DAG (directed acyclic graph) tracing the entire run.
+// For example: task.created → task.started → agent.started → llm.requested →
+// llm.completed → agent.completed → task.completed. If any step fails,
+// the failure events still link to their parent so you can trace what broke.
+//
+// The parent_id is set BEFORE publishing, ensuring both the in-memory slice
+// AND the NATS-published event include it. Old versions set it after publish,
+// which meant NATS consumers couldn't see the parent relationship.
 func (r *Runner) emitWithParent(eventType, source string, payload map[string]any, parentID string) event.Event {
 	evt := r.buildEvent(eventType, source, payload)
 	evt.ParentID = parentID
