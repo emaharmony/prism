@@ -1,28 +1,32 @@
 # Prism — Event-Native AI Agent Platform
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations — the agent may propose a file change, but Prism will not apply it until a human operator explicitly approves.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review — after a mutation is applied, Prism can run allowlisted validation profiles and generate a deterministic review artifact.
 
-## V4 Status
+## V5 Status
 
-V4 adds approval-gated mutations. The agent may propose a file change, but Prism will not apply it until a human operator explicitly approves. Every step is evented and auditable.
+V5 adds the validation and review pipeline. After an approved mutation is applied, Prism can run allowlisted validation profiles (e.g., `go test ./...`) and generate a review artifact summarizing the change and validation result. The reviewer (even Lumi) cannot approve or apply mutations.
 
-**Included in V4:**
-- Everything in V1, V2, and V3
-- Approval model (`internal/approval/`) — pending → approved/denied state machine, ID generation, file-based persistence
-- Mutation executor (`internal/mutation/`) — safe file write after approval, workspace-scoped, path traversal protection
-- `write_file_proposal` tool — validates path/content, creates pending approval, emits events, returns approval_id
-- Approval events: `prism.approval.requested`, `prism.approval.granted`, `prism.approval.denied`, `prism.approval.expired`
-- Mutation events: `prism.mutation.proposed`, `prism.mutation.validated`, `prism.mutation.applied`, `prism.mutation.failed`
-- CLI approval commands: `prism approval list`, `prism approval show`, `prism approval approve`, `prism approval deny`
-- Approval artifacts: `runs/<run_id>/approvals/<approval_id>.json`
-- `approvals` and `mutations` arrays in `summary.json`
-- Updated prompt builder with V4 mutation instructions
-- Updated policy: `write_file_proposal` → requires_approval, direct write → denied
+**Included in V5:**
+- Everything in V1, V2, V3, and V4
+- Validation profile registry (`internal/validation/`) — named, allowlisted command profiles with timeouts
+- Validation executor — safe command execution with stdout/stderr capture and artifact persistence
+- Validation events: `prism.validation.requested/started/completed/failed/skipped/timeout`
+- Validation artifacts: `runs/<run_id>/validation/<profile>.json`, `.stdout.txt`, `.stderr.txt`
+- Deterministic reviewer (`internal/review/`) — generates `review.md` from mutation + validation results
+- Review events: `prism.review.requested/started/completed/failed`
+- Review artifact: `runs/<run_id>/review.md` with recommendation
+- CLI commands: `prism validation list`, `prism validation run`, `prism approval approve --validate`
+- `validations` and `reviews` arrays in `summary.json`
+- Command safety: no arbitrary shell, no pipes/redirects/chaining, timeout required, path containment
+- 180 tests across 10 packages
 
-**Safety model (V4 additions):**
-- `write_file_proposal` → requires_approval (creates pending approval, does NOT write to disk)
-- Direct `write_file` without approval → denied
-- No LLM self-approval — the model proposes, a human operator approves
+**Safety model (V5 additions):**
+- Validation commands come only from named, allowlisted profiles — no LLM-provided commands
+- No pipes, redirects, command chaining, or arbitrary execution
+- Timeout required for every profile
+- `working_dir` must be within project root (path traversal blocked)
+- Reviewer cannot approve or apply mutations — read-only analysis
+- Validation failure does NOT rollback mutation (future work)
 - No writes outside project workspace root
 - No path traversal (`..`) or absolute paths outside workspace
 - No destructive deletes
@@ -730,14 +734,32 @@ ollama pull qwen2.5:7b
 - Mutation executor with safety checks
 - Approval/mutation events
 - Approval artifacts persisted to runs/
-- `apply_patch` support planned for V5
+- `apply_patch` support planned for V6+
 
-### V5 — Planned
+### V5 — Validation + Review Pipeline
+
+V5 adds post-mutation validation and deterministic review:
+
+- **Validation profile registry** — named, allowlisted command profiles (e.g., `go_test_all`)
+- **Safe command execution** — no arbitrary shell, no pipes/redirects/chaining, timeout-enforced
+- **Validation events** — `validation.requested/started/completed/failed/skipped/timeout`
+- **Validation artifacts** — `runs/<run_id>/validation/<profile>.json`, `.stdout.txt`, `.stderr.txt`
+- **Deterministic reviewer** — generates `review.md` artifact from mutation + validation results
+- **Review events** — `review.requested/started/completed/failed`
+- **Review artifact** — `runs/<run_id>/review.md` with recommendation
+- **CLI commands** — `prism validation list`, `prism validation run <profile>`, `prism approval approve --validate`
+- **Summary.json** updated with `validations` and `reviews` arrays
+- **180 tests** across 10 packages (up from 154)
+
+Safety model: the LLM never chooses commands. Only allowlisted profiles can run. The reviewer (even if Lumi) cannot approve or apply mutations.
+
+### V6+ — Planned
 - `apply_patch` proposal tool
 - Dashboard
 - Channel workflows (Discord, Telegram)
 - OpenClaw migration
-- Full autonomous memory intelligence
+- Autonomous repair loops
+- LLM-based review (optional, in addition to deterministic)
 
 ## Design Philosophy
 
@@ -764,6 +786,8 @@ prism/
 │   ├── provider/         # Provider interface, MockProvider, OllamaProvider
 │   ├── agent/            # Placeholder agent + V3/V4 tool/mutation request parser
 │   ├── tool/             # Tool registry, policy, executor, builtins (V3+V4)
+│   ├── validation/       # Validation profile registry, executor, safety (V5)
+│   ├── review/           # Deterministic reviewer, artifact generation (V5)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
@@ -864,6 +888,115 @@ When denied, Prism:
 1. Emits `prism.approval.denied`
 2. Marks the approval as denied
 3. Does NOT write to disk
+
+### V5 Events (validation and review)
+
+| Event | Subject | Description |
+|-------|---------|-------------|
+| Validation Requested | `prism.validation.requested` | Validation profile execution requested |
+| Validation Started | `prism.validation.started` | Validation command started executing |
+| Validation Completed | `prism.validation.completed` | Validation finished successfully (exit code in allowed list) |
+| Validation Failed | `prism.validation.failed` | Validation failed (non-allowed exit code) |
+| Validation Skipped | `prism.validation.skipped` | Validation profile not found or denied |
+| Validation Timeout | `prism.validation.timeout` | Validation command exceeded timeout |
+| Review Requested | `prism.review.requested` | Review generation requested |
+| Review Started | `prism.review.started` | Review generation started |
+| Review Completed | `prism.review.completed` | Review artifact written successfully |
+| Review Failed | `prism.review.failed` | Review generation failed |
+
+## Validation Commands (V5)
+
+```bash
+# List available validation profiles
+./prism validation list
+
+# Run a validation profile
+./prism validation run go_test_all --project prism
+
+# Approve with validation (approve + apply + validate + review)
+./prism approval approve appr_01KRC7AQT3WNFK0PV7 --by ema --validate
+```
+
+### Validation Profiles
+
+Prism V5 ships with built-in validation profiles:
+
+| Profile | Description | Command | Timeout |
+|---------|-------------|---------|--------|
+| `echo_test` | Quick echo test for integration testing | `echo hello` | 5s |
+| `go_test_all` | Run all Go tests in the project | `go test ./...` | 120s |
+
+Custom profiles can be registered via the Go API. Commands are **allowlisted only** — the LLM cannot choose arbitrary commands.
+
+### Validation Artifacts
+
+After validation, Prism writes to `runs/<run_id>/validation/`:
+- `<profile>.json` — result struct (profile, status, exit code, duration, paths)
+- `<profile>.stdout.txt` — captured standard output
+- `<profile>.stderr.txt` — captured standard error
+
+### Review Artifact
+
+After review, Prism writes `runs/<run_id>/review.md`:
+
+```markdown
+# Prism Review
+
+## Run Info
+- **Run ID:** run_01K...
+- **Reviewer:** lumi-deterministic
+- **Mutation Status:** applied
+- **Validation Status:** passed
+
+## Summary
+...
+
+## Files Changed
+- `src/main.go`
+
+## Validation Results
+| Profile | Status | Exit Code | Duration |
+|---------|--------|-----------|----------|
+| go_test_all | passed | 0 | 1832ms |
+
+## Recommendation
+**approved_for_human_review**
+```
+
+### Safety Model
+
+V5 enforces these constraints:
+- **No arbitrary shell execution** — only named validation profiles
+- **No LLM-provided commands** — profiles are predefined
+- **No pipes, redirects, or command chaining** — blocked by `IsSafeCommandString`
+- **Timeout required** — every profile must have `timeout_seconds > 0`
+- **Path containment** — `working_dir` must be within project root
+- **Reviewer cannot approve/apply mutations** — reviewer is read-only
+
+### V5 Lifecycle
+
+```
+AI proposes change
+  → reviewer inspects it
+  → human/operator approves
+  → Prism applies mutation
+  → Prism runs allowlisted validation
+  → reviewer summarizes outcome
+```
+
+With `--validate`:
+```
+prism.approval.granted
+prism.mutation.validated
+prism.mutation.applied
+prism.validation.requested
+prism.validation.started
+prism.validation.completed
+prism.review.requested
+prism.review.completed
+```
+
+Validation failure does **not** roll back the mutation in V5 (rollback is future work).
 
 ## Event Schema
 

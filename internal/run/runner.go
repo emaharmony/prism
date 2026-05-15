@@ -21,9 +21,13 @@ import (
 	"github.com/emaharmony/prism/internal/prompt"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/remembrance"
+	"github.com/emaharmony/prism/internal/review"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prism/internal/validation"
 
 	agentpkg "github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/approval"
+	"github.com/emaharmony/prism/internal/mutation"
 )
 
 // RunConfig holds the configuration for a run.
@@ -53,6 +57,10 @@ type RunConfig struct {
 
 	// V4 approval-gated mutation configuration
 	ApprovalStoreDir string // directory for approval artifacts (default: derived from RunDir)
+
+	// V5 validation and review configuration
+	ValidationRegistry *validation.Registry
+	Reviewer           *review.Reviewer
 }
 
 // RunResult holds the result of a completed run.
@@ -74,6 +82,11 @@ type RunResult struct {
 
 	// V3 tool execution result
 	ToolCallResult *tool.ToolResult `json:"tool_result,omitempty"`
+
+	// V5 validation and review results
+	ValidationResults []validation.Result    `json:"validation_results,omitempty"`
+	Review            *review.Review         `json:"review,omitempty"`
+	ReviewArtifactPath string               `json:"review_artifact_path,omitempty"`
 }
 
 // Runner orchestrates the lifecycle.
@@ -705,10 +718,17 @@ func (r *Runner) buildEvent(eventType, source string, payload map[string]any) ev
 }
 
 // publishEvent publishes a fully-built event to NATS (best effort for V1).
+// If NATS is not connected (r.js is nil), the event is still recorded in-memory
+// but not published to the bus. This allows CLI commands like ApproveWithValidation
+// to work without requiring a NATS connection.
 func (r *Runner) publishEvent(evt event.Event) {
 	data, err := evt.ToJSON()
 	if err != nil {
 		log.Printf("prism: failed to marshal event %s: %v", evt.ID, err)
+		return
+	}
+	if r.js == nil {
+		log.Printf("prism: event %s not published (no NATS connection)", evt.ID[:24])
 		return
 	}
 	if _, err := r.js.Publish(evt.Type, data); err != nil {
@@ -716,6 +736,13 @@ func (r *Runner) publishEvent(evt event.Event) {
 	} else {
 		log.Printf("  💎 [%s] id=%s", evt.Type, evt.ID[:24])
 	}
+}
+
+// PublishEvent publishes an event via NATS. If NATS is not connected,
+// the event is logged but not published. This is safe to call even when
+// the runner has not established a NATS connection (e.g., CLI-only usage).
+func (r *Runner) PublishEvent(evt event.Event) {
+	r.publishEvent(evt)
 }
 
 // emit builds and publishes an event to NATS.
@@ -828,4 +855,270 @@ func toolResultStatus(result *tool.ToolResult, err error) string {
 		return "completed"
 	}
 	return "failed"
+}
+
+// ── V5: Validation and Review Integration ──────────────────────────────────
+
+// RunValidation executes a validation profile and emits V5 events.
+// runDir should be the path to runs/<run_id>
+func (r *Runner) RunValidation(runDir, profileName string) (*validation.Result, error) {
+	if r.config.ValidationRegistry == nil {
+		return nil, fmt.Errorf("validation registry not configured")
+	}
+
+	executor := validation.NewExecutor(r.config.ValidationRegistry, ".", runDir)
+	executor.SetEmitter(func(eventType, source string, payload map[string]any) {
+		r.emit(eventType, source, payload)
+	})
+
+	ctx := context.Background()
+	result, err := executor.Run(ctx, profileName, r.correlationID)
+	if err != nil {
+		return nil, fmt.Errorf("validation %q failed: %w", profileName, err)
+	}
+
+	// Persist events to the events.jsonl file
+	r.appendEventsToFile(runDir)
+
+	return result, nil
+}
+
+// RunReview generates a deterministic review from mutation and validation data.
+// runDir should be the path to runs/<run_id>
+func (r *Runner) RunReview(runDir, mutationStatus string, filesChanged []string, validationResults []validation.Result) (*review.Review, string, error) {
+	if r.config.Reviewer == nil {
+		// Create a default reviewer if none configured
+		r.config.Reviewer = review.NewReviewer("lumi-deterministic")
+	}
+
+	r.config.Reviewer.SetEmitter(func(eventType, source string, payload map[string]any) {
+		r.emit(eventType, source, payload)
+	})
+
+	// Convert validation results to ValidationInfo
+	var validationInfos []review.ValidationInfo
+	var validSummaries []event.ValidationSummary
+	for _, vr := range validationResults {
+		validationInfos = append(validationInfos, review.ValidationInfo{
+			Profile:    vr.Profile,
+			Status:     vr.Status,
+			ExitCode:   vr.ExitCode,
+			DurationMs: vr.DurationMs,
+		})
+		validSummaries = append(validSummaries, event.ValidationSummary{
+			Profile:    vr.Profile,
+			Status:     vr.Status,
+			ExitCode:   vr.ExitCode,
+			DurationMs: vr.DurationMs,
+			ResultPath: fmt.Sprintf("validation/%s.json", vr.Profile),
+		})
+	}
+
+	// Pass empty mutation summaries for V5 (review works from mutationStatus string)
+	reviewResult, err := r.config.Reviewer.Generate(
+		r.runID,
+		r.correlationID,
+		mutationStatus,
+		filesChanged,
+		validationInfos,
+		nil,
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("review generation failed: %w", err)
+	}
+
+	// Write review.md artifact
+	artifactPath, err := review.WriteReviewArtifact(runDir, reviewResult)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to write review artifact: %w", err)
+	}
+
+	// Persist review events to the events.jsonl file
+	r.appendEventsToFile(runDir)
+
+	// Update summary.json with validation and review metadata
+	if err := r.updateSummaryWithV5(runDir, validSummaries, reviewResult, artifactPath); err != nil {
+		log.Printf("prism: failed to update summary with V5 metadata: %v", err)
+		// Non-fatal: review and validation artifacts are already written
+	}
+
+	return reviewResult, artifactPath, nil
+}
+
+// ApproveWithValidation approves a mutation, applies it, runs validation, and generates a review.
+// This is the full V5 pipeline: approve → apply → validate → review.
+func (r *Runner) ApproveWithValidation(runDir, approvalID, approvedBy, workspaceDir string) (*RunResult, error) {
+	// Derive the run ID from the run directory path
+	runID := filepath.Base(runDir)
+
+	// Load the approval store
+	store := approval.NewStore(filepath.Dir(runDir))
+
+	// Create the mutation executor
+	mutExec := mutation.NewExecutor(workspaceDir, store)
+
+	// Emit events for approval
+	mutExec.SetEmitter(func(eventType, source string, payload map[string]any) {
+		r.emit(eventType, source, payload)
+	})
+
+	// Apply the mutation
+	mutResult, err := mutExec.ApplyWithRun(context.Background(), runID, approvalID, approvedBy)
+	if err != nil {
+		return nil, fmt.Errorf("mutation apply failed: %w", err)
+	}
+
+	mutationStatus := "none"
+	var filesChanged []string
+	if mutResult != nil && mutResult.Success {
+		mutationStatus = "applied"
+		filesChanged = []string{mutResult.TargetPath}
+	} else if mutResult != nil {
+		mutationStatus = "failed"
+	}
+
+	// Run validation
+	var validationResults []validation.Result
+	if r.config.ValidationRegistry != nil {
+		profiles := r.config.ValidationRegistry.List()
+		for _, profileName := range profiles {
+			result, valErr := r.RunValidation(runDir, profileName)
+			if valErr != nil {
+				log.Printf("prism: validation %q error: %v", profileName, valErr)
+				validationResults = append(validationResults, validation.Result{
+					Profile: profileName,
+					Status:  "error",
+					Error:   valErr.Error(),
+				})
+				continue
+			}
+			if result != nil {
+				validationResults = append(validationResults, *result)
+			}
+		}
+	}
+
+	// Generate review
+	reviewResult, reviewArtifactPath, reviewErr := r.RunReview(runDir, mutationStatus, filesChanged, validationResults)
+	if reviewErr != nil {
+		log.Printf("prism: review generation failed: %v", reviewErr)
+		// Non-fatal: validation artifacts are already written
+	}
+
+	// Read the summary to get current values
+	summaryPath := filepath.Join(runDir, "summary.json")
+	var summary event.Summary
+	if data, err := os.ReadFile(summaryPath); err == nil {
+		json.Unmarshal(data, &summary)
+	}
+
+	summary.Status = "completed"
+	if mutationStatus == "applied" {
+		summary.Status = "completed"
+	}
+
+	// Persist updated summary
+	summaryData, _ := json.MarshalIndent(summary, "", "  ")
+	os.WriteFile(summaryPath, append(summaryData, '\n'), 0644)
+
+	return &RunResult{
+		RunID:             r.runID,
+		Status:            summary.Status,
+		EventCount:        len(r.events),
+		SummaryPath:       summaryPath,
+		Provider:          r.config.ProviderName,
+		Model:             r.config.Model,
+		ValidationResults: validationResults,
+		Review:            reviewResult,
+		ReviewArtifactPath: reviewArtifactPath,
+	}, nil
+}
+
+// updateSummaryWithV5 adds validation and review metadata to the run summary.
+func (r *Runner) updateSummaryWithV5(runDir string, validSummaries []event.ValidationSummary, reviewResult *review.Review, reviewArtifactPath string) error {
+	summaryPath := filepath.Join(runDir, "summary.json")
+
+	// Read existing summary
+	var summary event.Summary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		return fmt.Errorf("cannot read summary: %w", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return fmt.Errorf("cannot parse summary: %w", err)
+	}
+
+	// Add validation data
+	summary.Validations = validSummaries
+
+	// Add review data
+	if reviewResult != nil {
+		artifactRelPath := "review.md"
+		if reviewArtifactPath != "" {
+			artifactRelPath = filepath.Base(reviewArtifactPath)
+		}
+		summary.Reviews = []event.ReviewSummary{
+			{
+				Reviewer:       reviewResult.Reviewer,
+				Status:         "completed",
+				Recommendation: string(reviewResult.Recommendation),
+				ArtifactPath:   artifactRelPath,
+			},
+		}
+	}
+
+	// Write updated summary
+	summaryData, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated summary: %w", err)
+	}
+	if err := os.WriteFile(summaryPath, append(summaryData, '\n'), 0644); err != nil {
+		return fmt.Errorf("failed to write updated summary: %w", err)
+	}
+
+	return nil
+}
+
+// appendEventsToFile appends events from the in-memory slice to the events.jsonl file.
+// This is used by post-run operations (validation, review) that emit events after
+// the initial persistEvents call during Run().
+func (r *Runner) appendEventsToFile(runDir string) {
+	eventsPath := filepath.Join(runDir, "events.jsonl")
+
+	// Read existing events from the file
+	existingData, err := os.ReadFile(eventsPath)
+	if err != nil {
+		log.Printf("prism: failed to read existing events for append: %v", err)
+		return
+	}
+
+	// Count existing events (one per line)
+	lines := strings.Split(strings.TrimSpace(string(existingData)), "\n")
+	existingCount := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			existingCount++
+		}
+	}
+
+	// Append only new events
+	if existingCount < len(r.events) {
+		f, err := os.OpenFile(eventsPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("prism: failed to open events file for append: %v", err)
+			return
+		}
+		defer f.Close()
+
+		for _, evt := range r.events[existingCount:] {
+			data, err := evt.ToJSON()
+			if err != nil {
+				log.Printf("prism: failed to marshal event %s: %v", evt.ID, err)
+				continue
+			}
+			if _, err := f.Write(append(data, '\n')); err != nil {
+				log.Printf("prism: failed to write event %s: %v", evt.ID, err)
+			}
+		}
+	}
 }
