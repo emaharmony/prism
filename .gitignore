@@ -21,3 +21,6 @@ prism-data/
 # Run outputs (keep directory structure)
 runs/*
 !runs/.gitkeep
+prism-agent.exe
+prism-bus.exe
+prism.exe
