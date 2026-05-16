@@ -2,7 +2,7 @@
 
 > **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review — after a mutation is applied, Prism can run allowlisted validation profiles and generate a deterministic review artifact.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime — composes existing capabilities as named workflows that emit lifecycle events automatically.
 
 ## Why Prism?
 
@@ -778,6 +778,57 @@ V5 adds post-mutation validation and deterministic review:
 
 Safety model: the LLM never chooses commands. Only allowlisted profiles can run. The reviewer (even if Lumi) cannot approve or apply mutations.
 
+### V7: Workflow Runtime ✅
+
+V7 composes Prism's existing evented capabilities (tools, gates, dispatch) as named workflows. Instead of calling each primitive manually, you define a workflow and Prism runs the full sequence, emitting lifecycle events automatically at every step.
+
+**Before V7:** Prism had independent capabilities you called one at a time.
+**After V7:** You define a workflow and Prism runs the full sequence with automatic event emission.
+
+**Demo workflow** (`examples/workflows/demo-echo.yaml`):
+```yaml
+name: demo.echo_tool
+description: Demo workflow that runs an echo tool.
+version: 1
+steps:
+  - id: echo
+    type: tool.execute
+    tool: echo
+    input:
+      text: "hello from workflow"
+```
+
+**Supported step types:** `tool.execute`, `gate.evaluate`, `dispatch.run`, `workflow.stop`
+
+**Conditions:** Simple `step_id.field == "value"` expressions. If false, the step is skipped with a `prism.workflow.step.skipped` event.
+
+**Event lifecycle (demo.echo_tool):**
+```
+prism.workflow.started
+prism.workflow.step.started (step=echo)
+  prism.tool events (from existing layers)
+prism.workflow.step.completed (step=echo)
+prism.workflow.completed
+```
+
+All events are emitted **automatically**. No manual intervention needed.
+
+**Workflow artifacts:**
+```
+runs/<run_id>/workflow_state.json
+runs/<run_id>/workflow_summary.json
+```
+
+**CLI:**
+```bash
+./prism workflow list
+./prism workflow show demo.echo_tool
+./prism workflow run demo.echo_tool
+./prism workflow status <run_id>
+```
+
+**What V7 intentionally does NOT include:** Visual workflow builder, BPMN engine, distributed workers, cloud execution, multi-agent orchestration, dashboard.
+
 ### V6+ — Planned
 - `apply_patch` proposal tool
 - Dashboard
@@ -811,7 +862,13 @@ prism/
 │   ├── provider/         # Provider interface, MockProvider, OllamaProvider
 │   ├── agent/            # Placeholder agent + V3/V4 tool/mutation request parser
 │   ├── tool/             # Tool registry, policy, executor, builtins (V3+V4)
-│   ├── validation/       # Validation profile registry, executor, safety (V5)
+│   ├── validation/       # Workflows (V7)
+./prism workflow list
+./prism workflow show demo.echo_tool
+./prism workflow run demo.echo_tool
+./prism workflow status <run_id>
+
+# Validation profile registry, executor, safety (V5)
 │   ├── review/           # Deterministic reviewer, artifact generation (V5)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
@@ -929,7 +986,13 @@ When denied, Prism:
 | Review Completed | `prism.review.completed` | Review artifact written successfully |
 | Review Failed | `prism.review.failed` | Review generation failed |
 
-## Validation Commands (V5)
+## Workflows (V7)
+./prism workflow list
+./prism workflow show demo.echo_tool
+./prism workflow run demo.echo_tool
+./prism workflow status <run_id>
+
+# Validation Commands (V5)
 
 ```bash
 # List available validation profiles
@@ -942,7 +1005,13 @@ When denied, Prism:
 ./prism approval approve appr_01KRC7AQT3WNFK0PV7 --by ema --validate
 ```
 
-### Validation Profiles
+### Workflows (V7)
+./prism workflow list
+./prism workflow show demo.echo_tool
+./prism workflow run demo.echo_tool
+./prism workflow status <run_id>
+
+# Validation Profiles
 
 Prism V5 ships with built-in validation profiles:
 
@@ -953,7 +1022,13 @@ Prism V5 ships with built-in validation profiles:
 
 Custom profiles can be registered via the Go API. Commands are **allowlisted only** — the LLM cannot choose arbitrary commands.
 
-### Validation Artifacts
+### Workflows (V7)
+./prism workflow list
+./prism workflow show demo.echo_tool
+./prism workflow run demo.echo_tool
+./prism workflow status <run_id>
+
+# Validation Artifacts
 
 After validation, Prism writes to `runs/<run_id>/validation/`:
 - `<profile>.json` — result struct (profile, status, exit code, duration, paths)
@@ -979,7 +1054,13 @@ After review, Prism writes `runs/<run_id>/review.md`:
 ## Files Changed
 - `src/main.go`
 
-## Validation Results
+## Workflows (V7)
+./prism workflow list
+./prism workflow show demo.echo_tool
+./prism workflow run demo.echo_tool
+./prism workflow status <run_id>
+
+# Validation Results
 | Profile | Status | Exit Code | Duration |
 |---------|--------|-----------|----------|
 | go_test_all | passed | 0 | 1832ms |
