@@ -1,0 +1,10 @@
+name: demo.echo_tool
+description: Demo workflow that runs an echo tool.
+version: 1
+
+steps:
+  - id: echo
+    type: tool.execute
+    tool: echo
+    input:
+      text: "hello from workflow"
