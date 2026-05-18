@@ -1,3 +1,22 @@
+// cmd_projection.go implements the `prism projection` subcommands (V10).
+//
+// Projections turn event history into queryable current state. Instead of
+// scanning thousands of events every time you want to know "how many approvals
+// are pending?", you query a projection that has already computed the answer.
+//
+// Projections are pure functions: same events in the same order always produce
+// the same output. They can be rebuilt at any time by replaying events.jsonl.
+//
+// Built-in projections:
+//   - run_status:     Task lifecycle (created → running → completed/failed)
+//   - approval_state: Approval counts (pending, approved, denied, expired)
+//   - tool_history:   Tool call history with policy decisions
+//
+// Commands:
+//   prism projection list                          — Show available projections
+//   prism projection rebuild --run <id>             — Rebuild projections for one run
+//   prism projection rebuild --all                   — Rebuild projections for all runs
+//   prism projection query <name> --run <id>         — Query a projection snapshot
 package main
 
 import (
@@ -11,6 +30,8 @@ import (
 	"github.com/emaharmony/prism/internal/projection/builtin/toolhistory"
 )
 
+// newProjectionRunner creates a runner with all built-in projections registered.
+// Adding a new projection? Register it here and it appears in `prism projection list`.
 func newProjectionRunner() *projection.Runner {
 	return projection.NewRunner(
 		runstatus.New(),
@@ -19,6 +40,7 @@ func newProjectionRunner() *projection.Runner {
 	)
 }
 
+// executeProjectionList shows the names of all registered projections.
 func executeProjectionList() {
 	runner := newProjectionRunner()
 	names := runner.List()
@@ -32,11 +54,18 @@ func executeProjectionList() {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeProjectionRebuild re-reads events.jsonl and recomputes projection
+// snapshots. Use this when:
+//   - A new projection was added and you need its initial snapshot
+//   - A projection's logic changed and you need to recompute historical data
+//   - A projection file was deleted and you need to recreate it
+//
+// With --run <id>, rebuilds one run. With --all, rebuilds every run.
 func executeProjectionRebuild(runID string, all bool, runsDir string) {
 	runner := newProjectionRunner()
 
 	if all {
-		// Rebuild all runs
+		// Rebuild all runs in the runs directory
 		entries, err := os.ReadDir(runsDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: cannot read runs directory: %v\n", err)
@@ -49,7 +78,7 @@ func executeProjectionRebuild(runID string, all bool, runsDir string) {
 				continue
 			}
 			if entry.Name() == "policy" {
-				continue // skip policy dir
+				continue // skip the policy artifact directory
 			}
 
 			eventsFile := filepath.Join(runsDir, entry.Name(), "events.jsonl")
@@ -87,7 +116,7 @@ func executeProjectionRebuild(runID string, all bool, runsDir string) {
 		fmt.Printf("  Rebuilt projections for run %s\n", runID)
 		fmt.Println("═══════════════════════════════════════════")
 
-		// Show which projections were written
+		// Show which projection files were written
 		projDir := filepath.Join(runPath, "projections")
 		entries, _ := os.ReadDir(projDir)
 		for _, entry := range entries {
@@ -96,6 +125,9 @@ func executeProjectionRebuild(runID string, all bool, runsDir string) {
 	}
 }
 
+// executeProjectionQuery reads and prints a projection snapshot as JSON.
+// The snapshot is stored at runs/<id>/projections/<name>.json.
+// If the file doesn't exist, it suggests running `prism projection rebuild` first.
 func executeProjectionQuery(name, runID, runsDir string) {
 	projFile := filepath.Join(runsDir, runID, "projections", name+".json")
 
@@ -108,5 +140,3 @@ func executeProjectionQuery(name, runID, runsDir string) {
 
 	fmt.Println(string(data))
 }
-// ── V11: Dashboard CLI Function ─────────────────────────────────────────────
-

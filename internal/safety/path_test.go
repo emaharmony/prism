@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// TestIsWithinRoot_NormalPath verifies that a file within the root directory
+// passes the containment check.
 func TestIsWithinRoot_NormalPath(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "src", "main.go")
@@ -17,6 +19,8 @@ func TestIsWithinRoot_NormalPath(t *testing.T) {
 	}
 }
 
+// TestIsWithinRoot_PathTraversal verifies that a path using ".." to escape
+// the root directory is correctly rejected.
 func TestIsWithinRoot_PathTraversal(t *testing.T) {
 	root := t.TempDir()
 	escape := filepath.Join(root, "..", "..", "etc", "passwd")
@@ -29,6 +33,8 @@ func TestIsWithinRoot_PathTraversal(t *testing.T) {
 	}
 }
 
+// TestIsWithinRoot_SamePath verifies that the root directory itself is
+// considered within the root (trivially true).
 func TestIsWithinRoot_SamePath(t *testing.T) {
 	root := t.TempDir()
 	absRoot, _ := filepath.Abs(root)
@@ -38,18 +44,26 @@ func TestIsWithinRoot_SamePath(t *testing.T) {
 	}
 }
 
+// TestIsWithinRoot_NestedPath verifies that deeply nested paths that don't
+// exist yet still pass containment — the function walks up to find the
+// nearest existing ancestor and resolves from there.
 func TestIsWithinRoot_NestedPath(t *testing.T) {
 	root := t.TempDir()
 	nested := filepath.Join(root, "a", "b", "c", "file.txt")
 
+	// file.txt doesn't exist, but root does — should still pass
 	if !IsWithinRoot(nested, root) {
 		t.Errorf("IsWithinRoot nested path = false, want true")
 	}
 }
 
+// TestIsWithinRoot_SymlinkEscape verifies that a symlink inside the root
+// that points outside is correctly blocked. This is the classic symlink
+// escape attack: create a link inside the workspace that points to /etc,
+// then try to read/write through it.
 func TestIsWithinRoot_SymlinkEscape(t *testing.T) {
 	root := t.TempDir()
-	// Create a symlink inside root that points outside
+	// Create a symlink inside root that points to the system temp dir (outside root)
 	linkPath := filepath.Join(root, "escape_link")
 	os.Symlink(os.TempDir(), linkPath)
 
@@ -59,6 +73,8 @@ func TestIsWithinRoot_SymlinkEscape(t *testing.T) {
 	}
 }
 
+// TestResolveAndContain_NormalPath verifies that resolving a relative path
+// against a root directory works correctly for normal (non-escaping) paths.
 func TestResolveAndContain_NormalPath(t *testing.T) {
 	root := t.TempDir()
 	resolved, err := ResolveAndContain(root, "src/main.go")
@@ -71,6 +87,8 @@ func TestResolveAndContain_NormalPath(t *testing.T) {
 	}
 }
 
+// TestResolveAndContain_PathTraversal verifies that ResolveAndContain
+// rejects paths that try to escape the root using "..".
 func TestResolveAndContain_PathTraversal(t *testing.T) {
 	root := t.TempDir()
 	_, err := ResolveAndContain(root, "../../etc/passwd")
@@ -79,6 +97,8 @@ func TestResolveAndContain_PathTraversal(t *testing.T) {
 	}
 }
 
+// TestResolveAndContain_AbsolutePath verifies that ResolveAndContain
+// rejects absolute paths — all paths must be relative to the root.
 func TestResolveAndContain_AbsolutePath(t *testing.T) {
 	root := t.TempDir()
 	_, err := ResolveAndContain(root, "/etc/passwd")

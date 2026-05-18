@@ -1,3 +1,16 @@
+// cmd_policy.go implements the `prism policy` subcommands (V8).
+//
+// The policy engine is Prism's security brain. Before any action runs,
+// the policy engine evaluates it against a set of declarative rules loaded
+// from YAML files. Rules can allow, deny, or require approval for any action.
+//
+// Policy decisions are deterministic — no LLM involved. This means Prism
+// is safe even if the model is compromised. A clever prompt can't trick
+// the policy engine into allowing a denied action.
+//
+// Commands:
+//   prism policy list                   — Show all loaded policy rules
+//   prism policy evaluate --input <file> — Evaluate a specific policy request
 package main
 
 import (
@@ -9,6 +22,9 @@ import (
 	"github.com/emaharmony/prism/internal/policy"
 )
 
+// newPolicyEvaluator loads policy rules from YAML files and creates an
+// evaluator. Rules are loaded from the --policy-dir (default: policies/).
+// If loading fails partially, we continue with whatever rules we have.
 func newPolicyEvaluator(policyDir string) *policy.Evaluator {
 	reg := policy.NewRegistry()
 	reg.LoadFromDir(policyDir) //nolint:errcheck // best-effort loading
@@ -16,6 +32,9 @@ func newPolicyEvaluator(policyDir string) *policy.Evaluator {
 	return eval
 }
 
+// executePolicyList shows all policy rules loaded from YAML files.
+// Each rule shows its decision (allowed/denied/requires_approval), ID,
+// and description. Icons make it easy to scan: ✅ allowed, ❌ denied, ⚠️ requires approval.
 func executePolicyList() {
 	reg := policy.NewRegistry()
 	count, err := reg.LoadFromDir("policies")
@@ -25,18 +44,18 @@ func executePolicyList() {
 
 	rules := reg.Rules()
 
-	fmt.Println("\U0001F4CB Prism V8 Policy Rules")
+	fmt.Println("📋 Prism V8 Policy Rules")
 	fmt.Println("═══════════════════════════════════════════")
 	if len(rules) == 0 {
 		fmt.Println("  (no policies loaded)")
 	}
 	for _, rule := range rules {
-		decisionIcon := "\u2705"
+		decisionIcon := "✅"
 		switch rule.Decision {
 		case policy.DecisionDenied:
-			decisionIcon = "\u274C"
+			decisionIcon = "❌"
 		case policy.DecisionRequiresApproval:
-			decisionIcon = "\u26A0\uFE0F"
+			decisionIcon = "⚠️"
 		}
 		fmt.Printf("  %s %-35s %s\n", decisionIcon, rule.ID, rule.Decision)
 		fmt.Printf("     %s\n", rule.Description)
@@ -47,6 +66,13 @@ func executePolicyList() {
 	}
 }
 
+// executePolicyEvaluate takes a JSON policy request and evaluates it
+// against the loaded policy rules. The input file must contain a valid
+// PolicyRequest with action, resource, subject, and optional context.
+//
+// Output shows the decision, the rule that matched, and the reason.
+// If the decision is "denied", it writes a policy artifact and exits with
+// code 1 so CI pipelines can fail on policy violations.
 func executePolicyEvaluate(inputFile, policyDir string) {
 	data, err := os.ReadFile(inputFile)
 	if err != nil {
@@ -62,7 +88,7 @@ func executePolicyEvaluate(inputFile, policyDir string) {
 
 	evaluator := newPolicyEvaluator(policyDir)
 
-	fmt.Printf("\U0001F50D Policy Evaluation\n")
+	fmt.Printf("🔍 Policy Evaluation\n")
 	fmt.Printf("  Action:   %s\n", req.Action)
 	fmt.Printf("  Resource: %s/%s\n", req.Resource.Type, req.Resource.Name)
 	fmt.Printf("  Subject:  %s/%s\n", req.Subject.Type, req.Subject.ID)
@@ -75,13 +101,13 @@ func executePolicyEvaluate(inputFile, policyDir string) {
 
 	switch decision.Decision {
 	case policy.DecisionAllowed:
-		fmt.Println("  \u2705 ALLOWED")
+		fmt.Println("  ✅ ALLOWED")
 	case policy.DecisionDenied:
-		fmt.Println("  \u274C DENIED")
+		fmt.Println("  ❌ DENIED")
 	case policy.DecisionRequiresApproval:
-		fmt.Println("  \u26A0\uFE0F  REQUIRES APPROVAL")
+		fmt.Println("  ⚠️  REQUIRES APPROVAL")
 	default:
-		fmt.Printf("  \u2753 %s\n", decision.Decision)
+		fmt.Printf("  ❓ %s\n", decision.Decision)
 	}
 	fmt.Println()
 	fmt.Printf("  Rule:    %s\n", decision.RuleID)
@@ -91,7 +117,7 @@ func executePolicyEvaluate(inputFile, policyDir string) {
 	}
 	fmt.Println()
 
-	// Write artifact
+	// Write a policy artifact so the decision is auditable
 	artifactDir := filepath.Join("runs", "policy")
 	if err := policy.WritePolicyArtifact(artifactDir, decision); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write policy artifact: %v\n", err)
@@ -99,8 +125,8 @@ func executePolicyEvaluate(inputFile, policyDir string) {
 		fmt.Printf("  Artifact: %s/%s.json\n", artifactDir, decision.EvaluationID)
 	}
 
+	// Exit with code 1 if denied — CI pipelines can fail on policy violations
 	if decision.Decision == policy.DecisionDenied {
 		os.Exit(1)
 	}
 }
-
