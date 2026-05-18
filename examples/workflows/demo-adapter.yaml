@@ -1,0 +1,10 @@
+name: demo.adapter_echo
+description: Demo workflow that uses the echo adapter
+version: 1
+steps:
+  - id: echo
+    type: dispatch.run
+    adapter: echo
+    action: echo
+    input:
+      message: "hello from adapter"

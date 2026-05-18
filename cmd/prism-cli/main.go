@@ -12,10 +12,13 @@
 //   prism approval deny  — Deny a pending mutation (file is NOT written)
 //   prism validation list — List available validation profiles
 //   prism validation run — Run a validation profile (e.g., go_test_all)
-//   prism policy list — List registered policy rules
+//   prism policy list    — List registered policy rules
 //   prism policy evaluate — Evaluate a policy request
-//   prism workflow list — List registered workflows
-//   prism workflow run  — Run a named workflow
+//   prism adapter list   — List registered adapters
+//   prism adapter show   — Show details of a specific adapter
+//   prism adapter health — Check health of a specific adapter
+//   prism workflow list  — List registered workflows
+//   prism workflow run   — Run a named workflow
 //   prism workflow status — Show workflow run state
 //
 // Why raw os.Args instead of a CLI framework (cobra, etc.)? Prism's CLI surface is
@@ -48,6 +51,8 @@ import (
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/validation"
 	"github.com/emaharmony/prism/internal/policy"
+	"github.com/emaharmony/prism/internal/adapter"
+	"github.com/emaharmony/prism/internal/adapter/builtin/echo"
 	"github.com/emaharmony/prism/internal/workflow"
 )
 
@@ -287,6 +292,33 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown policy subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "adapter":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: adapter subcommand required (list, show, or health)")
+			fmt.Fprintln(os.Stderr, "Usage: prism adapter list")
+			fmt.Fprintln(os.Stderr, "       prism adapter show <adapter_name>")
+			fmt.Fprintln(os.Stderr, "       prism adapter health <adapter_name>")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "list":
+			executeAdapterList()
+		case "show":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: adapter name required")
+				os.Exit(1)
+			}
+			executeAdapterShow(os.Args[3])
+		case "health":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: adapter name required")
+				os.Exit(1)
+			}
+			executeAdapterHealth(os.Args[3])
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown adapter subcommand '%s'\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "workflow":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (list, show, run, or status)")
@@ -331,7 +363,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("prism v0.8.0")
+		fmt.Println("prism v0.9.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -1074,6 +1106,11 @@ func printUsage() {
 	fmt.Println("  prism health [options]                        Check bus health")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println()
+	fmt.Println("Adapter commands:")
+	fmt.Println("  prism adapter list                            List registered adapters")
+	fmt.Println("  prism adapter show <name>                    Show adapter details")
+	fmt.Println("  prism adapter health <name>                  Check adapter health")
+	fmt.Println()
 	fmt.Println("Run options:")
 	fmt.Println("  --task <string>        Task description (required)")
 	fmt.Println("  --project <string>     Project name (default: prism)")
@@ -1267,4 +1304,101 @@ func executeApprovalApproveWithValidation(approvalID, approvedBy, runID, workspa
 
 	fmt.Println("═══════════════════════════════════════════")
 	fmt.Println()
+}
+
+// ── V9: Adapter CLI Functions ───────────────────────────────────────────────
+
+func newAdapterRegistry() *adapter.Registry {
+	reg := adapter.NewRegistry()
+	echoA := &echo.EchoAdapter{}
+	reg.Register(echoA)
+	return reg
+}
+
+func executeAdapterList() {
+	reg := newAdapterRegistry()
+	names := reg.List()
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  Prism V9 Adapters")
+	fmt.Println("═══════════════════════════════════════════")
+	if len(names) == 0 {
+		fmt.Println("  (no adapters registered)")
+	}
+	for _, name := range names {
+		a, _ := reg.Resolve(name)
+		caps := a.Capabilities()
+		fmt.Printf("  %-20s v%-5s  %d capabilit%s\n", name, a.Version(), len(caps), plural(len(caps)))
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+func executeAdapterShow(name string) {
+	reg := newAdapterRegistry()
+	a, err := reg.Resolve(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Adapter: %s\n", a.Name())
+	fmt.Printf("  Version:  %s\n", a.Version())
+	fmt.Println("═══════════════════════════════════════════")
+
+	caps := a.Capabilities()
+	if len(caps) > 0 {
+		fmt.Println("  Capabilities:")
+		for _, c := range caps {
+			approval := ""
+			if c.RequiresApproval {
+				approval = " (requires approval)"
+			}
+			fmt.Printf("    %-15s %s%s\n", c.Action, c.Description, approval)
+		}
+	} else {
+		fmt.Println("  (no capabilities)")
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+func executeAdapterHealth(name string) {
+	reg := newAdapterRegistry()
+	a, err := reg.Resolve(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	health, err := a.Health(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking health: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Printf("  Adapter: %s\n", name)
+	if health.Ready {
+		fmt.Println("  Status:  ✅ Ready")
+	} else {
+		fmt.Println("  Status:  ❌ Not Ready")
+	}
+	if health.Message != "" {
+		fmt.Printf("  Message: %s\n", health.Message)
+	}
+	if len(health.Details) > 0 {
+		fmt.Println("  Details:")
+		for k, v := range health.Details {
+			fmt.Printf("    %s: %v\n", k, v)
+		}
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }
