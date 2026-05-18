@@ -3,6 +3,8 @@ module github.com/emaharmony/prism
 go 1.26.2
 
 require (
+	github.com/gofrs/flock v0.13.0
+	github.com/mattn/go-sqlite3 v1.14.44
 	github.com/nats-io/nats-server/v2 v2.14.0
 	github.com/nats-io/nats.go v1.52.0
 	github.com/oklog/ulid/v2 v2.1.1
