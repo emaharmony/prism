@@ -2,7 +2,7 @@
 
 > **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System. V10 adds State Projections. V11 adds the Dashboard — a local web interface for exploring runs, events, approvals, projections, and policies.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System. V10 adds State Projections. V11 adds the Dashboard. V12 is an architectural refactor. V13 adds Multi-Agent Orchestration — multiple agents collaborating through the event stream, with policy controlling who can do what.
 
 ## Why Prism?
 
@@ -1057,12 +1057,58 @@ GET /api/adapters           → List registered adapters
 
 **What V11 intentionally does NOT include:** Write operations, authentication, WebSocket, multi-user, cloud hosting, build pipeline, mobile-responsive design.
 
-### V6+ — Planned
-- V10: State Projections / Query Layer
-- V11: Dashboard / Event Explorer
-- V12: Multi-Agent Orchestration
-- V13: Affective Telemetry / Study Layer
-- Dashboard
+### V12: Architectural Refactor ✅
+
+V12 is a structural refactor, not a feature version. It cleans the foundation before building higher.
+
+**What changed:**
+- CLI monolith split: `main.go` 1581→484 lines, 10 separate command files
+- Safety package: `internal/safety/` with `IsWithinRoot` + `ResolveAndContain`
+- Path containment: 4+ implementations → 1 canonical
+- Zero behavior changes — same events, same artifacts, same summaries
+
+**What V12 intentionally does NOT include:** New features, API changes, performance changes.
+
+### V13: Multi-Agent Orchestration ✅
+
+V13 gives Prism the ability to coordinate multiple AI agents through the event stream. Agents don't message each other directly — they collaborate through the same canonical event log.
+
+**Key insight:** The event stream IS the communication mechanism. Multiple agents share the same `events.jsonl`, projections, and approvals. Policy controls who can delegate to whom.
+
+**New packages:**
+- `internal/agent/` — Agent struct, Registry, V13 event types
+- `internal/workflow/delegate.go` — Delegation step handler
+- `internal/projection/builtin/agentactivity/` — Per-agent activity counts
+
+**Agent delegation flow:**
+1. Workflow step `type: delegate`, `agent: coder`
+2. Runner resolves agent from registry
+3. Policy evaluates `agent.delegate` action
+4. Agent's LLM provider is called with the subtask
+5. Events emitted: `agent.delegated` → `agent.completed`/`agent.failed`
+
+**CLI:**
+```bash
+prism agent list          # List registered agents
+prism agent show coder    # Show agent details
+```
+
+**Key design principles:**
+1. **Agents are registered, not spawned.** Define them upfront, delegate to them in workflows.
+2. **Events are the communication mechanism.** No direct messaging between agents.
+3. **Policy gates delegation.** `agent.delegate` action is evaluated before delegation proceeds.
+4. **No autonomous swarms.** Agents only act within workflow steps.
+5. **No LLM self-approval.** Policy decides, not the model.
+
+**New event types:** `agent.registered`, `agent.delegated`, `agent.completed`, `agent.failed`
+
+**New projection:** `agent_activity` — tracks per-agent delegation/completion/failure counts
+
+**What V13 intentionally does NOT include:** Autonomous swarms, agent-to-agent messaging, agent spawning, agent memory, inter-agent negotiation, human approval for delegation.
+
+### V14+ — Planned
+- V14: Affective Telemetry / Study Layer
+- Dashboard enhancements
 - Channel workflows (Discord, Telegram)
 - OpenClaw migration
 - Autonomous repair loops
@@ -1102,6 +1148,8 @@ prism/
 │   ├── projection/         # State projections, runner, built-in projections (V10)
 │   │   └── builtin/       # Built-in projections (run_status, approval_state, tool_history)
 │   ├── dashboard/         # Local web dashboard, HTTP server, API, embedded UI (V11)
+│   ├── agent/            # Agent model, registry, event types (V13)
+│   ├── safety/          # Shared path containment utilities (V12)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
