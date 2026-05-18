@@ -1,0 +1,34 @@
+# Demo: Multi-Agent Code and Review
+# V13 — Agents collaborate through the event stream
+#
+# This workflow demonstrates three agents working together:
+#   1. planner — breaks down the task
+#   2. coder   — implements the plan
+#   3. reviewer — reviews the implementation
+#
+# Each delegation step emits events (agent.delegated, agent.completed).
+# Policy controls who can delegate to whom.
+name: code-and-review
+version: 1
+description: "Plan, implement, and review code with multiple agents"
+
+steps:
+  - id: plan
+    type: delegate
+    agent: planner
+    input:
+      task: "Break down this task into implementation steps: {{ .task }}"
+
+  - id: implement
+    type: delegate
+    agent: coder
+    when: "step.plan.status == completed"
+    input:
+      task: "Implement the following plan:\n{{ step.plan.output }}"
+
+  - id: review
+    type: delegate
+    agent: reviewer
+    when: "step.implement.status == completed"
+    input:
+      task: "Review this implementation for correctness and safety:\n{{ step.implement.output }}"
