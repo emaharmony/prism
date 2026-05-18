@@ -17,6 +17,9 @@
 //   prism adapter list   — List registered adapters
 //   prism adapter show   — Show details of a specific adapter
 //   prism adapter health — Check health of a specific adapter
+//   prism projection list — List available projections
+//   prism projection rebuild — Rebuild projection snapshots from events
+//   prism projection query — Query a projection snapshot
 //   prism workflow list  — List registered workflows
 //   prism workflow run   — Run a named workflow
 //   prism workflow status — Show workflow run state
@@ -53,6 +56,10 @@ import (
 	"github.com/emaharmony/prism/internal/policy"
 	"github.com/emaharmony/prism/internal/adapter"
 	"github.com/emaharmony/prism/internal/adapter/builtin/echo"
+	"github.com/emaharmony/prism/internal/projection"
+		approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
+	"github.com/emaharmony/prism/internal/projection/builtin/runstatus"
+	"github.com/emaharmony/prism/internal/projection/builtin/toolhistory"
 	"github.com/emaharmony/prism/internal/workflow"
 )
 
@@ -319,6 +326,52 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown adapter subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "projection":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: projection subcommand required (list, rebuild, or query)")
+			fmt.Fprintln(os.Stderr, "Usage: prism projection list")
+			fmt.Fprintln(os.Stderr, "       prism projection rebuild --run <run_id>")
+			fmt.Fprintln(os.Stderr, "       prism projection rebuild --all")
+			fmt.Fprintln(os.Stderr, "       prism projection query <name> --run <run_id>")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "list":
+			executeProjectionList()
+		case "rebuild":
+			projRebuildCmd := flag.NewFlagSet("projection rebuild", flag.ExitOnError)
+			projRunID := projRebuildCmd.String("run", "", "Run ID to rebuild projections for")
+			projAll := projRebuildCmd.Bool("all", false, "Rebuild projections for all runs")
+			projDir := projRebuildCmd.String("run-dir", "./runs", "Directory for run outputs")
+			projRebuildCmd.Parse(os.Args[3:])
+			if *projRunID == "" && !*projAll {
+				fmt.Fprintln(os.Stderr, "Error: --run or --all required")
+				fmt.Fprintln(os.Stderr, "Usage: prism projection rebuild --run <run_id>")
+				fmt.Fprintln(os.Stderr, "       prism projection rebuild --all")
+				os.Exit(1)
+			}
+			executeProjectionRebuild(*projRunID, *projAll, *projDir)
+		case "query":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: projection name required")
+				fmt.Fprintln(os.Stderr, "Usage: prism projection query <name> --run <run_id>")
+				os.Exit(1)
+			}
+			projName := os.Args[3]
+			projQueryCmd := flag.NewFlagSet("projection query", flag.ExitOnError)
+			projQueryRun := projQueryCmd.String("run", "", "Run ID")
+			projQueryDir := projQueryCmd.String("run-dir", "./runs", "Directory for run outputs")
+			projQueryCmd.Parse(os.Args[4:])
+			if *projQueryRun == "" {
+				fmt.Fprintln(os.Stderr, "Error: --run required")
+				fmt.Fprintln(os.Stderr, "Usage: prism projection query <name> --run <run_id>")
+				os.Exit(1)
+			}
+			executeProjectionQuery(projName, *projQueryRun, *projQueryDir)
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown projection subcommand '%s'\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "workflow":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (list, show, run, or status)")
@@ -363,7 +416,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("prism v0.9.0")
+		fmt.Println("prism v0.10.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -1111,6 +1164,12 @@ func printUsage() {
 	fmt.Println("  prism adapter show <name>                    Show adapter details")
 	fmt.Println("  prism adapter health <name>                  Check adapter health")
 	fmt.Println()
+	fmt.Println("Projection commands:")
+	fmt.Println("  prism projection list                         List available projections")
+	fmt.Println("  prism projection rebuild --run <id>           Rebuild projections for a run")
+	fmt.Println("  prism projection rebuild --all               Rebuild projections for all runs")
+	fmt.Println("  prism projection query <name> --run <id>     Query a projection snapshot")
+	fmt.Println()
 	fmt.Println("Run options:")
 	fmt.Println("  --task <string>        Task description (required)")
 	fmt.Println("  --project <string>     Project name (default: prism)")
@@ -1401,4 +1460,104 @@ func plural(n int) string {
 		return "y"
 	}
 	return "ies"
+}
+
+// ── V10: Projection CLI Functions ──────────────────────────────────────────────
+
+func newProjectionRunner() *projection.Runner {
+	return projection.NewRunner(
+		runstatus.New(),
+		approvalproj.New(),
+		toolhistory.New(),
+	)
+}
+
+func executeProjectionList() {
+	runner := newProjectionRunner()
+	names := runner.List()
+
+	fmt.Println("═══════════════════════════════════════════")
+	fmt.Println("  Prism V10 Projections")
+	fmt.Println("═══════════════════════════════════════════")
+	for _, name := range names {
+		fmt.Printf("  • %s\n", name)
+	}
+	fmt.Println("═══════════════════════════════════════════")
+}
+
+func executeProjectionRebuild(runID string, all bool, runsDir string) {
+	runner := newProjectionRunner()
+
+	if all {
+		// Rebuild all runs
+		entries, err := os.ReadDir(runsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot read runs directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		count := 0
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			if entry.Name() == "policy" {
+				continue // skip policy dir
+			}
+
+			eventsFile := filepath.Join(runsDir, entry.Name(), "events.jsonl")
+			if _, err := os.Stat(eventsFile); os.IsNotExist(err) {
+				continue // skip runs without events
+			}
+
+			runPath := filepath.Join(runsDir, entry.Name())
+			if err := runner.Run(eventsFile, runPath); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: %s: %v\n", entry.Name(), err)
+				continue
+			}
+			count++
+		}
+
+		fmt.Println("═══════════════════════════════════════════")
+		fmt.Printf("  Rebuilt projections for %d runs\n", count)
+		fmt.Println("═══════════════════════════════════════════")
+	} else {
+		// Rebuild a single run
+		eventsFile := filepath.Join(runsDir, runID, "events.jsonl")
+		runPath := filepath.Join(runsDir, runID)
+
+		if _, err := os.Stat(eventsFile); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: events file not found: %s\n", eventsFile)
+			os.Exit(1)
+		}
+
+		if err := runner.Run(eventsFile, runPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("═══════════════════════════════════════════")
+		fmt.Printf("  Rebuilt projections for run %s\n", runID)
+		fmt.Println("═══════════════════════════════════════════")
+
+		// Show which projections were written
+		projDir := filepath.Join(runPath, "projections")
+		entries, _ := os.ReadDir(projDir)
+		for _, entry := range entries {
+			fmt.Printf("  • %s\n", entry.Name())
+		}
+	}
+}
+
+func executeProjectionQuery(name, runID, runsDir string) {
+	projFile := filepath.Join(runsDir, runID, "projections", name+".json")
+
+	data, err := os.ReadFile(projFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: projection %q not found for run %s\n", name, runID)
+		fmt.Fprintf(os.Stderr, "  Run 'prism projection rebuild --run %s' first\n", runID)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(data))
 }
