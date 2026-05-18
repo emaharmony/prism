@@ -2,7 +2,7 @@
 
 > **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System. V10 adds State Projections — turning event history into queryable current state without a database.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System. V10 adds State Projections. V11 adds the Dashboard — a local web interface for exploring runs, events, approvals, projections, and policies.
 
 ## Why Prism?
 
@@ -1021,6 +1021,42 @@ runs/<run_id>/
 
 **What V10 intentionally does NOT include:** Database, real-time streaming, SQL-like query language, dashboard (V11), multi-run aggregation, projection versioning.
 
+### V11: Dashboard / Event Explorer ✅
+
+V11 adds a local web dashboard for exploring Prism runs. `prism dashboard` starts an HTTP server and serves a self-contained HTML page — no npm, no Webpack, no cloud hosting.
+
+**Start the dashboard:**
+```bash
+./prism dashboard              # http://localhost:8080
+./prism dashboard --port 3000  # Custom port
+```
+
+**Dashboard features:**
+- **Runs list** — all runs with status, task, agent, timing (auto-refresh every 5s)
+- **Run detail** — click a run → see summary, events timeline, projections
+- **Events timeline** — visual event stream with type coloring
+- **Projections** — query derived state (run_status, approval_state, tool_history)
+- **Policy rules** — view current policy configuration
+
+**API endpoints:**
+```
+GET /api/runs              → List all runs with status
+GET /api/runs/:id          → Run detail (summary + projection names)
+GET /api/events/:id        → Events for a run (from events.jsonl)
+GET /api/projections/:id/:name → Projection snapshot
+GET /api/policies          → List policy rules from YAML
+GET /api/adapters           → List registered adapters
+```
+
+**Key design principles:**
+1. **Self-contained.** One HTML file with inline CSS/JS, embedded in Go binary via `embed.FS`.
+2. **Read-only.** Shows data, does NOT approve/deny/execute/mutate.
+3. **Local-first.** Binds to localhost, data never leaves your machine.
+4. **No framework.** No React, no Tailwind, no npm. Just HTML + CSS + vanilla JS.
+5. **Auto-refresh.** Polls `/api/runs` every 5 seconds for new runs.
+
+**What V11 intentionally does NOT include:** Write operations, authentication, WebSocket, multi-user, cloud hosting, build pipeline, mobile-responsive design.
+
 ### V6+ — Planned
 - V10: State Projections / Query Layer
 - V11: Dashboard / Event Explorer
@@ -1065,6 +1101,7 @@ prism/
 │   │   └── builtin/echo/  # Built-in echo adapter
 │   ├── projection/         # State projections, runner, built-in projections (V10)
 │   │   └── builtin/       # Built-in projections (run_status, approval_state, tool_history)
+│   ├── dashboard/         # Local web dashboard, HTTP server, API, embedded UI (V11)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
