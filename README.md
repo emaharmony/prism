@@ -2,7 +2,7 @@
 
 > **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime — composes existing capabilities as named workflows that emit lifecycle events automatically.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine — a central, declarative policy layer that answers: Is this action allowed? Denied? Does it require approval? Why?
 
 ## Why Prism?
 
@@ -139,6 +139,7 @@ All Go tests pass with `go test ./...`. See individual package test coverage bel
 - `internal/provider` — mock provider, failing mock, Ollama provider (httptest)
 - `internal/run` — V1 lifecycle, V2 lifecycle, V3 tool lifecycle, V4 approval lifecycle, memory, correlation, parent chains
 - `internal/tool` — registry, policy, executor, built-in tools, path traversal protection, write_file_proposal
+- `internal/policy` — V8: core policy engine, declarative rules, evaluator, events, artifacts, CLI integration
 
 All Go tests pass with `go test ./...`.
 
@@ -829,6 +830,76 @@ runs/<run_id>/workflow_summary.json
 
 **What V7 intentionally does NOT include:** Visual workflow builder, BPMN engine, distributed workers, cloud execution, multi-agent orchestration, dashboard.
 
+### V8: Core Policy Engine ✅
+
+V8 centralizes policy decisions across Prism. Instead of scattered policy checks inside tools, gates, and dispatchers, there is now a single Policy Engine that answers:
+
+```
+Is this action allowed?
+Is this action denied?
+Does this action require approval?
+Why? Which rule made the decision?
+```
+
+**Key principle:** Policy does NOT replace local safety validators. Policy decides permission; local validators still enforce input safety (path traversal, malformed input, etc.). Policy first, local validation second.
+
+**Policy decisions:**
+```json
+{
+  "decision": "allowed",
+  "reason": "Tool is allowlisted and path is inside workspace.",
+  "rule_id": "allow_read_file",
+  "severity": "info",
+  "requires_approval": false
+}
+```
+
+Allowed decisions: `allowed`, `denied`, `requires_approval`
+
+**Policy rules** are simple, first-match, YAML-based:
+```yaml
+policies:
+  - id: deny_shell_execution
+    description: Block shell execution in core Prism.
+    match:
+      action: tool.execute
+      resource.name: run_command
+    decision: denied
+    reason: Shell execution is not supported by policy.
+    severity: critical
+```
+
+**Default policy** (`policies/default.yaml`): deny shell execution, require approval for file mutations, block live trading dispatch, allow safe read-only tools, allow echo.
+
+**Integration order:**
+1. Tool execution (V8) — policy evaluates before local tool validation
+2. Dispatch — TODO
+3. Gates — TODO
+4. Mutations — TODO
+5. Validations — TODO
+
+**Policy events:**
+```
+prism.policy.requested
+prism.policy.evaluated
+prism.policy.allowed
+prism.policy.denied
+prism.policy.approval_required
+```
+
+**Policy artifacts:**
+```
+runs/policy/<evaluation_id>.json
+```
+
+**CLI:**
+```bash
+./prism policy list
+./prism policy evaluate --input request.json --policy-dir policies
+```
+
+**What V8 intentionally does NOT include:** OPA/Rego, CEL, remote policy service, user/team permissions, RBAC UI, dashboard, cloud policy sync, LLM-authored policies, LLM policy override, live trading permission, arbitrary shell execution.
+
 ### V6+ — Planned
 - `apply_patch` proposal tool
 - Dashboard
@@ -991,6 +1062,10 @@ When denied, Prism:
 ./prism workflow show demo.echo_tool
 ./prism workflow run demo.echo_tool
 ./prism workflow status <run_id>
+
+# Policy Commands (V8)
+./prism policy list
+./prism policy evaluate --input request.json --policy-dir policies
 
 # Validation Commands (V5)
 
