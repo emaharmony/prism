@@ -21,6 +21,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/adapter"
 	"github.com/emaharmony/prism/internal/adapter/builtin/echo"
+	"github.com/emaharmony/prism/internal/adapter/builtin/refracttrack"
 )
 
 // newAdapterRegistry creates a registry with built-in adapters.
@@ -29,7 +30,9 @@ import (
 func newAdapterRegistry() *adapter.Registry {
 	reg := adapter.NewRegistry()
 	echoA := &echo.EchoAdapter{}
-	reg.Register(echoA)
+	reg.Register(echoA) //nolint:errcheck // built-in, known good
+	refractA := refracttrack.New()
+	reg.Register(refractA) //nolint:errcheck // built-in, known good
 	return reg
 }
 
