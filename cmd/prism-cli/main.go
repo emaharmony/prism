@@ -56,6 +56,7 @@ import (
 	"github.com/emaharmony/prism/internal/policy"
 	"github.com/emaharmony/prism/internal/adapter"
 	"github.com/emaharmony/prism/internal/adapter/builtin/echo"
+	"github.com/emaharmony/prism/internal/dashboard"
 	"github.com/emaharmony/prism/internal/projection"
 		approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
 	"github.com/emaharmony/prism/internal/projection/builtin/runstatus"
@@ -372,6 +373,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown projection subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "dashboard":
+		dashCmd := flag.NewFlagSet("dashboard", flag.ExitOnError)
+		dashPort := dashCmd.String("port", "8080", "Dashboard listen port")
+		dashRunDir := dashCmd.String("run-dir", "./runs", "Directory for run outputs")
+		dashPolicyDir := dashCmd.String("policy-dir", "policies", "Directory containing policy YAML files")
+		dashCmd.Parse(os.Args[2:])
+		executeDashboard(*dashPort, *dashRunDir, *dashPolicyDir)
 	case "workflow":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (list, show, run, or status)")
@@ -416,7 +424,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("prism v0.10.0")
+		fmt.Println("prism v0.11.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -1157,6 +1165,7 @@ func printUsage() {
 	fmt.Println("  prism approval approve <id> --by <name>       Approve a mutation")
 	fmt.Println("  prism approval deny <id> --by <name>          Deny a mutation")
 	fmt.Println("  prism health [options]                        Check bus health")
+	fmt.Println("  prism dashboard [--port 8080]                 Start local dashboard")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println()
 	fmt.Println("Adapter commands:")
@@ -1560,4 +1569,13 @@ func executeProjectionQuery(name, runID, runsDir string) {
 	}
 
 	fmt.Println(string(data))
+}
+// ── V11: Dashboard CLI Function ─────────────────────────────────────────────
+
+func executeDashboard(port, runDir, policyDir string) {
+	server := dashboard.NewServer(":"+port, runDir, policyDir)
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 }
