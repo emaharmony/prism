@@ -2,6 +2,7 @@
 #
 # Policy decides permission. Local validators still enforce input safety.
 # This file provides safe defaults for core Prism operations.
+# Capability.RequiresApproval is advisory — policy is authoritative.
 
 policies:
   - id: allow_echo
@@ -52,4 +53,21 @@ policies:
       context.mode: live
     decision: denied
     reason: "Live trading dispatch is not supported."
+    severity: critical
+
+  # V9: Adapter policies
+  - id: allow_echo_adapter
+    description: Allow the echo adapter.
+    match:
+      action: adapter.echo.echo
+    decision: allowed
+    reason: "Echo adapter is safe for all contexts."
+
+  - id: deny_live_trading_adapter
+    description: Block live mode on any trading adapter action.
+    match:
+      action: adapter.trading.execute
+      context.mode: live
+    decision: denied
+    reason: "Live trading execution is not supported by policy."
     severity: critical
