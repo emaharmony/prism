@@ -332,7 +332,7 @@ func TestCalculateDelay(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := calculateDelay(tt.attempt, config)
+		got := CalculateDelay(tt.attempt, config)
 		if got != tt.want {
 			t.Errorf("calculateDelay(%d) = %v, want %v", tt.attempt, got, tt.want)
 		}
