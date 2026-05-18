@@ -20,6 +20,7 @@ import (
 	"os"
 
 	"github.com/emaharmony/prism/internal/adapter"
+	"github.com/emaharmony/prism/internal/adapter/builtin/discord"
 	"github.com/emaharmony/prism/internal/adapter/builtin/echo"
 	"github.com/emaharmony/prism/internal/adapter/builtin/refracttrack"
 )
@@ -33,6 +34,11 @@ func newAdapterRegistry() *adapter.Registry {
 	reg.Register(echoA) //nolint:errcheck // built-in, known good
 	refractA := refracttrack.New()
 	reg.Register(refractA) //nolint:errcheck // built-in, known good
+	// Discord adapter requires webhook URL from environment variable
+	if webhookURL := os.Getenv("DISCORD_WEBHOOK_URL"); webhookURL != "" {
+		discordA := discord.New(webhookURL)
+		reg.Register(discordA) //nolint:errcheck // only if configured
+	}
 	return reg
 }
 
