@@ -222,6 +222,28 @@ func TestPipeline_Empty(t *testing.T) {
 	}
 }
 
+func TestRunContext_WithEvent_ResultsImmutability(t *testing.T) {
+	// Verify that WithEvent deep-copies Results, preventing shared mutation
+	result1 := &StageResult{StageName: "stage1", Success: true}
+	rc := &RunContext{
+		RunID:   "test-run",
+		Events:  []event.Event{},
+		Results: map[string]*StageResult{"stage1": result1},
+	}
+
+	evt := event.NewEvent("test.event", "pipeline", nil)
+	rc2 := rc.WithEvent(evt)
+
+	// Mutating rc2's Results should NOT affect rc's Results
+	rc2.Results["stage2"] = &StageResult{StageName: "stage2", Success: true}
+	if len(rc.Results) != 1 {
+		t.Errorf("original Results was mutated: got %d entries, want 1", len(rc.Results))
+	}
+	if len(rc2.Results) != 2 {
+		t.Errorf("new Results has wrong count: got %d, want 2", len(rc2.Results))
+	}
+}
+
 func TestPipeline_SingleStage(t *testing.T) {
 	pipeline := NewPipeline(
 		&mockStage{name: "only", result: &StageResult{StageName: "only", Success: true}},

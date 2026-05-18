@@ -162,21 +162,19 @@ func (p *Pipeline) Run(ctx context.Context, initial *RunContext) (*RunContext, e
 			return current, fmt.Errorf("stage %s: infrastructure error: %w", stage.Name(), err)
 		}
 
-		// Store the result
-		if current.Results == nil {
-			current.Results = make(map[string]*StageResult)
-		}
-		// Use current (not next) for Results, then merge into next
-		if next.Results == nil {
-			next.Results = make(map[string]*StageResult)
-		}
-		// Copy over previous results
+		// Merge results: copy previous results + new result into a fresh map
+		// This preserves copy-on-write — no shared mutable references
+		mergedResults := make(map[string]*StageResult, len(current.Results)+1)
 		for k, v := range current.Results {
-			if _, exists := next.Results[k]; !exists {
-				next.Results[k] = v
-			}
+			mergedResults[k] = v
 		}
-		next.Results[stage.Name()] = result
+		for k, v := range next.Results {
+			mergedResults[k] = v
+		}
+		mergedResults[stage.Name()] = result
+
+		// Replace next.Results with the merged copy
+		next.Results = mergedResults
 
 		// Check for stage failure
 		if !result.Success {
@@ -194,10 +192,17 @@ func (p *Pipeline) Run(ctx context.Context, initial *RunContext) (*RunContext, e
 // WithEvent returns a new RunContext with an event appended.
 // This is the copy-on-write mechanism: stages append events by calling
 // rc.WithEvent(evt) and returning the new context.
+// Results is deep-copied to prevent shared mutable references.
 func (rc *RunContext) WithEvent(evt event.Event) *RunContext {
 	newEvents := make([]event.Event, len(rc.Events), len(rc.Events)+1)
 	copy(newEvents, rc.Events)
 	newEvents = append(newEvents, evt)
+
+	// Deep-copy Results to prevent shared mutable references
+	newResults := make(map[string]*StageResult, len(rc.Results))
+	for k, v := range rc.Results {
+		newResults[k] = v
+	}
 
 	return &RunContext{
 		RunID:         rc.RunID,
@@ -212,7 +217,7 @@ func (rc *RunContext) WithEvent(evt event.Event) *RunContext {
 		MaxTokens:     rc.MaxTokens,
 		RunDir:        rc.RunDir,
 		Events:        newEvents,
-		Results:       rc.Results,
+		Results:       newResults,
 		LLMResponse:   rc.LLMResponse,
 		ToolResults:   rc.ToolResults,
 		DryRunPrompt:  rc.DryRunPrompt,
@@ -220,6 +225,7 @@ func (rc *RunContext) WithEvent(evt event.Event) *RunContext {
 }
 
 // WithResults returns a new RunContext with updated results.
+// Results is deep-copied to prevent shared mutable references.
 func (rc *RunContext) WithResults(results map[string]*StageResult) *RunContext {
 	newResults := make(map[string]*StageResult, len(results))
 	for k, v := range results {
@@ -240,6 +246,52 @@ func (rc *RunContext) WithResults(results map[string]*StageResult) *RunContext {
 		RunDir:        rc.RunDir,
 		Events:        rc.Events,
 		Results:       newResults,
+		LLMResponse:   rc.LLMResponse,
+		ToolResults:   rc.ToolResults,
+		DryRunPrompt:  rc.DryRunPrompt,
+	}
+}
+
+// WithLLMResponse returns a new RunContext with the LLM response set.
+// This prevents stages from manually constructing RunContexts with field drift.
+func (rc *RunContext) WithLLMResponse(response string) *RunContext {
+	return &RunContext{
+		RunID:         rc.RunID,
+		CorrelationID: rc.CorrelationID,
+		Task:          rc.Task,
+		Project:       rc.Project,
+		Agent:         rc.Agent,
+		Provider:      rc.Provider,
+		ProviderName:  rc.ProviderName,
+		Model:         rc.Model,
+		Temperature:   rc.Temperature,
+		MaxTokens:     rc.MaxTokens,
+		RunDir:        rc.RunDir,
+		Events:        rc.Events,
+		Results:       rc.Results,
+		LLMResponse:   response,
+		ToolResults:   rc.ToolResults,
+		DryRunPrompt:  rc.DryRunPrompt,
+	}
+}
+
+// WithRunDir returns a new RunContext with the run directory set.
+// Used by ConnectionStage to set the resolved run path.
+func (rc *RunContext) WithRunDir(runDir string) *RunContext {
+	return &RunContext{
+		RunID:         rc.RunID,
+		CorrelationID: rc.CorrelationID,
+		Task:          rc.Task,
+		Project:       rc.Project,
+		Agent:         rc.Agent,
+		Provider:      rc.Provider,
+		ProviderName:  rc.ProviderName,
+		Model:         rc.Model,
+		Temperature:   rc.Temperature,
+		MaxTokens:     rc.MaxTokens,
+		RunDir:        runDir,
+		Events:        rc.Events,
+		Results:       rc.Results,
 		LLMResponse:   rc.LLMResponse,
 		ToolResults:   rc.ToolResults,
 		DryRunPrompt:  rc.DryRunPrompt,

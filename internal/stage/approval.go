@@ -43,7 +43,8 @@ func (s *ApprovalStage) Validate(rc *RunContext) error {
 // was considered. The full approval logic (extracting from runner.go)
 // will happen when we wire the stage pipeline into the runner.
 func (s *ApprovalStage) Execute(ctx context.Context, rc *RunContext) (*RunContext, *StageResult, error) {
-	// Use a plain event type string since ApprovalRequested is not in V1EventTypes
+	// Emit approval event using a proper event type string
+	// (This will be migrated to event package constants in V4 integration)
 	evt := event.NewEvent("prism.approval.requested", "approval-stage", map[string]any{
 		"run_id": rc.RunID,
 		"note":   "approval processing considered",
