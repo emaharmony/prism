@@ -12,6 +12,8 @@
 //   prism approval deny  — Deny a pending mutation (file is NOT written)
 //   prism validation list — List available validation profiles
 //   prism validation run — Run a validation profile (e.g., go_test_all)
+//   prism policy list — List registered policy rules
+//   prism policy evaluate — Evaluate a policy request
 //   prism workflow list — List registered workflows
 //   prism workflow run  — Run a named workflow
 //   prism workflow status — Show workflow run state
@@ -45,6 +47,7 @@ import (
 	"github.com/emaharmony/prism/internal/run"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/validation"
+	"github.com/emaharmony/prism/internal/policy"
 	"github.com/emaharmony/prism/internal/workflow"
 )
 
@@ -259,6 +262,31 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown validation subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "policy":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: policy subcommand required (list or evaluate)")
+			fmt.Fprintln(os.Stderr, "Usage: prism policy list")
+			fmt.Fprintln(os.Stderr, "       prism policy evaluate --input <request.json>")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "list":
+			executePolicyList()
+		case "evaluate":
+			policyEvalCmd := flag.NewFlagSet("policy evaluate", flag.ExitOnError)
+			policyInput := policyEvalCmd.String("input", "", "JSON policy request file")
+			policyDir := policyEvalCmd.String("policy-dir", "policies", "Directory containing policy YAML files")
+			policyEvalCmd.Parse(os.Args[3:])
+			if *policyInput == "" {
+				fmt.Fprintln(os.Stderr, "Error: --input required")
+				fmt.Fprintln(os.Stderr, "Usage: prism policy evaluate --input <request.json> --policy-dir <dir>")
+				os.Exit(1)
+			}
+			executePolicyEvaluate(*policyInput, *policyDir)
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown policy subcommand '%s'\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "workflow":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (list, show, run, or status)")
@@ -303,7 +331,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("prism v0.7.0")
+		fmt.Println("prism v0.8.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -931,6 +959,103 @@ func executeWorkflowStatus(runID, runDir string) {
 		fmt.Println()
 	}
 	fmt.Println("═══════════════════════════════════════════")
+}
+
+// ── V8: Policy CLI Functions ─────────────────────────────────────────────────────
+
+func newPolicyEvaluator(policyDir string) *policy.Evaluator {
+	reg := policy.NewRegistry()
+	reg.LoadFromDir(policyDir) //nolint:errcheck // best-effort loading
+	eval := policy.NewEvaluator(reg)
+	return eval
+}
+
+func executePolicyList() {
+	reg := policy.NewRegistry()
+	count, err := reg.LoadFromDir("policies")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+
+	rules := reg.Rules()
+
+	fmt.Println("\U0001F4CB Prism V8 Policy Rules")
+	fmt.Println("═══════════════════════════════════════════")
+	if len(rules) == 0 {
+		fmt.Println("  (no policies loaded)")
+	}
+	for _, rule := range rules {
+		decisionIcon := "\u2705"
+		switch rule.Decision {
+		case policy.DecisionDenied:
+			decisionIcon = "\u274C"
+		case policy.DecisionRequiresApproval:
+			decisionIcon = "\u26A0\uFE0F"
+		}
+		fmt.Printf("  %s %-35s %s\n", decisionIcon, rule.ID, rule.Decision)
+		fmt.Printf("     %s\n", rule.Description)
+	}
+	fmt.Println("═══════════════════════════════════════════")
+	if count > 0 {
+		fmt.Printf("  %d rules loaded\n", count)
+	}
+}
+
+func executePolicyEvaluate(inputFile, policyDir string) {
+	data, err := os.ReadFile(inputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to read input file: %v\n", err)
+		os.Exit(1)
+	}
+
+	var req policy.PolicyRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid JSON input: %v\n", err)
+		os.Exit(1)
+	}
+
+	evaluator := newPolicyEvaluator(policyDir)
+
+	fmt.Printf("\U0001F50D Policy Evaluation\n")
+	fmt.Printf("  Action:   %s\n", req.Action)
+	fmt.Printf("  Resource: %s/%s\n", req.Resource.Type, req.Resource.Name)
+	fmt.Printf("  Subject:  %s/%s\n", req.Subject.Type, req.Subject.ID)
+	if req.Context.Mode != "" {
+		fmt.Printf("  Mode:     %s\n", req.Context.Mode)
+	}
+	fmt.Println()
+
+	decision := evaluator.Evaluate(req)
+
+	switch decision.Decision {
+	case policy.DecisionAllowed:
+		fmt.Println("  \u2705 ALLOWED")
+	case policy.DecisionDenied:
+		fmt.Println("  \u274C DENIED")
+	case policy.DecisionRequiresApproval:
+		fmt.Println("  \u26A0\uFE0F  REQUIRES APPROVAL")
+	default:
+		fmt.Printf("  \u2753 %s\n", decision.Decision)
+	}
+	fmt.Println()
+	fmt.Printf("  Rule:    %s\n", decision.RuleID)
+	fmt.Printf("  Reason:  %s\n", decision.Reason)
+	if decision.Severity != "" {
+		fmt.Printf("  Severity: %s\n", decision.Severity)
+	}
+	fmt.Println()
+
+	// Write artifact
+	artifactDir := filepath.Join("runs", "policy")
+	if err := policy.WritePolicyArtifact(artifactDir, decision); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write policy artifact: %v\n", err)
+	} else {
+		fmt.Printf("  Artifact: %s/%s.json\n", artifactDir, decision.EvaluationID)
+	}
+
+	if decision.Decision == policy.DecisionDenied {
+		os.Exit(1)
+	}
 }
 
 func printUsage() {
