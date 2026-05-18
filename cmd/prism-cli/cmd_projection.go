@@ -26,6 +26,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/projection"
 	approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
+	"github.com/emaharmony/prism/internal/projection/builtin/agentactivity"
 	"github.com/emaharmony/prism/internal/projection/builtin/runstatus"
 	"github.com/emaharmony/prism/internal/projection/builtin/toolhistory"
 )
@@ -37,6 +38,7 @@ func newProjectionRunner() *projection.Runner {
 		runstatus.New(),
 		approvalproj.New(),
 		toolhistory.New(),
+		agentactivity.New(),
 	)
 }
 
