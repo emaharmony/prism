@@ -436,8 +436,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown workflow subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "search":
+		searchCmd(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.13.0")
+		fmt.Println("prism v0.15.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -463,6 +465,7 @@ func printUsage() {
 	fmt.Println("  prism agent list                              List registered agents")
 	fmt.Println("  prism agent show <name>                       Show agent details")
 	fmt.Println("  prism version                                 Print version")
+	fmt.Println("  prism search --query <text> [options]         Search vector store")
 	fmt.Println()
 	fmt.Println("Adapter commands:")
 	fmt.Println("  prism adapter list                            List registered adapters")
