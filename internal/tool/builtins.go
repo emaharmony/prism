@@ -5,12 +5,11 @@
 // Built-in tools (V4): write_file_dry_run (preview a write), write_file_proposal
 // (propose a file change for human approval). Direct write_file is denied by policy.
 //
-// Path safety (defense-in-depth):
-// Every tool that touches the filesystem resolves symlinks with filepath.EvalSymlinks
-// before checking that the target is within the workspace root. This logic appears in
-// multiple tools intentionally — it's defense-in-depth, not duplication. If one tool's
-// check has a bug, the others still protect their own paths. Centralizing it into one
-// function would create a single point of failure for security.
+// Path safety (V12 — centralized):
+// All path containment checks now use safety.IsWithinRoot from internal/safety.
+// This replaces the previous defense-in-depth pattern where each tool had its own
+// isWithinRoot implementation. The centralization means one place to audit and fix
+// bugs, while still being called at each filesystem boundary.
 //
 // Why does write_file_proposal use ApprovalStorer as `any` instead of *approval.Approval?
 // Because importing the approval package would create a circular dependency (tool →
@@ -25,6 +24,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/emaharmony/prism/internal/safety"
 )
 
 // EchoTool returns whatever text is passed in. Always approved by policy.
@@ -112,7 +113,7 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 	if resolvedRoot == "" {
 		resolvedRoot = absRoot
 	}
-	if !isWithinRoot(resolvedPath, resolvedRoot) {
+	if !safety.IsWithinRoot(resolvedPath, resolvedRoot) {
 		return ToolResult{
 			Success: false,
 			Output:  nil,
@@ -207,7 +208,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 	if resolvedRoot == "" {
 		resolvedRoot = absRoot
 	}
-	if !isWithinRoot(resolvedPath, resolvedRoot) {
+	if !safety.IsWithinRoot(resolvedPath, resolvedRoot) {
 		return ToolResult{
 			Success: false,
 			Output:  nil,
@@ -426,7 +427,7 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 		return ToolResult{Success: false, Error: "cannot resolve parent directory for write target"}, nil
 	}
 	resolvedAbsPath := filepath.Join(resolvedParent, filepath.Base(absPath))
-	if !isWithinRoot(resolvedAbsPath, resolvedRoot) {
+	if !safety.IsWithinRoot(resolvedAbsPath, resolvedRoot) {
 		return ToolResult{Success: false, Error: "path is outside workspace root (symlink escape blocked)"}, nil
 	}
 

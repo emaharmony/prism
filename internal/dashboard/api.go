@@ -10,6 +10,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/projection"
 	approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
+	"github.com/emaharmony/prism/internal/safety"
 	"github.com/emaharmony/prism/internal/projection/builtin/runstatus"
 	"github.com/emaharmony/prism/internal/projection/builtin/toolhistory"
 
@@ -138,7 +139,7 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runPath, err := sanitizePath(s.runDir, runID)
+	runPath, err := safety.ResolveAndContain(s.runDir, runID)
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -206,7 +207,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runPath, err := sanitizePath(s.runDir, runID)
+	runPath, err := safety.ResolveAndContain(s.runDir, runID)
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -243,7 +244,7 @@ func (s *Server) handleProjections(w http.ResponseWriter, r *http.Request) {
 	runID := parts[0]
 	projName := parts[1]
 
-	runPath, err := sanitizePath(s.runDir, runID)
+	runPath, err := safety.ResolveAndContain(s.runDir, runID)
 	if err != nil {
 		writeJSONError(w, err.Error(), http.StatusBadRequest)
 		return
