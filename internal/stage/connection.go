@@ -59,23 +59,8 @@ func (s *ConnectionStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 		}, nil
 	}
 
-	// Update RunContext with the resolved path
-	newRC := &RunContext{
-		RunID:         rc.RunID,
-		CorrelationID: rc.CorrelationID,
-		Task:          rc.Task,
-		Project:       rc.Project,
-		Agent:         rc.Agent,
-		Provider:      rc.Provider,
-		ProviderName:  rc.ProviderName,
-		Model:         rc.Model,
-		Temperature:   rc.Temperature,
-		MaxTokens:     rc.MaxTokens,
-		RunDir:        runPath,
-		Events:        rc.Events,
-		Results:       rc.Results,
-		DryRunPrompt:  rc.DryRunPrompt,
-	}
+	// Update RunContext with the resolved path using copy-on-write
+	newRC := rc.WithRunDir(runPath)
 
 	// Emit task.created event
 	evt := event.NewEvent(event.V1EventTypes.TaskCreated, "prism-cli", map[string]any{

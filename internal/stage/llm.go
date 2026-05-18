@@ -125,9 +125,7 @@ func (s *LLMStage) executeSync(ctx context.Context, rc *RunContext) (*RunContext
 		"output_tokens":  resp.OutputTokens,
 		"duration_ms":    duration,
 	})
-	newRC := rc.WithEvent(completeEvt)
-	// Store the response in RunContext for downstream stages
-	newRC.LLMResponse = resp.Text
+	newRC := rc.WithEvent(completeEvt).WithLLMResponse(resp.Text)
 
 	return newRC, &StageResult{
 		StageName: s.Name(),
@@ -213,8 +211,7 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 		"token_batches":  tokenBatches,
 		"duration_ms":    duration,
 	})
-	newRC := rc.WithEvent(completeEvt)
-	newRC.LLMResponse = fullResponse
+	newRC := rc.WithEvent(completeEvt).WithLLMResponse(fullResponse)
 
 	return newRC, &StageResult{
 		StageName: s.Name(),
