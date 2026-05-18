@@ -80,7 +80,7 @@ func NewRunner(projections ...Projection) *Runner {
 // Run reads events from an events.jsonl file and applies all projections.
 // After processing, snapshots are written to <runDir>/projections/.
 func (r *Runner) Run(eventsFile, runDir string) error {
-	events, err := readEventsFromJSONL(eventsFile)
+	events, err := ReadEventsFromJSONL(eventsFile)
 	if err != nil {
 		return fmt.Errorf("projection: read events: %w", err)
 	}
@@ -163,7 +163,7 @@ func (r *Runner) List() []string {
 // Each line is a JSON event. Lines that fail to parse are skipped
 // with a warning (not an error), so that partial/corrupt logs
 // don't prevent projection building.
-func readEventsFromJSONL(path string) ([]event.Event, error) {
+func ReadEventsFromJSONL(path string) ([]event.Event, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read events file: %w", err)
