@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/emaharmony/prism/internal/safety"
 )
 
 // PolicyConfig holds the configuration for policy decisions.
@@ -118,7 +120,7 @@ func evaluateV4ProposalPolicy(cfg PolicyConfig, toolName string, input map[strin
 		return PolicyResult{Decision: PolicyDenied, Reason: "invalid workspace root"}
 	}
 	absPath := filepath.Clean(filepath.Join(absRoot, pathStr))
-	if !isWithinRoot(absPath, absRoot) {
+	if !safety.IsWithinRoot(absPath, absRoot) {
 		return PolicyResult{Decision: PolicyDenied, Reason: "path is outside the workspace root"}
 	}
 
@@ -170,7 +172,7 @@ func evaluatePathPolicy(cfg PolicyConfig, toolName string, input map[string]any)
 	absPath := filepath.Clean(filepath.Join(absRoot, pathStr))
 
 	// Check that the resolved path is within the workspace root
-	if !isWithinRoot(absPath, absRoot) {
+	if !safety.IsWithinRoot(absPath, absRoot) {
 		return PolicyResult{Decision: PolicyDenied, Reason: "path is outside the workspace root"}
 	}
 
@@ -182,36 +184,6 @@ func resolvePath(workspaceRoot, relPath string) string {
 	return filepath.Clean(filepath.Join(workspaceRoot, relPath))
 }
 
-// isWithinRoot checks that absPath is within absRoot (both must be absolute).
-// It resolves symlinks before checking to prevent symlink traversal attacks.
-func isWithinRoot(absPath, absRoot string) bool {
-	// Resolve symlinks in both paths to prevent symlink escape
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		// If root can't be resolved, fall back to original
-		resolvedRoot = absRoot
-	}
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
-	if err != nil {
-		// If the path doesn't exist yet (e.g., a write target),
-		// resolve the parent and join with the base name
-		parentDir := filepath.Dir(absPath)
-		resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
-		if parentErr != nil {
-			// Parent doesn't resolve either — reject for safety
-			return false
-		}
-		resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
-	}
-
-	// Clean resolved paths
-	resolvedRoot = filepath.Clean(resolvedRoot)
-	resolvedPath = filepath.Clean(resolvedPath)
-
-	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
-	if err != nil {
-		return false
-	}
-	// If the relative path starts with "..", it's outside the root
-	return !strings.HasPrefix(rel, "..") && rel != ".."
-}
+// Path containment is now provided by internal/safety.IsWithinRoot.
+// The local implementation has been removed to eliminate duplication.
+// All path containment checks should use safety.IsWithinRoot or safety.ResolveAndContain.

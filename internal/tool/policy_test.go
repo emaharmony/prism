@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/emaharmony/prism/internal/safety"
 )
 
 func TestPolicyEchoApproved(t *testing.T) {
@@ -215,7 +217,7 @@ func TestIsWithinRoot_BlocksSymlinkEscape(t *testing.T) {
 
 	// Path through symlink should be caught after resolving
 	absPath := filepath.Clean(filepath.Join(absRoot, "escape_link", "file.txt"))
-	if isWithinRoot(absPath, absRoot) {
+	if safety.IsWithinRoot(absPath, absRoot) {
 		t.Error("isWithinRoot should block symlink escape")
 	}
 }
@@ -227,7 +229,7 @@ func TestIsWithinRoot_AllowsRegularFiles(t *testing.T) {
 	absRoot, _ := filepath.Abs(tmpDir)
 	absPath := filepath.Clean(filepath.Join(absRoot, "normal.txt"))
 
-	if !isWithinRoot(absPath, absRoot) {
+	if !safety.IsWithinRoot(absPath, absRoot) {
 		t.Error("isWithinRoot should allow regular files within root")
 	}
 }
@@ -239,7 +241,7 @@ func TestIsWithinRoot_AllowsSubdirectories(t *testing.T) {
 	absRoot, _ := filepath.Abs(tmpDir)
 	absPath := filepath.Clean(filepath.Join(absRoot, "sub", "deep", "file.txt"))
 
-	if !isWithinRoot(absPath, absRoot) {
+	if !safety.IsWithinRoot(absPath, absRoot) {
 		t.Error("isWithinRoot should allow nested subdirectories")
 	}
 }
@@ -250,7 +252,7 @@ func TestIsWithinRoot_BlocksParentTraversal(t *testing.T) {
 	absRoot, _ := filepath.Abs(tmpDir)
 	absPath := filepath.Clean(filepath.Join(absRoot, "..", "etc", "passwd"))
 
-	if isWithinRoot(absPath, absRoot) {
+	if safety.IsWithinRoot(absPath, absRoot) {
 		t.Error("isWithinRoot should block '..' traversal")
 	}
 }
@@ -269,7 +271,7 @@ func TestIsWithinRoot_BlocksDirectSymlinkEscape(t *testing.T) {
 	absRoot, _ := filepath.Abs(tmpDir)
 	absPath := filepath.Clean(filepath.Join(absRoot, "secret_link"))
 
-	if isWithinRoot(absPath, absRoot) {
+	if safety.IsWithinRoot(absPath, absRoot) {
 		t.Error("isWithinRoot should block direct symlink escape")
 	}
 }

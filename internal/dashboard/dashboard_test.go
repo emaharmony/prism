@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/emaharmony/prism/internal/safety"
 )
 
 func TestNewServer(t *testing.T) {
@@ -118,7 +120,8 @@ func TestHandleIndexHTML(t *testing.T) {
 
 func TestSanitizePath(t *testing.T) {
 	// Normal path
-	path, err := sanitizePath("/tmp/runs", "run_123")
+	tmpDir := t.TempDir()
+	path, err := safety.ResolveAndContain(tmpDir, "run_123")
 	if err != nil {
 		t.Errorf("normal path error: %v", err)
 	}
@@ -127,7 +130,7 @@ func TestSanitizePath(t *testing.T) {
 	}
 
 	// Path traversal
-	_, err = sanitizePath("/tmp/runs", "../../etc/passwd")
+	_, err = safety.ResolveAndContain(tmpDir, "../../etc/passwd")
 	if err == nil {
 		t.Error("path traversal should return error")
 	}

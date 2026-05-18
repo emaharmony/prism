@@ -24,7 +24,6 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
-	"path/filepath"
 	"strings"
 )
 
@@ -108,20 +107,5 @@ func runIDFromPath(path, prefix string) string {
 	return parts[0]
 }
 
-// sanitizePath ensures a file path doesn't escape the base directory.
-// This prevents path traversal attacks (e.g., "/api/events/../../etc/passwd").
-func sanitizePath(base, subpath string) (string, error) {
-	joined := filepath.Join(base, subpath)
-	absBase, err := filepath.Abs(base)
-	if err != nil {
-		return "", fmt.Errorf("resolve base path: %w", err)
-	}
-	absJoined, err := filepath.Abs(joined)
-	if err != nil {
-		return "", fmt.Errorf("resolve joined path: %w", err)
-	}
-	if !strings.HasPrefix(absJoined, absBase) {
-		return "", fmt.Errorf("path traversal blocked: %s escapes %s", subpath, base)
-	}
-	return absJoined, nil
-}
+// sanitizePath has been replaced by safety.ResolveAndContain (internal/safety).
+// Path containment is now centralized in one auditable location.
