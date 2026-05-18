@@ -98,8 +98,11 @@ func (r *Runner) executeDispatchStep(ctx context.Context, step Step, stepOutputs
 		}
 	}
 
-	// Set adapter name and run metadata
+	// Set adapter name, action, and run metadata
 	dispatchInput["adapter"] = step.Adapter
+	if step.Action != "" {
+		dispatchInput["action"] = step.Action
+	}
 	dispatchInput["run_id"] = runID
 	dispatchInput["correlation_id"] = correlationID
 

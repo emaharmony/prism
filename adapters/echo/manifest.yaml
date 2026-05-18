@@ -1,0 +1,6 @@
+name: echo
+version: "1.0"
+description: "Built-in echo adapter for testing and demos"
+capabilities:
+  - action: echo
+    description: "Echo input back as output"

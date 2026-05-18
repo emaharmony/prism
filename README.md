@@ -2,7 +2,7 @@
 
 > **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine — a central, declarative policy layer that answers: Is this action allowed? Denied? Does it require approval? Why?
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System — a formal seam between Prism Core and external domain logic (trading, Roblox, OpenClaw, etc.) so integrations plug in through adapters instead of forks.
 
 ## Why Prism?
 
@@ -139,7 +139,7 @@ All Go tests pass with `go test ./...`. See individual package test coverage bel
 - `internal/provider` — mock provider, failing mock, Ollama provider (httptest)
 - `internal/run` — V1 lifecycle, V2 lifecycle, V3 tool lifecycle, V4 approval lifecycle, memory, correlation, parent chains
 - `internal/tool` — registry, policy, executor, built-in tools, path traversal protection, write_file_proposal
-- `internal/policy` — V8: core policy engine, declarative rules, evaluator, events, artifacts, CLI integration
+- `internal/policy` — core policy engine, declarative rules, evaluator, events, artifacts, CLI integration (V8)
 
 All Go tests pass with `go test ./...`.
 
@@ -763,7 +763,7 @@ ollama pull qwen2.5:7b
 - Approval artifacts persisted to runs/
 - `apply_patch` support planned for V6+
 
-### V5 — Complete ✅ (current)
+### V5 — Complete ✅
 
 V5 adds post-mutation validation and deterministic review:
 
@@ -873,7 +873,7 @@ policies:
 
 **Integration order:**
 1. Tool execution (V8) — policy evaluates before local tool validation
-2. Dispatch — TODO
+2. Dispatch / Adapters (V9) — policy evaluates before adapter execution
 3. Gates — TODO
 4. Mutations — TODO
 5. Validations — TODO
@@ -900,8 +900,80 @@ runs/policy/<evaluation_id>.json
 
 **What V8 intentionally does NOT include:** OPA/Rego, CEL, remote policy service, user/team permissions, RBAC UI, dashboard, cloud policy sync, LLM-authored policies, LLM policy override, live trading permission, arbitrary shell execution.
 
+### V9: Adapter Contract System ✅
+
+V9 formalizes how external domain logic plugs into Prism. Before V9, the only way to integrate external systems was to fork Prism (like AI-Hedge-Prism did for trading). V9 creates a single seam — the Adapter interface — so domains connect through adapters, not forks.
+
+**Core idea:** Adapters are the **only** way external domain logic enters Prism. Tools are internal. Gates are internal. Workflows are internal. Adapters are the seam between Prism Core and the outside world.
+
+**Adapter interface (5 methods):**
+```go
+type Adapter interface {
+    Name() string
+    Version() string
+    Capabilities() []Capability
+    Execute(ctx context.Context, action string, input map[string]any) (*Result, error)
+    Health(ctx context.Context) (*HealthResult, error)
+}
+```
+
+**Optional InputValidator interface:**
+```go
+type InputValidator interface {
+    ValidateInput(action string, input map[string]any) error
+}
+```
+
+Adapters that want input validation opt in by implementing InputValidator. The registry calls ValidateInput before Execute if present. This keeps the core contract small (5 methods) while allowing opt-in validation.
+
+**Design decisions:**
+- **Result has no Decision field** — gate-like decisions go in `Output["decision"]`, not a top-level field
+- **Workflow steps have an explicit `action` field** — `dispatch.run` steps take `action: evaluate` explicitly
+- **Policy is authoritative over Capability.RequiresApproval** — Capability.RequiresApproval is advisory
+- **Adapter names are alphanumeric + hyphens only** — no dots, to prevent ambiguity in `adapter.<name>.<action>`
+- **Manifests are optional** — register programmatically or from YAML
+
+**Adapter registry:**
+```go
+reg := adapter.NewRegistry()
+reg.Register(&EchoAdapter{})  // programmatic
+reg.Resolve("echo")            // lookup
+reg.List()                     // all names
+reg.Capabilities("echo")      // capabilities
+reg.ValidateInput("echo", "echo", input) // optional validation
+```
+
+**Policy integration:** Adapter actions follow `adapter.<name>.<action>` format, evaluated by V8's policy engine before execution.
+
+**Workflow integration:** V7's `dispatch.run` step type connects to adapters through the registry. Steps now accept an explicit `action` field.
+
+**Built-in echo adapter:** `internal/adapter/builtin/echo/` — minimal adapter for testing and demos.
+
+**Demo workflow:** `examples/workflows/demo-adapter.yaml` uses the echo adapter.
+
+**Adapter events:**
+```
+prism.adapter.registered
+prism.adapter.health
+prism.adapter.execute
+prism.adapter.success
+prism.adapter.failed
+```
+
+**CLI:**
+```bash
+./prism adapter list
+./prism adapter show echo
+./prism adapter health echo
+```
+
+**What V9 intentionally does NOT include:** Plugin marketplace, remote loading, untrusted third-party execution, dynamic code loading, hot-reloading, domain-specific adapters (those live in their own repos).
+
 ### V6+ — Planned
-- `apply_patch` proposal tool
+- V10: State Projections / Query Layer
+- V11: Dashboard / Event Explorer
+- V12: Multi-Agent Orchestration
+- V13: Affective Telemetry / Study Layer
 - Dashboard
 - Channel workflows (Discord, Telegram)
 - OpenClaw migration
@@ -933,14 +1005,12 @@ prism/
 │   ├── provider/         # Provider interface, MockProvider, OllamaProvider
 │   ├── agent/            # Placeholder agent + V3/V4 tool/mutation request parser
 │   ├── tool/             # Tool registry, policy, executor, builtins (V3+V4)
-│   ├── validation/       # Workflows (V7)
-./prism workflow list
-./prism workflow show demo.echo_tool
-./prism workflow run demo.echo_tool
-./prism workflow status <run_id>
-
-# Validation profile registry, executor, safety (V5)
+│   ├── validation/       # Validation profile registry, executor, safety (V5)
 │   ├── review/           # Deterministic reviewer, artifact generation (V5)
+│   ├── workflow/          # Workflow runtime, step execution, conditions (V7)
+│   ├── policy/            # Core policy engine, declarative rules, evaluator (V8)
+│   ├── adapter/           # Adapter contract, registry, manifest, events (V9)
+│   │   └── builtin/echo/  # Built-in echo adapter
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
@@ -1056,6 +1126,16 @@ When denied, Prism:
 | Review Started | `prism.review.started` | Review generation started |
 | Review Completed | `prism.review.completed` | Review artifact written successfully |
 | Review Failed | `prism.review.failed` | Review generation failed |
+
+### V9 Events (adapters)
+
+| Event | Subject | Description |
+|-------|---------|-------------|
+| Adapter Registered | `prism.adapter.registered` | Adapter registered in the registry |
+| Adapter Health | `prism.adapter.health` | Adapter health check result |
+| Adapter Execute | `prism.adapter.execute` | Adapter execution started |
+| Adapter Success | `prism.adapter.success` | Adapter execution succeeded |
+| Adapter Failed | `prism.adapter.failed` | Adapter execution failed |
 
 ## Workflows (V7)
 ./prism workflow list

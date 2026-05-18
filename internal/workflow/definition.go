@@ -37,6 +37,7 @@ type Step struct {
 	Tool    string         `yaml:"tool,omitempty" json:"tool,omitempty"`
 	Gate    string         `yaml:"gate,omitempty" json:"gate,omitempty"`
 	Adapter string         `yaml:"adapter,omitempty" json:"adapter,omitempty"`
+	Action  string         `yaml:"action,omitempty" json:"action,omitempty"`
 	Input   map[string]any `yaml:"input,omitempty" json:"input,omitempty"`
 	When    string         `yaml:"when,omitempty" json:"when,omitempty"`
 }
