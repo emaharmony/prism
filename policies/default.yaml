@@ -1,0 +1,55 @@
+# Default Prism Policy Configuration
+#
+# Policy decides permission. Local validators still enforce input safety.
+# This file provides safe defaults for core Prism operations.
+
+policies:
+  - id: allow_echo
+    description: Allow the echo tool.
+    match:
+      action: tool.execute
+      resource.name: echo
+    decision: allowed
+    reason: "Echo tool is safe and allowlisted."
+
+  - id: allow_read_file
+    description: Allow read_file tool (local path validator still enforced).
+    match:
+      action: tool.execute
+      resource.name: read_file
+    decision: allowed
+    reason: "read_file is allowlisted; local validator must still enforce workspace path."
+
+  - id: allow_list_files
+    description: Allow list_files tool.
+    match:
+      action: tool.execute
+      resource.name: list_files
+    decision: allowed
+    reason: "list_files is allowlisted for workspace-scoped listing."
+
+  - id: deny_shell_execution
+    description: Block shell execution in core Prism.
+    match:
+      action: tool.execute
+      resource.name: run_command
+    decision: denied
+    reason: "Shell execution is not supported by policy."
+    severity: critical
+
+  - id: require_approval_for_file_write
+    description: File mutations require approval.
+    match:
+      action: mutation.apply
+      resource.type: file
+    decision: requires_approval
+    reason: "File mutations require operator approval."
+
+  - id: block_live_trading_dispatch
+    description: Block live trading dispatch by policy.
+    match:
+      action: dispatch.run
+      context.mode: live
+    decision: denied
+    reason: "Live trading dispatch is not supported."
+    severity: critical
