@@ -30,6 +30,8 @@
 //   prism adapter list   — List registered adapters
 //   prism adapter show   — Show details of a specific adapter
 //   prism adapter health — Check health of a specific adapter
+//   prism agent list     — List registered agents
+//   prism agent show    — Show details of a specific agent
 //   prism projection list — List available projections
 //   prism projection rebuild — Rebuild projection snapshots from events
 //   prism projection query — Query a projection snapshot
@@ -291,6 +293,26 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown policy subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "agent":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: agent subcommand required (list or show)")
+			fmt.Fprintln(os.Stderr, "Usage: prism agent list")
+			fmt.Fprintln(os.Stderr, "       prism agent show <agent_name>")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "list":
+			executeAgentList()
+		case "show":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: agent name required")
+				os.Exit(1)
+			}
+			executeAgentShow(os.Args[3])
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown agent subcommand '%s'\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "adapter":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Error: adapter subcommand required (list, show, or health)")
@@ -415,7 +437,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("prism v0.12.0")
+		fmt.Println("prism v0.13.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -438,6 +460,8 @@ func printUsage() {
 	fmt.Println("  prism approval deny <id> --by <name>          Deny a mutation")
 	fmt.Println("  prism health [options]                        Check bus health")
 	fmt.Println("  prism dashboard [--port 8080]                 Start local dashboard")
+	fmt.Println("  prism agent list                              List registered agents")
+	fmt.Println("  prism agent show <name>                       Show agent details")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println()
 	fmt.Println("Adapter commands:")

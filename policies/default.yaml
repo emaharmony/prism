@@ -71,3 +71,20 @@ policies:
     decision: denied
     reason: "Live trading execution is not supported by policy."
     severity: critical
+  # V13: Agent delegation policies
+  - id: allow_agent_delegation
+    description: Allow workflow to delegate tasks to registered agents.
+    match:
+      action: agent.delegate
+    decision: allowed
+    reason: "Agent delegation through workflows is allowed."
+
+  - id: deny_agent_self_delegation
+    description: Agents cannot delegate to themselves.
+    match:
+      action: agent.delegate
+      resource.type: agent
+      subject.type: agent
+    decision: denied
+    reason: "Self-delegation creates unbounded loops."
+    severity: warning
