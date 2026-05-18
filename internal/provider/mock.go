@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -11,6 +12,7 @@ const MockProviderName = "mock"
 
 // MockProvider always succeeds with deterministic output.
 // Used for testing — no external dependencies.
+// Implements both Provider and StreamingProvider interfaces.
 type MockProvider struct {
 	shouldFail bool
 }
@@ -98,4 +100,35 @@ func (p *ToolRequestMockProvider) Generate(ctx context.Context, req GenerateRequ
 		PromptTokens: len(req.Prompt) / 4,
 		OutputTokens: 50,
 	}, nil
+}
+// GenerateStream simulates streaming output by splitting the response into
+// word-sized chunks with small delays. It implements StreamingProvider.
+// Chunks are sent every 10ms to simulate real streaming behavior.
+func (m *MockProvider) GenerateStream(ctx context.Context, req GenerateRequest) (<-chan TokenChunk, error) {
+	if m.shouldFail {
+		return nil, fmt.Errorf("mock provider configured to fail")
+	}
+
+	ch := make(chan TokenChunk, 64)
+	go func() {
+		defer close(ch)
+		response := fmt.Sprintf("Mock response for task '%s' by agent '%s' in project '%s'.", req.Task, req.Agent, req.Project)
+		words := strings.Fields(response)
+		for i, word := range words {
+			select {
+			case <-ctx.Done():
+				ch <- TokenChunk{Error: ctx.Err(), Finished: false}
+				return
+			default:
+			}
+
+			ch <- TokenChunk{
+				Tokens:   []string{word + " "},
+				Index:    i,
+				Finished: i == len(words)-1,
+			}
+			time.Sleep(10 * time.Millisecond) // simulate streaming delay
+		}
+	}()
+	return ch, nil
 }
