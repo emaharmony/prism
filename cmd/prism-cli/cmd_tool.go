@@ -1,3 +1,19 @@
+// cmd_tool.go implements the `prism tool` subcommands (V3).
+//
+// Tools are the controlled way an AI agent interacts with the outside world.
+// Instead of giving the LLM raw shell access, Prism provides a registry of
+// named tools with JSON schemas and deterministic policies.
+//
+// Built-in tools:
+//   - echo:         Returns its input (for testing)
+//   - list_dir:     Lists files in a directory (read-only, always allowed)
+//   - read_file:    Reads a file's contents (read-only, always allowed)
+//   - write_file_dry_run:  Previews what a file write would look like (allowed)
+//   - write_file_proposal: Proposes a file write for human approval (requires_approval)
+//
+// Commands:
+//   prism tool list                    — Show all tools and their input schemas
+//   prism tool run <name> --input '{}' — Execute a tool directly (for testing)
 package main
 
 import (
@@ -9,6 +25,9 @@ import (
 	"github.com/emaharmony/prism/internal/tool"
 )
 
+// executeToolList shows all registered tools, their descriptions, and input
+// parameter schemas. Useful for discovering what tools are available and what
+// inputs they expect.
 func executeToolList() {
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltinsV4(registry, ".", 1024*1024)
@@ -39,15 +58,22 @@ func executeToolList() {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeToolRun executes a single tool directly with the given JSON input.
+// This is primarily for testing — it bypasses the agent pipeline and runs
+// a tool as a standalone operation. Policy is still enforced.
+//
+// Example:
+//   prism tool run echo --input '{"text": "hello"}'
+//   prism tool run read_file --input '{"path": "README.md"}' --workspace .
 func executeToolRun(toolName, inputJSON, project, workspace string, maxFileSize int64) {
-	// Parse input JSON
+	// Parse the JSON input
 	var input map[string]any
 	if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: invalid JSON input: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Set up registry and policy
+	// Set up the tool registry and policy config
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltinsV4(registry, workspace, maxFileSize)
 	policyConfig := tool.PolicyConfig{
@@ -84,4 +110,3 @@ func executeToolRun(toolName, inputJSON, project, workspace string, maxFileSize 
 	}
 	fmt.Println("═══════════════════════════════════════════")
 }
-

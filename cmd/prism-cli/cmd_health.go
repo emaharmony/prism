@@ -1,12 +1,25 @@
+// cmd_health.go implements the `prism health` command (V1).
+//
+// Health check connects to the NATS event bus and verifies the PRISM stream
+// exists. This is useful for diagnosing connectivity issues before running
+// a full agent pipeline.
+//
+// If the bus is reachable, it prints stream info and emits a health event.
+// If the bus is unreachable, it exits with an error.
 package main
 
 import (
 	"fmt"
 	"os"
+
 	"github.com/nats-io/nats.go"
+
 	"github.com/emaharmony/prism/internal/event"
 )
 
+// executeHealth connects to the NATS bus, checks the PRISM stream,
+// and prints stream metadata (message count, bytes, subjects).
+// On success, it also emits a system_health event to the bus.
 func executeHealth(busURL string) {
 	nc, err := nats.Connect(busURL, nats.Name("prism-health-check"))
 	if err != nil {
@@ -37,7 +50,7 @@ func executeHealth(busURL string) {
 	fmt.Printf("  Subjects:    %v\n", info.Config.Subjects)
 	fmt.Println("═══════════════════════════════════════════")
 
-	// Emit health event
+	// Emit a health event so the bus knows we checked in
 	evt := event.NewEvent(event.V1EventTypes.SystemHealth, "prism-cli", map[string]any{
 		"nats_url":    busURL,
 		"stream_msgs": info.State.Msgs,
@@ -47,6 +60,3 @@ func executeHealth(busURL string) {
 	js.Publish(event.V1EventTypes.SystemHealth, data)
 	fmt.Printf("  Health event emitted: %s\n", evt.ID)
 }
-
-// ── V4: Approval Subcommand Functions ──────────────────────────────────────
-

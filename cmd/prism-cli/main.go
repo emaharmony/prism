@@ -1,6 +1,19 @@
 // Package main implements the prism CLI — the human-facing entry point to the Prism
 // agent platform. Every interaction starts here.
 //
+// As of V12, the CLI is split into multiple files for maintainability:
+//   main.go          — This file: subcommand dispatch and flag definitions
+//   cmd_run.go       — prism run
+//   cmd_tool.go      — prism tool list/run
+//   cmd_approval.go  — prism approval list/show/approve/deny
+//   cmd_validation.go — prism validation list/run
+//   cmd_policy.go    — prism policy list/evaluate
+//   cmd_workflow.go  — prism workflow list/show/run/status
+//   cmd_adapter.go   — prism adapter list/show/health
+//   cmd_projection.go — prism projection list/rebuild/query
+//   cmd_dashboard.go — prism dashboard
+//   cmd_health.go    — prism health
+//
 // Subcommands:
 //   prism run           — Execute a full V1→V5 run (task → LLM → tools → approval → validation → review)
 //   prism health        — Check if the NATS event bus is reachable

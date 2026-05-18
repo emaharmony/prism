@@ -1,3 +1,17 @@
+// cmd_adapter.go implements the `prism adapter` subcommands.
+//
+// Adapters are Prism's way of talking to the outside world (V9). Each adapter
+// implements a contract: Name, Version, Capabilities, Execute, Health. The
+// CLI commands here let you inspect which adapters are registered, see their
+// capabilities, and check their health.
+//
+// Built-in adapters (like echo) are registered programmatically. Future
+// adapters can be loaded from YAML manifests (see adapters/ directory).
+//
+// Commands:
+//   prism adapter list          — Show all registered adapters
+//   prism adapter show <name>   — Show adapter details and capabilities
+//   prism adapter health <name> — Check if an adapter is ready
 package main
 
 import (
@@ -9,6 +23,9 @@ import (
 	"github.com/emaharmony/prism/internal/adapter/builtin/echo"
 )
 
+// newAdapterRegistry creates a registry with built-in adapters.
+// Currently only the echo adapter is registered. As new adapters are added
+// (e.g., a trading adapter, a database adapter), they get registered here.
 func newAdapterRegistry() *adapter.Registry {
 	reg := adapter.NewRegistry()
 	echoA := &echo.EchoAdapter{}
@@ -16,6 +33,8 @@ func newAdapterRegistry() *adapter.Registry {
 	return reg
 }
 
+// executeAdapterList shows all registered adapters with version and
+// capability count.
 func executeAdapterList() {
 	reg := newAdapterRegistry()
 	names := reg.List()
@@ -34,6 +53,8 @@ func executeAdapterList() {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeAdapterShow displays detailed info about one adapter: version,
+// capabilities, and whether each capability requires approval.
 func executeAdapterShow(name string) {
 	reg := newAdapterRegistry()
 	a, err := reg.Resolve(name)
@@ -63,6 +84,9 @@ func executeAdapterShow(name string) {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeAdapterHealth checks if an adapter is ready to process requests.
+// This is useful for verifying that external dependencies (APIs, databases)
+// are reachable before running a workflow that depends on them.
 func executeAdapterHealth(name string) {
 	reg := newAdapterRegistry()
 	a, err := reg.Resolve(name)
@@ -97,12 +121,10 @@ func executeAdapterHealth(name string) {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// plural returns the correct suffix for "capability" (y/ies).
 func plural(n int) string {
 	if n == 1 {
 		return "y"
 	}
 	return "ies"
 }
-
-// ── V10: Projection CLI Functions ──────────────────────────────────────────────
-

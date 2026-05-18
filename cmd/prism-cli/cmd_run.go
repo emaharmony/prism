@@ -1,3 +1,21 @@
+// cmd_run.go implements the `prism run` command (V1→V5).
+//
+// This is Prism's main command — it runs the full agent pipeline:
+//   1. Create a task event (V1)
+//   2. Call the LLM provider to generate a response (V2)
+//   3. Execute tools the LLM requests (V3)
+//   4. Create approvals for file writes (V4)
+//   5. Run validation and review on approved mutations (V5)
+//
+// Each step emits events to the event log. The run produces artifacts:
+//   - events.jsonl: every event emitted during the run
+//   - summary.json: human-readable summary of the run
+//   - output.md: the LLM's markdown response
+//   - prompt.md: the prompt sent to the LLM
+//
+// The runConfig struct holds all flags from the CLI. The actual execution
+// logic lives in internal/run/runner.go — this file just wires CLI flags
+// to the runner and prints the result.
 package main
 
 import (
@@ -10,26 +28,31 @@ import (
 	"github.com/emaharmony/prism/internal/run"
 )
 
+// runConfig holds all CLI flags for the `prism run` command.
+// It maps 1:1 to the flags defined in main.go's subcommand parser.
 type runConfig struct {
-	Task           string
-	Project        string
-	Agent          string
-	BusURL         string
-	MemoryEnabled  bool
-	RequireMemory  bool
-	MemoryURL      string
-	RunDir         string
+	Task          string // The task description (required)
+	Project       string // Project name for event metadata
+	Agent         string // Agent name for event metadata
+	BusURL        string // NATS bus URL for event publishing
+	MemoryEnabled bool   // Enable the Remembrance context hook
+	RequireMemory bool   // Fail if Remembrance is unavailable
+	MemoryURL     string // Remembrance service URL
+	RunDir        string // Directory for run artifacts
 
 	// LLM fields
-	Provider     provider.Provider
-	ProviderName string
-	Model        string
-	Temperature  float64
-	MaxTokens    int
-	Timeout      time.Duration
-	DryRunPrompt bool
+	Provider     provider.Provider // The LLM provider (mock or ollama)
+	ProviderName string            // Human-readable provider name
+	Model        string            // Model name to use
+	Temperature  float64           // LLM sampling temperature
+	MaxTokens    int               // Maximum output tokens
+	Timeout      time.Duration     // LLM request timeout
+	DryRunPrompt bool              // Build prompt but skip LLM call
 }
 
+// executeRun creates a runner with the given config and runs the full pipeline.
+// On success, it prints a summary with run ID, status, events, and artifact paths.
+// On failure, it prints the error and exits with code 1.
 func executeRun(cfg runConfig) {
 	log.SetFlags(log.Ltime | log.Lshortfile)
 
@@ -113,6 +136,7 @@ func executeRun(cfg runConfig) {
 		fmt.Println("  (No LLM call — dry-run mode)")
 	}
 
+	// If a tool was executed directly (V3), show its result
 	if result.ToolCallResult != nil {
 		fmt.Println("  ── Tool Call ──")
 		fmt.Printf("  Success:         %v\n", result.ToolCallResult.Success)
@@ -125,4 +149,3 @@ func executeRun(cfg runConfig) {
 	fmt.Println("═══════════════════════════════════════════")
 	fmt.Println()
 }
-

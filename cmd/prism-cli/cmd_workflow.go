@@ -1,3 +1,19 @@
+// cmd_workflow.go implements the `prism workflow` subcommands (V7).
+//
+// Workflows are named sequences of steps that an AI agent can execute.
+// Instead of a single LLM call, a workflow defines a pipeline:
+//   Step 1: tool call (read_file)
+//   Step 2: condition (check if output contains error)
+//   Step 3: tool call (write_file_proposal) — only if step 2 matched
+//
+// Workflows are defined in YAML files under examples/workflows/.
+// The runner executes them step by step, tracking state and emitting events.
+//
+// Commands:
+//   prism workflow list                    — Show registered workflows
+//   prism workflow show <name>            — Show workflow steps
+//   prism workflow run <name> --input {}  — Execute a workflow
+//   prism workflow status <run_id>        — Check workflow run state
 package main
 
 import (
@@ -12,12 +28,15 @@ import (
 	"github.com/emaharmony/prism/internal/workflow"
 )
 
+// newWorkflowRegistry loads workflow definitions from examples/workflows/.
+// This is best-effort — missing files don't cause a fatal error.
 func newWorkflowRegistry() *workflow.Registry {
 	reg := workflow.NewRegistry()
 	reg.LoadFromDir("examples/workflows") //nolint:errcheck // best-effort loading
 	return reg
 }
 
+// executeWorkflowList shows all registered workflows with version and description.
 func executeWorkflowList() {
 	registry := newWorkflowRegistry()
 	names := registry.List()
@@ -39,6 +58,8 @@ func executeWorkflowList() {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeWorkflowShow displays the steps of a workflow definition.
+// Each step shows its type, ID, and optional condition (when clause).
 func executeWorkflowShow(workflowName string) {
 	registry := newWorkflowRegistry()
 	w, err := registry.Resolve(workflowName)
@@ -62,6 +83,12 @@ func executeWorkflowShow(workflowName string) {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeWorkflowRun executes a workflow by name with optional JSON input.
+// It sets up tool handlers connecting to Prism's tool registry and policy,
+// then runs the workflow step by step.
+//
+// The workflow emits events at each step transition. Artifacts (state, events)
+// are written to the run directory.
 func executeWorkflowRun(workflowName, inputFile, runDir string) {
 	registry := newWorkflowRegistry()
 	w, err := registry.Resolve(workflowName)
@@ -70,6 +97,7 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 		os.Exit(1)
 	}
 
+	// Load optional input from a JSON file
 	var input map[string]any
 	if inputFile != "" {
 		data, readErr := os.ReadFile(inputFile)
@@ -86,6 +114,7 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 		input = map[string]any{}
 	}
 
+	// Generate a run ID and create the artifact directory
 	runID := event.NewRunID()
 	artifactDir := filepath.Join(runDir, runID)
 	if mkErr := os.MkdirAll(artifactDir, 0755); mkErr != nil {
@@ -94,6 +123,7 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 	}
 
 	// Build handlers connecting to Prism primitives
+	// The ToolExecute handler runs tools through Prism's policy-enforced executor
 	toolReg := tool.NewRegistry()
 	tool.RegisterBuiltinsV4(toolReg, ".", 1024*1024)
 	policyCfg := tool.PolicyConfig{WorkspaceRoot: ".", MaxFileSize: 1024 * 1024}
@@ -112,10 +142,11 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 		},
 	}
 
+	// Create the workflow runner and wire up event emission
 	runner := workflow.NewRunner(handlers)
 	runner.SetRunDir(artifactDir)
 	runner.SetEmitter(func(eventType, source string, payload map[string]any) {
-		fmt.Printf("  \U0001F48E [%s]", eventType)
+		fmt.Printf("  💎 [%s]", eventType)
 		if wn, ok := payload["workflow_name"]; ok {
 			fmt.Printf(" workflow=%v", wn)
 		}
@@ -135,20 +166,20 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 		os.Exit(1)
 	}
 
-	// Write artifacts
+	// Write artifacts (state, events, summary)
 	_ = workflow.WriteWorkflowArtifacts(artifactDir, w, result.State, result)
 
 	fmt.Println()
 	fmt.Println("═══════════════════════════════════════════")
 	switch result.Status {
 	case "completed":
-		fmt.Println("  \u2705 Workflow: COMPLETED")
+		fmt.Println("  ✅ Workflow: COMPLETED")
 	case "failed":
-		fmt.Println("  \u274C Workflow: FAILED")
+		fmt.Println("  ❌ Workflow: FAILED")
 	case "paused":
-		fmt.Println("  \u23F8\uFE0F  Workflow: PAUSED")
+		fmt.Println("  ⏸️  Workflow: PAUSED")
 	default:
-		fmt.Printf("  \u2753 Workflow: %s\n", result.Status)
+		fmt.Printf("  ❓ Workflow: %s\n", result.Status)
 	}
 	fmt.Println("═══════════════════════════════════════════")
 	fmt.Printf("  Workflow:     %s\n", w.Name)
@@ -161,6 +192,9 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 	fmt.Println()
 }
 
+// executeWorkflowStatus reads a workflow run's saved state and displays
+// the status of each step. This lets you check on a paused or failed
+// workflow without re-running it.
 func executeWorkflowStatus(runID, runDir string) {
 	statePath := filepath.Join(runDir, runID, "workflow_state.json")
 	data, err := os.ReadFile(statePath)
@@ -188,23 +222,20 @@ func executeWorkflowStatus(runID, runDir string) {
 	}
 	fmt.Printf("  Steps:         %d\n", len(state.StepStates))
 	for _, s := range state.StepStates {
-		icon := "\u23F3"
+		icon := "⏳"
 		switch s.Status {
 		case "completed":
-			icon = "\u2705"
+			icon = "✅"
 		case "failed":
-			icon = "\u274C"
+			icon = "❌"
 		case "skipped":
-			icon = "\u23ED\uFE0F"
+			icon = "⏭️"
 		}
 		fmt.Printf("    %s [%s] %s", icon, s.ID, s.Type)
 		if s.Status != "started" {
-			fmt.Printf(" \u2014 %s", s.Status)
+			fmt.Printf(" — %s", s.Status)
 		}
 		fmt.Println()
 	}
 	fmt.Println("═══════════════════════════════════════════")
 }
-
-// ── V8: Policy CLI Functions ─────────────────────────────────────────────────────
-

@@ -1,13 +1,34 @@
+// cmd_approval.go implements the `prism approval` subcommands (V4).
+//
+// When an AI agent wants to write a file, Prism doesn't let it do so directly.
+// Instead, it creates an "approval" — a pending request that a human must
+// explicitly approve or deny. This file provides the CLI for managing those
+// approvals.
+//
+// The workflow:
+//  1. Agent calls write_file_proposal → Prism creates a pending approval
+//  2. Human runs `prism approval list` → sees pending approvals
+//  3. Human runs `prism approval approve <id> --by ema` → file gets written
+//     OR human runs `prism approval deny <id> --by ema` → file is NOT written
+//
+// Commands:
+//   prism approval list [--run <id>]    — List approvals (optionally filtered by run)
+//   prism approval show <id> --run <id> — Show full approval details
+//   prism approval approve <id>        — Approve a pending mutation (writes file)
+//   prism approval deny <id>           — Deny a pending mutation (no file written)
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/mutation"
 )
 
+// executeApprovalList shows all approvals, optionally filtered to a single run.
+// Without --run, it scans all run directories to find every approval.
 func executeApprovalList(runID, runsDir string) {
 	store := approval.NewStore(runsDir)
 
@@ -15,6 +36,7 @@ func executeApprovalList(runID, runsDir string) {
 	var err error
 
 	if runID != "" {
+		// Filter to a specific run
 		approvals, err = store.List(runID)
 	} else {
 		// List all approvals across all runs
@@ -67,6 +89,9 @@ func executeApprovalList(runID, runsDir string) {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeApprovalShow displays full details about a specific approval,
+// including the policy decision, file preview, and who approved/denied it.
+// Requires both --run and the approval ID.
 func executeApprovalShow(approvalID, runID, runsDir string) {
 	if runID == "" {
 		fmt.Fprintln(os.Stderr, "Error: --run flag is required for show")
@@ -112,6 +137,12 @@ func executeApprovalShow(approvalID, runID, runsDir string) {
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeApprovalApprove applies a pending mutation — the file gets written
+// to disk. The --by flag is required (who approved it) and --run is required
+// (which run the approval belongs to).
+//
+// This is the human-in-the-loop gate: the AI proposed, Prism validated, and
+// now the human decides. No LLM self-approval — ever.
 func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir string) {
 	if approvedBy == "" {
 		fmt.Fprintln(os.Stderr, "Error: --by flag is required")
@@ -125,7 +156,7 @@ func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir st
 	store := approval.NewStore(runsDir)
 	executor := mutation.NewExecutor(workspace, store)
 
-	// We'll emit events via print
+	// Print events as they happen (CLI doesn't have NATS bus)
 	executor.SetEmitter(func(eventType, source string, payload map[string]any) {
 		fmt.Printf("  💎 [%s] ", eventType)
 		if id, ok := payload["approval_id"].(string); ok {
@@ -159,6 +190,9 @@ func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir st
 	fmt.Println("═══════════════════════════════════════════")
 }
 
+// executeApprovalDeny rejects a pending mutation — the file is NOT written.
+// The approval status changes to "denied" and the proposed content is discarded.
+// This is safe: denial never touches the filesystem.
 func executeApprovalDeny(approvalID, deniedBy, reason, runID, runsDir string) {
 	if deniedBy == "" {
 		fmt.Fprintln(os.Stderr, "Error: --by flag is required")
@@ -198,7 +232,3 @@ func executeApprovalDeny(approvalID, deniedBy, reason, runID, runsDir string) {
 	fmt.Println("  (No files were written)")
 	fmt.Println("═══════════════════════════════════════════")
 }
-
-
-// ── V7: Workflow CLI Functions ──────────────────────────────────────────────────
-
