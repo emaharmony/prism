@@ -2,7 +2,7 @@
 
 > **License Notice:** Prism is currently source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, hosting, or incorporation into other software requires prior written permission from Emmanuel Vinas.
 
-Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System — a formal seam between Prism Core and external domain logic (trading, Roblox, OpenClaw, etc.) so integrations plug in through adapters instead of forks.
+Prism is a Go/Python event-native AI agent framework. Instead of hiding agent work inside prompt chains, Prism turns each meaningful step of an AI workflow into canonical events that can be observed, replayed, audited, and extended through hooks. V1 proved the task/event lifecycle. V2 proved real single-agent LLM execution. V3 gave agents safe tool execution. V4 adds approval-gated mutations. V5 adds validation and review. V6 adds gate systems and dispatch. V7 adds the Workflow Runtime. V8 adds the Core Policy Engine. V9 adds the Adapter Contract System. V10 adds State Projections — turning event history into queryable current state without a database.
 
 ## Why Prism?
 
@@ -969,6 +969,58 @@ prism.adapter.failed
 
 **What V9 intentionally does NOT include:** Plugin marketplace, remote loading, untrusted third-party execution, dynamic code loading, hot-reloading, domain-specific adapters (those live in their own repos).
 
+### V10: State Projections / Query Layer ✅
+
+V10 turns Prism's event history into queryable current state. Instead of scanning the entire `events.jsonl` to answer "what's the status of this run?" or "which approvals are still pending?", you query pre-computed projections.
+
+**Core idea:** Projections are pure functions of events. Given the same events in the same order, you always get the same projection. No side effects, no external state. Projections are local JSON files, not a database.
+
+**Projection interface (4 methods):**
+```go
+type Projection interface {
+    Name() string                          // Unique ID, becomes filename: projections/<name>.json
+    Subscribe() []string                    // Event types this projection cares about
+    Apply(evt event.Event) error            // Process a single event, update state
+    Snapshot() map[string]any               // Return current state as serializable map
+}
+```
+
+**Built-in projections:**
+
+| Projection | Event Types | Snapshot Contents |
+|------------|-------------|------------------|
+| `run_status` | `prism.task.*` | Status, task, project, agent, timing, error |
+| `approval_state` | `prism.approval.*` | All approvals, their statuses, pending count |
+| `tool_history` | `prism.tool.*` | All tool calls, policy decisions, aggregate summary |
+
+**Key design principles:**
+1. **Events are the source of truth.** Projections are derived. You can always rebuild from `events.jsonl`.
+2. **Projections are pure functions.** Same events → same output. No side effects.
+3. **Projections are local files.** `runs/<run_id>/projections/<name>.json`. No database.
+4. **Projections are additive.** Adding a new projection never changes existing ones.
+5. **Rebuild is cheap.** Scanning `events.jsonl` and applying projections takes milliseconds.
+
+**CLI:**
+```bash
+./prism projection list                           # List available projections
+./prism projection rebuild --run run_01KRC7...     # Rebuild projections for a run
+./prism projection rebuild --all                   # Rebuild for all runs
+./prism projection query run_status --run run_01KRC7...  # Query a projection
+```
+
+**File layout:**
+```
+runs/<run_id>/
+├── events.jsonl              # Source of truth (always)
+├── summary.json              # V1 run summary (unchanged)
+├── projections/              # V10: derived state
+│   ├── run_status.json      # Current run lifecycle state
+│   ├── approval_state.json  # Approval state transitions
+│   └── tool_history.json    # Tool call history
+```
+
+**What V10 intentionally does NOT include:** Database, real-time streaming, SQL-like query language, dashboard (V11), multi-run aggregation, projection versioning.
+
 ### V6+ — Planned
 - V10: State Projections / Query Layer
 - V11: Dashboard / Event Explorer
@@ -1011,6 +1063,8 @@ prism/
 │   ├── policy/            # Core policy engine, declarative rules, evaluator (V8)
 │   ├── adapter/           # Adapter contract, registry, manifest, events (V9)
 │   │   └── builtin/echo/  # Built-in echo adapter
+│   ├── projection/         # State projections, runner, built-in projections (V10)
+│   │   └── builtin/       # Built-in projections (run_status, approval_state, tool_history)
 │   └── remembrance/      # HTTP client for memory context hook
 ├── sdk/
 │   └── prism/            # Python SDK (PrismClient, Event, tools)
@@ -1136,6 +1190,14 @@ When denied, Prism:
 | Adapter Execute | `prism.adapter.execute` | Adapter execution started |
 | Adapter Success | `prism.adapter.success` | Adapter execution succeeded |
 | Adapter Failed | `prism.adapter.failed` | Adapter execution failed |
+
+### V10 Events (projections)
+
+| Event | Subject | Description |
+|-------|---------|-------------|
+| Projection Started | `prism.projection.started` | Projection computation started |
+| Projection Completed | `prism.projection.completed` | Projection snapshot written |
+| Projection Failed | `prism.projection.failed` | Projection computation failed |
 
 ## Workflows (V7)
 ./prism workflow list
