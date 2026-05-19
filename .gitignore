@@ -1,5 +1,9 @@
 # IDE
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
 
 # Prism build artifacts (binaries at repo root only)
 /prism
@@ -8,15 +12,29 @@
 /prism-agent
 prism-data/
 
-# Environment files
+# Environment & secrets
 .env
 .env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+credentials.json
+secrets.json
+tokens.json
 
 # OS & temp files
 .DS_Store
+Thumbs.db
 *.tmp
 *.bak
 *.log
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
 
 # Run outputs (keep directory structure)
 runs/*
