@@ -9,6 +9,7 @@ package sse
 import (
 	"encoding/json"
 	"io"
+	"strings"
 )
 
 // Event represents a parsed Server-Sent Event.
@@ -33,16 +34,23 @@ func NewDecoder(r io.Reader) *Decoder {
 
 // Next reads the next complete SSE event from the stream.
 // Returns io.EOF when the stream ends.
+//
+// Per the SSE spec (HTML Living Standard §9.2.6), multiple data: lines
+// within a single event are concatenated with LF between them.
 func (d *Decoder) Next() (*Event, error) {
 	ev := &Event{}
-	hasData := false
+	var dataLines []string
 
 	for d.scanner.Scan() {
 		line := d.scanner.Text()
 
 		// Empty line = event boundary
 		if line == "" {
-			if hasData || ev.Event != "" {
+			if len(dataLines) > 0 || ev.Event != "" {
+				// Concatenate data lines with LF per SSE spec
+				if len(dataLines) > 0 {
+					ev.Data = json.RawMessage(strings.Join(dataLines, "\n"))
+				}
 				return ev, nil
 			}
 			continue
@@ -75,13 +83,15 @@ func (d *Decoder) Next() (*Event, error) {
 		case "event":
 			ev.Event = value
 		case "data":
-			ev.Data = json.RawMessage(value)
-			hasData = true
+			dataLines = append(dataLines, value)
 		}
 	}
 
 	// Return last event if we have partial data
-	if hasData || ev.Event != "" {
+	if len(dataLines) > 0 || ev.Event != "" {
+		if len(dataLines) > 0 {
+			ev.Data = json.RawMessage(strings.Join(dataLines, "\n"))
+		}
 		return ev, nil
 	}
 	return nil, io.EOF
