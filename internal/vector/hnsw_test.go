@@ -3,6 +3,7 @@ package vector
 import (
 	"fmt"
 	"math"
+	"sort"
 	"testing"
 )
 
@@ -141,6 +142,11 @@ func TestHNSWRecall(t *testing.T) {
 			Score: score,
 		})
 	}
+
+	// Sort brute-force results by descending score
+	sort.Slice(bruteForce, func(i, j int) bool {
+		return bruteForce[i].Score > bruteForce[j].Score
+	})
 
 	// Check that top HNSW result is in top 5 brute-force results
 	if len(hnswResults) == 0 {

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/provider"
-	"github.com/emaharmony/prism/internal/provider/openai"
 )
 
 // Name is the provider name reported in responses.
@@ -45,7 +44,7 @@ func New(baseURL string) *Provider {
 	}
 	return &Provider{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
-		HTTPClient: &http.Client{Timeout: DefaultHTTPTimeout, Transport: openai.DefaultTransport},
+		HTTPClient: &http.Client{Timeout: DefaultHTTPTimeout, Transport: provider.DefaultTransport},
 	}
 }
 

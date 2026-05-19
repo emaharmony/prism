@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/provider"
-	"github.com/emaharmony/prism/internal/provider/openai"
 	"github.com/emaharmony/prism/internal/retry"
 )
 
@@ -47,7 +46,7 @@ func New(apiKey string) *Provider {
 		BaseURL: DefaultBaseURL,
 		HTTPClient: &http.Client{
 			Timeout:   120 * time.Second,
-			Transport: openai.DefaultTransport,
+			Transport: provider.DefaultTransport,
 		},
 		TierVal: provider.TierPaid,
 	}
@@ -58,7 +57,7 @@ func NewWithBaseURL(apiKey, baseURL string) *Provider {
 	return &Provider{
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: openai.DefaultTransport},
+		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: provider.DefaultTransport},
 		TierVal:    provider.TierPaid,
 	}
 }

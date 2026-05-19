@@ -24,13 +24,9 @@ import (
 // TierPaid indicates a paid cloud API provider.
 const TierPaid = provider.TierPaid
 
-// DefaultTransport provides a shared HTTP transport with connection pooling.
-// Reusing connections across providers reduces latency and resource usage.
-var DefaultTransport = &http.Transport{
-	MaxIdleConns:        100,
-	MaxIdleConnsPerHost: 20,
-	IdleConnTimeout:     90 * time.Second,
-}
+// DefaultTransport re-exports the shared provider transport for backward compatibility.
+// Prefer using provider.DefaultTransport directly.
+var DefaultTransport = provider.DefaultTransport
 
 // Provider calls OpenAI's chat completion API using raw HTTP.
 // No SDK dependency — just net/http and encoding/json.

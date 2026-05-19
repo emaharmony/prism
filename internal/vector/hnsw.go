@@ -52,6 +52,9 @@ func NewHNSWIndex(dimension, neighbors int) *HNSWIndex {
 
 // Insert adds a vector to the index, connecting it to its nearest neighbors.
 func (h *HNSWIndex) Insert(id string, vector []float64) {
+	if vector == nil || len(vector) == 0 {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -108,7 +111,11 @@ func (h *HNSWIndex) Delete(id string) {
 
 // Search finds the top-K nearest neighbors using graph traversal.
 // efControls the beam width — higher = better recall, slower.
+// Returns nil for empty index or nil/empty query.
 func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
+	if query == nil || len(query) == 0 {
+		return nil
+	}
 	if ef < k {
 		ef = k
 	}
@@ -120,11 +127,12 @@ func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
 		return nil
 	}
 
-	// Start from a random entry point
+	// Use deterministic entry point: first node by sorted ID
 	var entryID string
 	for id := range h.nodes {
-		entryID = id
-		break
+		if entryID == "" || id < entryID {
+			entryID = id
+		}
 	}
 
 	// For small graphs, just scan all nodes
