@@ -55,6 +55,10 @@ func (p *Provider) GenerateStream(ctx context.Context, req provider.GenerateRequ
 		resp.Body.Close()
 		return nil, retry.NewRetryableError(fmt.Errorf("openai: service unavailable (503)"))
 	}
+	if resp.StatusCode == http.StatusBadGateway {
+		resp.Body.Close()
+		return nil, retry.NewRetryableError(fmt.Errorf("openai: bad gateway (502)"))
+	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()

@@ -142,6 +142,9 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		return provider.GenerateResponse{}, retry.NewRetryableError(fmt.Errorf("openai: service unavailable (503)"))
 	}
+	if resp.StatusCode == http.StatusBadGateway {
+		return provider.GenerateResponse{}, retry.NewRetryableError(fmt.Errorf("openai: bad gateway (502)"))
+	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return provider.GenerateResponse{}, fmt.Errorf("openai: API error (%d): %s", resp.StatusCode, string(respBody))

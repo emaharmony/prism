@@ -136,8 +136,8 @@ func TestDecoder_FieldWithSpace(t *testing.T) {
 }
 
 func TestDecoder_MultilineData(t *testing.T) {
-	// SSE spec allows multiple data fields — they get concatenated
-	// Our implementation takes the last data field per event
+	// Per SSE spec (HTML Living Standard §9.2.6), multiple data: fields
+	// are concatenated with LF between them.
 	input := "data: line1\ndata: line2\n\n"
 	dec := sse.NewDecoder(strings.NewReader(input))
 
@@ -145,8 +145,8 @@ func TestDecoder_MultilineData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
-	if string(ev.Data) != "line2" {
-		t.Errorf("Data = %q, want line2 (last data field wins)", string(ev.Data))
+	if string(ev.Data) != "line1\nline2" {
+		t.Errorf("Data = %q, want line1\nline2 (SSE spec: multiline data joined with LF)", string(ev.Data))
 	}
 }
 

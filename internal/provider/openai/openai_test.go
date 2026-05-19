@@ -94,6 +94,22 @@ func TestProvider_Generate_ServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestProvider_Generate_BadGateway(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
+	if err == nil {
+		t.Fatal("expected error for 502")
+	}
+	if !openai.IsRetryableError(err) {
+		t.Error("502 error should be retryable")
+	}
+}
+
 func TestProvider_Generate_ForbiddenError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
