@@ -3,15 +3,6 @@
 // V14c adds provider chaining with tier-based fallback. The ChainProvider
 // tries providers in order, skipping paid providers unless --allow-paid-fallback
 // is set. This gives Prism resilience: if Ollama is down, fall back to OpenAI.
-//
-// Usage:
-//
-//	chain := provider.NewChainProvider(
-//	    ollamaProvider,    // Tier: Free
-//	    openaiProvider,    // Tier: Paid
-//	)
-//	chain.AllowPaid = false  // skip OpenAI unless explicitly allowed
-//	resp, err := chain.Generate(ctx, req)  // tries Ollama first, then OpenAI
 package provider
 
 import (
@@ -26,11 +17,9 @@ import (
 // If the first provider succeeds, it returns immediately.
 //
 // Paid providers are skipped unless AllowPaid is set to true.
-// This prevents surprise bills from cloud APIs when the user only
-// configured local models.
 type ChainProvider struct {
 	Providers []Provider
-	AllowPaid  bool
+	AllowPaid bool
 }
 
 // NewChainProvider creates a provider chain with the given providers.
@@ -48,12 +37,11 @@ func (c *ChainProvider) Name() string {
 	return "chain"
 }
 
-// Tier returns the tier of the first provider (for display purposes).
+// Tier returns the tier of the chain based on its providers.
 func (c *ChainProvider) Tier() ProviderTier {
 	if len(c.Providers) == 0 {
 		return TierFree
 	}
-	// Check if any provider is paid
 	for _, p := range c.Providers {
 		if tiered, ok := p.(TieredProvider); ok && tiered.Tier() == TierPaid {
 			return TierPaid
@@ -63,15 +51,11 @@ func (c *ChainProvider) Tier() ProviderTier {
 }
 
 // Generate tries each provider in order until one succeeds.
-// If a provider fails with a retryable error, it tries the next one.
-// If a provider fails with a non-retryable error, it returns that error immediately.
-// Paid providers are skipped unless AllowPaid is true.
 func (c *ChainProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
 	var lastErr error
 	attempted := 0
 
 	for _, p := range c.Providers {
-		// Skip paid providers unless explicitly allowed
 		if tiered, ok := p.(TieredProvider); ok {
 			if tiered.Tier() == TierPaid && !c.AllowPaid {
 				continue
@@ -81,13 +65,10 @@ func (c *ChainProvider) Generate(ctx context.Context, req GenerateRequest) (Gene
 		attempted++
 		resp, err := p.Generate(ctx, req)
 		if err == nil {
-			// Success — return the response with the actual provider name
 			return resp, nil
 		}
 
-		// Check if the error is retryable
 		if !retry.IsRetryable(err) {
-			// Non-retryable error — don't try next provider
 			providerName := "unknown"
 			if named, ok := p.(NamedProvider); ok {
 				providerName = named.Name()
@@ -95,7 +76,6 @@ func (c *ChainProvider) Generate(ctx context.Context, req GenerateRequest) (Gene
 			return GenerateResponse{}, fmt.Errorf("provider %s: %w", providerName, err)
 		}
 
-		// Retryable error — try next provider
 		lastErr = err
 	}
 
@@ -106,22 +86,8 @@ func (c *ChainProvider) Generate(ctx context.Context, req GenerateRequest) (Gene
 	return GenerateResponse{}, fmt.Errorf("chain: all %d providers failed: %w", attempted, lastErr)
 }
 
-// NamedProvider is an optional interface for providers that have a name.
-// Use this for display and logging purposes.
-type NamedProvider interface {
-	Provider
-	Name() string
-}
-
-// TieredProvider is an optional interface that providers can implement
-// to indicate their cost tier (Free or Paid).
-type TieredProvider interface {
-	Provider
-	Tier() ProviderTier
-}
-
 // StartLatencyMeasurer wraps a provider and measures the time from request
-// to first response byte. This is useful for monitoring provider performance.
+// to first response byte.
 type StartLatencyMeasurer struct {
 	Inner Provider
 	name  string

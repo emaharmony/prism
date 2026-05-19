@@ -1,27 +1,30 @@
-package provider
+package openai_test
 
 import (
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/provider/openai"
 )
 
-func TestOpenAIProvider_Name(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
+func TestProvider_Name(t *testing.T) {
+	p := openai.New("test-key")
 	if p.Name() != "openai" {
 		t.Errorf("Name() = %q, want openai", p.Name())
 	}
 }
 
-func TestOpenAIProvider_Tier(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
-	if p.Tier() != TierPaid {
+func TestProvider_Tier(t *testing.T) {
+	p := openai.New("test-key")
+	if p.Tier() != openai.TierPaid {
 		t.Errorf("Tier() = %q, want paid", p.Tier())
 	}
 }
 
-func TestOpenAIProvider_Generate_Success(t *testing.T) {
+func TestProvider_Generate_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("Authorization = %q, want Bearer test-key", r.Header.Get("Authorization"))
@@ -37,8 +40,8 @@ func TestOpenAIProvider_Generate_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	resp, err := p.Generate(context.Background(), GenerateRequest{
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	resp, err := p.Generate(context.Background(), provider.GenerateRequest{
 		Prompt: "Say hello",
 		Model:  "gpt-4",
 	})
@@ -59,189 +62,172 @@ func TestOpenAIProvider_Generate_Success(t *testing.T) {
 	}
 }
 
-func TestOpenAIProvider_Generate_RateLimit(t *testing.T) {
+func TestProvider_Generate_RateLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for 429")
 	}
-	if !IsOpenAIErrorRetryable(err) {
+	if !openai.IsRetryableError(err) {
 		t.Error("429 error should be retryable")
 	}
 }
 
-func TestOpenAIProvider_Generate_ServiceUnavailable(t *testing.T) {
+func TestProvider_Generate_ServiceUnavailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for 503")
 	}
-	if !IsOpenAIErrorRetryable(err) {
+	if !openai.IsRetryableError(err) {
 		t.Error("503 error should be retryable")
 	}
 }
 
-func TestOpenAIProvider_Generate_ForbiddenError(t *testing.T) {
+func TestProvider_Generate_ForbiddenError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"error": {"message": "invalid api key"}}`))
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for 403")
 	}
-	if IsOpenAIErrorRetryable(err) {
+	if openai.IsRetryableError(err) {
 		t.Error("403 error should NOT be retryable")
 	}
 }
 
-func TestOpenAIProvider_Generate_NoChoices(t *testing.T) {
+func TestProvider_Generate_NoChoices(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"id": "test", "object": "chat.completion", "model": "gpt-4", "choices": []}`))
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for empty choices")
 	}
 }
 
-func TestOpenAIProvider_Generate_ContextCancelled(t *testing.T) {
+func TestProvider_Generate_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	p := NewOpenAIProvider("test-key")
-	_, err := p.Generate(ctx, GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.New("test-key")
+	_, err := p.Generate(ctx, provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
 }
 
-func TestOpenAIProvider_CustomBaseURL(t *testing.T) {
-	p := NewOpenAIProviderWithBaseURL("test-key", "https://api.together.ai/v1")
-	if p.baseURL != "https://api.together.ai/v1" {
-		t.Errorf("baseURL = %q, want https://api.together.ai/v1", p.baseURL)
-	}
-}
-
-func TestOpenAIProvider_DefaultBaseURL(t *testing.T) {
-	p := NewOpenAIProvider("test-key")
-	if p.baseURL != "https://api.openai.com/v1" {
-		t.Errorf("baseURL = %q, want https://api.openai.com/v1", p.baseURL)
-	}
-}
-
-// Mock provider for chain tests
-type testProvider struct {
-	response GenerateResponse
-	err      error
-	tier     ProviderTier
-}
-
-func (m *testProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
-	if m.err != nil {
-		return GenerateResponse{}, m.err
-	}
-	return m.response, nil
-}
-
-func (m *testProvider) Name() string { return "test" }
-func (m *testProvider) Tier() ProviderTier { return m.tier }
-func TestOpenAIProvider_Generate_InvalidJSON(t *testing.T) {
+func TestProvider_Generate_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{invalid json`))
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for invalid JSON response")
 	}
 }
 
-func TestOpenAIProvider_Generate_BadRequest(t *testing.T) {
+func TestProvider_Generate_BadRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(`{"error": {"message": "model not found"}}`))
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for 400")
 	}
 }
 
-func TestOpenAIProvider_Generate_EmptyResponseBody(t *testing.T) {
+func TestProvider_Generate_EmptyResponseBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		// Empty body — valid status code but no data
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for empty response body")
 	}
 }
 
-func TestOpenAIProvider_Generate_NonJSONError(t *testing.T) {
+func TestProvider_Generate_NonJSONError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(`<html>Internal Server Error</html>`))
 	}))
 	defer server.Close()
 
-	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
-	_, err := p.Generate(context.Background(), GenerateRequest{
-		Prompt: "test",
-		Model:  "gpt-4",
-	})
+	p := openai.NewWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), provider.GenerateRequest{Prompt: "test", Model: "gpt-4"})
 	if err == nil {
 		t.Fatal("expected error for HTML error response")
+	}
+}
+
+func TestProvider_DefaultBaseURL(t *testing.T) {
+	p := openai.New("test-key")
+	if p.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("BaseURL = %q, want https://api.openai.com/v1", p.BaseURL)
+	}
+}
+
+func TestProvider_CustomBaseURL(t *testing.T) {
+	p := openai.NewWithBaseURL("test-key", "https://api.together.ai/v1")
+	if p.BaseURL != "https://api.together.ai/v1" {
+		t.Errorf("BaseURL = %q, want https://api.together.ai/v1", p.BaseURL)
+	}
+}
+
+func TestTogetherProvider(t *testing.T) {
+	p := openai.NewTogetherProvider("test-key")
+	if p.BaseURL != "https://api.together.xyz/v1" {
+		t.Errorf("Together BaseURL = %q, want https://api.together.xyz/v1", p.BaseURL)
+	}
+	if p.Tier() != openai.TierPaid {
+		t.Errorf("Together Tier = %q, want paid", p.Tier())
+	}
+}
+
+func TestGroqProvider(t *testing.T) {
+	p := openai.NewGroqProvider("test-key")
+	if p.BaseURL != "https://api.groq.com/openai/v1" {
+		t.Errorf("Groq BaseURL = %q, want https://api.groq.com/openai/v1", p.BaseURL)
+	}
+}
+
+func TestOllamaCompatProvider(t *testing.T) {
+	p := openai.NewOllamaCompatProvider()
+	if p.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("Ollama compat BaseURL = %q, want http://localhost:11434/v1", p.BaseURL)
+	}
+	if p.Tier() != provider.TierFree {
+		t.Errorf("Ollama compat Tier = %q, want free", p.Tier())
 	}
 }

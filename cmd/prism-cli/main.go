@@ -55,6 +55,8 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/provider/mock"
+	"github.com/emaharmony/prism/internal/provider/ollama"
 )
 
 func main() {
@@ -99,10 +101,10 @@ func main() {
 
 		switch *providerFlag {
 		case "mock":
-			p = provider.NewMockProvider()
+			p = mock.New()
 			providerName = "mock"
 		case "ollama":
-			p = provider.NewOllamaProvider(*ollamaURL)
+			p = ollama.New(*ollamaURL)
 			providerName = "ollama"
 		default:
 			fmt.Fprintf(os.Stderr, "Error: unknown provider '%s' (expected mock or ollama)\n", *providerFlag)

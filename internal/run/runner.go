@@ -32,6 +32,7 @@ import (
 	"github.com/emaharmony/prism/internal/event"
 	"github.com/emaharmony/prism/internal/prompt"
 	"github.com/emaharmony/prism/internal/provider"
+	mockpkg "github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/review"
 	"github.com/emaharmony/prism/internal/tool"
@@ -157,7 +158,7 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// Default provider for V1 backward compat
 	if r.config.Provider == nil {
-		r.config.Provider = provider.NewMockProvider()
+		r.config.Provider = mockpkg.New()
 		if r.config.ProviderName == "" {
 			r.config.ProviderName = "mock"
 		}
