@@ -4,7 +4,7 @@
 //   - Raw HTTP, no SDK. The Anthropic Go SDK adds unnecessary weight.
 //   - Anthropic uses x-api-key header (not Bearer token) and requires anthropic-version.
 //   - Streaming uses SSE with event types (message_start, content_block_delta, message_stop).
-//   - Tier-based paid guard via TieredProvider interface.
+//   - ChainProvider handles tier-based paid guard; this provider just reports its tier.
 package anthropic
 
 import (

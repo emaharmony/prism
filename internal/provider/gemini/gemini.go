@@ -3,8 +3,10 @@
 // Design decisions:
 //   - Raw HTTP, no SDK. The Google GenAI Go SDK is heavy and opinionated.
 //   - Uses API key as query parameter (Google's auth model for generateContent).
+//     Note: This exposes the key in URLs/logs. This is Google's required API design,
+//     not our choice. See https://ai.google.dev/gemini-api/docs/api-key
 //   - Supports both gemini and gemini-pro model families.
-//   - Tier-based paid guard via TieredProvider interface.
+//   - ChainProvider handles tier-based paid guard; this provider just reports its tier.
 package gemini
 
 import (
@@ -151,6 +153,9 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	}
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		return provider.GenerateResponse{}, retry.NewRetryableError(fmt.Errorf("gemini: service unavailable (503)"))
+	}
+	if resp.StatusCode == http.StatusBadGateway {
+		return provider.GenerateResponse{}, retry.NewRetryableError(fmt.Errorf("gemini: bad gateway (502)"))
 	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
