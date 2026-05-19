@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/emaharmony/prism/internal/provider"
@@ -143,6 +142,9 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	if resp.StatusCode == http.StatusServiceUnavailable {
 		return provider.GenerateResponse{}, retry.NewRetryableError(fmt.Errorf("openai: service unavailable (503)"))
 	}
+	if resp.StatusCode == http.StatusBadGateway {
+		return provider.GenerateResponse{}, retry.NewRetryableError(fmt.Errorf("openai: bad gateway (502)"))
+	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return provider.GenerateResponse{}, fmt.Errorf("openai: API error (%d): %s", resp.StatusCode, string(respBody))
@@ -179,11 +181,6 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 // IsRetryableError checks if an error from the OpenAI provider is retryable.
 func IsRetryableError(err error) bool {
 	return retry.IsRetryable(err)
-}
-
-// containsSubstring is a local helper to avoid importing strings for one function.
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && strings.Contains(s, substr)
 }
 
 // Compile-time interface checks.
