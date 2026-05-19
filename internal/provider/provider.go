@@ -57,6 +57,7 @@ type TokenChunk struct {
 	Index    int
 	Finished bool
 	Error    error
+	Raw      map[string]any `json:"raw,omitempty"` // provider-specific metadata (e.g., stop_reason)
 }
 
 // StreamingProvider extends Provider with streaming generation capability.
