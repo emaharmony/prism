@@ -1,0 +1,31 @@
+name: remembrance
+version: "2.0.0"
+description: "Universal memory system for AI agents — knowledge graph, compiled truth, dream cycle"
+capabilities:
+  - action: capture
+    description: "Capture a memory through the full pipeline (gate → extract → graph → store)"
+    requires_approval: false
+  - action: search
+    description: "Hybrid search: FTS5 + vector + graph + RRF fusion"
+    requires_approval: false
+  - action: context_build
+    description: "Build context for a task (hybrid search + graph traversal)"
+    requires_approval: false
+  - action: entity_get
+    description: "Get an entity's compiled truth and timeline"
+    requires_approval: false
+  - action: graph_query
+    description: "Traverse the knowledge graph from an entity"
+    requires_approval: false
+  - action: dream
+    description: "Trigger the dream cycle manually (automated maintenance)"
+    requires_approval: true
+config:
+  base_url:
+    description: "Remembrance service URL"
+    default: "http://localhost:8788"
+    type: string
+  timeout:
+    description: "HTTP request timeout"
+    default: "10s"
+    type: duration
