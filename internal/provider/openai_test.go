@@ -178,3 +178,70 @@ func (m *testProvider) Generate(ctx context.Context, req GenerateRequest) (Gener
 
 func (m *testProvider) Name() string { return "test" }
 func (m *testProvider) Tier() ProviderTier { return m.tier }
+func TestOpenAIProvider_Generate_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{invalid json`))
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), GenerateRequest{
+		Prompt: "test",
+		Model:  "gpt-4",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid JSON response")
+	}
+}
+
+func TestOpenAIProvider_Generate_BadRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error": {"message": "model not found"}}`))
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), GenerateRequest{
+		Prompt: "test",
+		Model:  "gpt-4",
+	})
+	if err == nil {
+		t.Fatal("expected error for 400")
+	}
+}
+
+func TestOpenAIProvider_Generate_EmptyResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		// Empty body — valid status code but no data
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), GenerateRequest{
+		Prompt: "test",
+		Model:  "gpt-4",
+	})
+	if err == nil {
+		t.Fatal("expected error for empty response body")
+	}
+}
+
+func TestOpenAIProvider_Generate_NonJSONError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`<html>Internal Server Error</html>`))
+	}))
+	defer server.Close()
+
+	p := NewOpenAIProviderWithBaseURL("test-key", server.URL)
+	_, err := p.Generate(context.Background(), GenerateRequest{
+		Prompt: "test",
+		Model:  "gpt-4",
+	})
+	if err == nil {
+		t.Fatal("expected error for HTML error response")
+	}
+}
