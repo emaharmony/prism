@@ -10,7 +10,6 @@ import (
 func TestHNSWInsertAndSearch(t *testing.T) {
 	idx := NewHNSWIndex(3, 16)
 
-	// Insert some vectors
 	vectors := map[string][]float64{
 		"a": {1.0, 0.0, 0.0},
 		"b": {0.0, 1.0, 0.0},
@@ -26,13 +25,11 @@ func TestHNSWInsertAndSearch(t *testing.T) {
 		t.Errorf("expected 5 entries, got %d", idx.Len())
 	}
 
-	// Search for nearest to x-axis
 	results := idx.Search([]float64{1.0, 0.0, 0.0}, 3, 50)
 	if len(results) == 0 {
 		t.Fatal("expected results, got none")
 	}
 
-	// Closest should be "a" (exact match)
 	if results[0].Entry.ID != "a" {
 		t.Errorf("expected top result 'a', got '%s'", results[0].Entry.ID)
 	}
@@ -86,7 +83,6 @@ func TestHNSWSingleEntry(t *testing.T) {
 func TestHNSWLargeDataset(t *testing.T) {
 	idx := NewHNSWIndex(3, 24)
 
-	// Insert 200 vectors
 	for i := 0; i < 200; i++ {
 		angle := float64(i) * math.Pi / 100.0
 		vec := []float64{math.Cos(angle), math.Sin(angle), 0.0}
@@ -98,13 +94,11 @@ func TestHNSWLargeDataset(t *testing.T) {
 		t.Errorf("expected 200 entries, got %d", idx.Len())
 	}
 
-	// Search for vectors near (1,0,0)
 	results := idx.Search([]float64{1.0, 0.0, 0.0}, 10, 100)
 	if len(results) == 0 {
 		t.Fatal("expected results from large dataset")
 	}
 
-	// Top result should have high similarity
 	if results[0].Score < 0.9 {
 		t.Errorf("expected top score > 0.9, got %f", results[0].Score)
 	}
@@ -113,7 +107,6 @@ func TestHNSWLargeDataset(t *testing.T) {
 func TestHNSWRecall(t *testing.T) {
 	idx := NewHNSWIndex(3, 24)
 
-	// Insert vectors and verify recall against brute-force
 	type entry struct {
 		id  string
 		vec []float64
@@ -133,7 +126,7 @@ func TestHNSWRecall(t *testing.T) {
 	// HNSW search
 	hnswResults := idx.Search(query, 5, 50)
 
-	// Brute-force search
+	// Brute-force search (sorted by score)
 	var bruteForce []SearchResult
 	for _, e := range entries {
 		score := CosineSimilarity(query, e.vec)
@@ -148,11 +141,11 @@ func TestHNSWRecall(t *testing.T) {
 		return bruteForce[i].Score > bruteForce[j].Score
 	})
 
-	// Check that top HNSW result is in top 5 brute-force results
 	if len(hnswResults) == 0 {
 		t.Fatal("no HNSW results")
 	}
 
+	// Check that top HNSW result is in top 5 brute-force results
 	topHNSW := hnswResults[0].Entry.ID
 	found := false
 	for i := 0; i < 5 && i < len(bruteForce); i++ {
@@ -169,7 +162,6 @@ func TestHNSWRecall(t *testing.T) {
 func TestHNSWConcurrency(t *testing.T) {
 	idx := NewHNSWIndex(3, 16)
 
-	// Concurrent inserts
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {
 		go func(n int) {
@@ -194,13 +186,148 @@ func TestHNSWMaybeReplaceWeakest(t *testing.T) {
 	idx.Insert("a", []float64{1.0, 0.0, 0.0})
 	idx.Insert("b", []float64{0.0, 1.0, 0.0})
 	idx.Insert("c", []float64{0.0, 0.0, 1.0})
-
-	// Inserting a 4th should trigger neighbor replacement
 	idx.Insert("d", []float64{0.95, 0.05, 0.0})
 
-	// Graph should still be functional
 	results := idx.Search([]float64{1.0, 0.0, 0.0}, 2, 20)
 	if len(results) == 0 {
 		t.Error("expected results after neighbor replacement")
+	}
+}
+
+func TestHNSWNilVector(t *testing.T) {
+	idx := NewHNSWIndex(3, 16)
+	idx.Insert("nil", nil)
+	idx.Insert("empty", []float64{})
+	idx.Insert("wrong_dim", []float64{1.0, 0.0})
+
+	if idx.Len() != 0 {
+		t.Errorf("expected 0 entries for nil/empty/wrong-dim vectors, got %d", idx.Len())
+	}
+}
+
+func TestHNSWWrongDimensionSearch(t *testing.T) {
+	idx := NewHNSWIndex(3, 16)
+	idx.Insert("a", []float64{1.0, 0.0, 0.0})
+
+	results := idx.Search([]float64{1.0, 0.0}, 1, 10) // 2D query on 3D index
+	if results != nil {
+		t.Errorf("expected nil for wrong dimension, got %d results", len(results))
+	}
+}
+
+func TestHNSWDeleteNonExistent(t *testing.T) {
+	idx := NewHNSWIndex(3, 16)
+	idx.Insert("a", []float64{1.0, 0.0, 0.0})
+
+	idx.Delete("nonexistent") // should not panic
+	if idx.Len() != 1 {
+		t.Errorf("expected 1 after deleting nonexistent, got %d", idx.Len())
+	}
+}
+
+func TestHNSWInsertDuplicate(t *testing.T) {
+	idx := NewHNSWIndex(3, 16)
+	idx.Insert("a", []float64{1.0, 0.0, 0.0})
+	idx.Insert("a", []float64{0.9, 0.1, 0.0}) // update
+
+	results := idx.Search([]float64{0.9, 0.1, 0.0}, 1, 10)
+	if len(results) == 0 {
+		t.Fatal("expected results after duplicate insert")
+	}
+	// Should find the updated vector
+	if results[0].Score < 0.95 {
+		t.Errorf("expected high score for updated vector, got %f", results[0].Score)
+	}
+}
+
+func TestHNSWInsertBulk(t *testing.T) {
+	idx := NewHNSWIndex(3, 16)
+
+	entries := []struct{ ID string; Vector []float64 }{
+		{"a", []float64{1.0, 0.0, 0.0}},
+		{"b", []float64{0.0, 1.0, 0.0}},
+		{"c", []float64{0.0, 0.0, 1.0}},
+		{"bad1", nil},          // filtered
+		{"bad2", []float64{}}, // filtered
+		{"bad3", []float64{1.0}}, // filtered (wrong dim)
+	}
+	idx.InsertBulk(entries)
+
+	if idx.Len() != 3 {
+		t.Errorf("expected 3 entries (3 valid, 3 filtered), got %d", idx.Len())
+	}
+}
+
+func TestHNSWDimensionMismatch(t *testing.T) {
+	idx := NewHNSWIndex(3, 16)
+
+	// Insert wrong dimension
+	idx.Insert("wrong", []float64{1.0, 0.0})
+	if idx.Len() != 0 {
+		t.Errorf("expected 0 for wrong dimension insert, got %d", idx.Len())
+	}
+
+	// Search with nil
+	results := idx.Search(nil, 1, 10)
+	if results != nil {
+		t.Errorf("expected nil for nil query, got %d results", len(results))
+	}
+}
+
+func BenchmarkHNSWInsert(b *testing.B) {
+	idx := NewHNSWIndex(3, 24)
+	vecs := make([][]float64, b.N)
+	for i := range vecs {
+		angle := float64(i) * math.Pi / 1000.0
+		vecs[i] = []float64{math.Cos(angle), math.Sin(angle), 0.0}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.Insert(fmt.Sprintf("v%d", i), vecs[i])
+	}
+}
+
+func BenchmarkHNSWSearch(b *testing.B) {
+	idx := NewHNSWIndex(3, 24)
+	// Pre-populate with 1000 vectors
+	for i := 0; i < 1000; i++ {
+		angle := float64(i) * math.Pi * 2 / 1000.0
+		idx.Insert(fmt.Sprintf("v%d", i), []float64{math.Cos(angle), math.Sin(angle), 0.0})
+	}
+	query := []float64{1.0, 0.0, 0.0}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.Search(query, 10, 50)
+	}
+}
+
+func BenchmarkHNSWInsertBulk(b *testing.B) {
+	entries := make([]struct{ ID string; Vector []float64 }, 100)
+	for i := range entries {
+		angle := float64(i) * math.Pi * 2 / 100.0
+		entries[i] = struct{ ID string; Vector []float64 }{
+			ID:     fmt.Sprintf("v%d", i),
+			Vector: []float64{math.Cos(angle), math.Sin(angle), 0.0},
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx2 := NewHNSWIndex(3, 24)
+		idx2.InsertBulk(entries)
+	}
+}
+
+func BenchmarkBruteForceSearch(b *testing.B) {
+	store := NewMemoryVectorStore(3)
+	for i := 0; i < 1000; i++ {
+		angle := float64(i) * math.Pi * 2 / 1000.0
+		store.Upsert(nil, VectorEntry{
+			ID:     fmt.Sprintf("v%d", i),
+			Vector: []float64{math.Cos(angle), math.Sin(angle), 0.0},
+		})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		store.Search(nil, []float64{1.0, 0.0, 0.0}, SearchOptions{TopK: 10, MinScore: 0.0})
 	}
 }

@@ -21,18 +21,22 @@ type distItem struct {
 // Hierarchical Navigable Small World graphs" (Malkov & Yashunin, 2016).
 // Simplified: single-layer with configurable neighbors per node.
 //
+// For datasets smaller than the threshold (default: 2 * neighbors), the index
+// falls back to brute-force scan since the graph overhead isn't worth it.
+//
 // Thread-safe via RWMutex.
 type HNSWIndex struct {
-	mu       sync.RWMutex
-	nodes    map[string]*hnswNode
-	neighbors int // max connections per node
-	dim      int
-	rng      *rand.Rand
+	mu         sync.RWMutex
+	nodes      map[string]*hnswNode
+	neighbors  int // max connections per node
+	dim        int
+	rng        *rand.Rand
+	smallGraph int // threshold for brute-force fallback in Search
 }
 
 type hnswNode struct {
-	id       string
-	vector   []float64
+	id        string
+	vector    []float64
 	neighbors []string // neighbor node IDs
 }
 
@@ -47,20 +51,40 @@ func NewHNSWIndex(dimension, neighbors int) *HNSWIndex {
 		neighbors:  neighbors,
 		dim:        dimension,
 		rng:        rand.New(rand.NewSource(42)), // deterministic for reproducibility
+		smallGraph: neighbors * 2,                 // fallback threshold
 	}
 }
 
 // Insert adds a vector to the index, connecting it to its nearest neighbors.
+// Silently ignores nil or empty vectors, or vectors with wrong dimension.
 func (h *HNSWIndex) Insert(id string, vector []float64) {
-	if vector == nil || len(vector) == 0 {
+	if vector == nil || len(vector) == 0 || len(vector) != h.dim {
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.insertUnlocked(id, vector)
+}
 
+// InsertBulk adds multiple vectors to the index efficiently under a single lock.
+// This is significantly faster than individual Insert calls for bulk loading
+// because it acquires the write lock only once.
+func (h *HNSWIndex) InsertBulk(entries []struct{ ID string; Vector []float64 }) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, e := range entries {
+		if e.Vector != nil && len(e.Vector) == h.dim {
+			h.insertUnlocked(e.ID, e.Vector)
+		}
+	}
+}
+
+// insertUnlocked adds a vector without acquiring the mutex.
+// Caller must hold h.mu.
+func (h *HNSWIndex) insertUnlocked(id string, vector []float64) {
 	node := &hnswNode{
-		id:       id,
-		vector:   vector,
+		id:        id,
+		vector:    vector,
 		neighbors: make([]string, 0, h.neighbors),
 	}
 
@@ -110,10 +134,10 @@ func (h *HNSWIndex) Delete(id string) {
 }
 
 // Search finds the top-K nearest neighbors using graph traversal.
-// efControls the beam width — higher = better recall, slower.
-// Returns nil for empty index or nil/empty query.
+// ef controls the beam width — higher = better recall, slower.
+// Returns nil for empty index, nil/empty query, or dimension mismatch.
 func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
-	if query == nil || len(query) == 0 {
+	if query == nil || len(query) == 0 || len(query) != h.dim {
 		return nil
 	}
 	if ef < k {
@@ -127,7 +151,12 @@ func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
 		return nil
 	}
 
-	// Use deterministic entry point: first node by sorted ID
+	// For small graphs, brute-force scan is faster and exact
+	if len(h.nodes) <= h.smallGraph {
+		return h.bruteForceSearch(query, k)
+	}
+
+	// Use deterministic entry point: lexicographically smallest ID
 	var entryID string
 	for id := range h.nodes {
 		if entryID == "" || id < entryID {
@@ -135,25 +164,28 @@ func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
 		}
 	}
 
-	// For small graphs, just scan all nodes
-	if len(h.nodes) <= h.neighbors*2 {
-		var results []SearchResult
-		for id, node := range h.nodes {
-			dist := cosineDistance(query, node.vector)
-			score := 1 - dist
-			results = append(results, SearchResult{
-				Entry: VectorEntry{ID: id, Vector: node.vector},
-				Score: score,
-			})
-		}
-		sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
-		if len(results) > k {
-			results = results[:k]
-		}
-		return results
-	}
+	return h.graphSearch(query, k, ef, entryID)
+}
 
-	// Greedy search with beam expansion
+// bruteForceSearch does a linear scan of all nodes. Used for small graphs.
+func (h *HNSWIndex) bruteForceSearch(query []float64, k int) []SearchResult {
+	var results []SearchResult
+	for id, node := range h.nodes {
+		score := CosineSimilarity(query, node.vector)
+		results = append(results, SearchResult{
+			Entry: VectorEntry{ID: id, Vector: node.vector},
+			Score: score,
+		})
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+	if len(results) > k {
+		results = results[:k]
+	}
+	return results
+}
+
+// graphSearch performs HNSW graph traversal starting from the given entry point.
+func (h *HNSWIndex) graphSearch(query []float64, k int, ef int, entryID string) []SearchResult {
 	visited := make(map[string]bool)
 	candidates := &minHeap{}
 	heap.Init(candidates)
@@ -209,11 +241,8 @@ func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
 		if node, ok := h.nodes[item.id]; ok {
 			searchResults = append(searchResults, SearchResult{
 				Entry: VectorEntry{
-					ID:       node.id,
-					Content:  "", // Content not stored in index, filled by store
-					Vector:   node.vector,
-					Source:   "",
-					SourceID: "",
+					ID:     node.id,
+					Vector: node.vector,
 				},
 				Score: 1 - item.dist, // Convert distance back to similarity
 			})

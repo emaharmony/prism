@@ -191,6 +191,9 @@ func (s *SQLiteEventStore) Query(ctx context.Context, filter EventFilter) ([]Eve
 	if limit <= 0 {
 		limit = 100
 	}
+	if limit > 10000 {
+		limit = 10000 // cap at 10k to prevent unbounded queries
+	}
 	query += " LIMIT ?"
 	args = append(args, limit)
 
