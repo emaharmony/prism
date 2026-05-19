@@ -202,3 +202,45 @@ func TestDiscordAdapter_AdapterInterface(t *testing.T) {
 	// Verify DiscordAdapter implements the adapter.Adapter interface
 	var _ adapter.Adapter = New("https://discord.com/api/webhooks/test")
 }
+
+func TestDiscordAdapter_ServerError(t *testing.T) {
+	var receivedPayload discordWebhookPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedPayload)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	d := NewWithClient(server.URL, server.Client())
+	_, err := d.Execute(context.Background(), "post_message", map[string]any{
+		"content": "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+}
+
+func TestDiscordAdapter_BadGateway(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	d := NewWithClient(server.URL, server.Client())
+	_, err := d.Execute(context.Background(), "post_message", map[string]any{
+		"content": "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for 502")
+	}
+}
+
+func TestDiscordAdapter_EmptyWebhookURL(t *testing.T) {
+	d := New("")
+	_, err := d.Execute(context.Background(), "post_message", map[string]any{
+		"content": "test",
+	})
+	if err == nil {
+		t.Fatal("expected error for empty webhook URL")
+	}
+}

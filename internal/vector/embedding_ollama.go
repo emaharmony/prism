@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type OllamaEmbeddingProvider struct {
 	baseURL    string
 	model      string
 	dim        int // cached dimension, 0 = unknown
+	dimOnce    sync.Once
 	httpClient *http.Client
 }
 
@@ -112,17 +114,14 @@ func (o *OllamaEmbeddingProvider) EmbedBatch(ctx context.Context, texts []string
 
 // Dimension returns the embedding dimension.
 // For Ollama, we need to embed a test string to find out.
-// This caches the result after the first call.
+// Uses sync.Once for thread-safe lazy initialization.
 func (o *OllamaEmbeddingProvider) Dimension() int {
-	if o.dim > 0 {
-		return o.dim
-	}
-	// Embed a test string to determine dimension
-	embed, err := o.Embed(context.Background(), "dimension probe")
-	if err != nil {
-		return 0 // Unknown — call Embed first
-	}
-	o.dim = len(embed)
+	o.dimOnce.Do(func() {
+		embed, err := o.Embed(context.Background(), "dimension probe")
+		if err == nil {
+			o.dim = len(embed)
+		}
+	})
 	return o.dim
 }
 
