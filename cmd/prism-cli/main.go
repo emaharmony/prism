@@ -56,7 +56,10 @@ import (
 
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/mock"
+	"github.com/emaharmony/prism/internal/provider/anthropic"
+	"github.com/emaharmony/prism/internal/provider/gemini"
 	"github.com/emaharmony/prism/internal/provider/ollama"
+	"github.com/emaharmony/prism/internal/provider/openai"
 )
 
 func main() {
@@ -72,7 +75,7 @@ func main() {
 	runDir := runCmd.String("run-dir", "./runs", "Directory for run outputs")
 
 	// LLM flags
-	providerFlag := runCmd.String("provider", "mock", "LLM provider: mock or ollama")
+	providerFlag := runCmd.String("provider", "mock", "LLM provider: mock, ollama, openai, anthropic, gemini")
 	modelFlag := runCmd.String("model", "mock-model", "Model name")
 	temperatureFlag := runCmd.Float64("temperature", 0.2, "LLM temperature")
 	maxTokensFlag := runCmd.Int("max-tokens", 2048, "Max output tokens")
@@ -103,11 +106,35 @@ func main() {
 		case "mock":
 			p = mock.New()
 			providerName = "mock"
-		case "ollama":
+	case "ollama":
 			p = ollama.New(*ollamaURL)
 			providerName = "ollama"
+		case "openai":
+			apiKey := os.Getenv("OPENAI_API_KEY")
+			if apiKey == "" {
+				fmt.Fprintln(os.Stderr, "Error: OPENAI_API_KEY environment variable required")
+				os.Exit(1)
+			}
+			p = openai.New(apiKey)
+			providerName = "openai"
+		case "anthropic":
+			apiKey := os.Getenv("ANTHROPIC_API_KEY")
+			if apiKey == "" {
+				fmt.Fprintln(os.Stderr, "Error: ANTHROPIC_API_KEY environment variable required")
+				os.Exit(1)
+			}
+			p = anthropic.New(apiKey)
+			providerName = "anthropic"
+		case "gemini":
+			apiKey := os.Getenv("GEMINI_API_KEY")
+			if apiKey == "" {
+				fmt.Fprintln(os.Stderr, "Error: GEMINI_API_KEY environment variable required")
+				os.Exit(1)
+			}
+			p = gemini.New(apiKey)
+			providerName = "gemini"
 		default:
-			fmt.Fprintf(os.Stderr, "Error: unknown provider '%s' (expected mock or ollama)\n", *providerFlag)
+			fmt.Fprintf(os.Stderr, "Error: unknown provider '%s' (expected mock, ollama, openai, anthropic, or gemini)\n", *providerFlag)
 			os.Exit(1)
 		}
 
@@ -491,7 +518,7 @@ func printUsage() {
 	fmt.Println("  --run-dir <string>     Run output directory (default: ./runs)")
 	fmt.Println()
 	fmt.Println("LLM provider options:")
-	fmt.Println("  --provider <string>    LLM provider: mock or ollama (default: mock)")
+	fmt.Println("  --provider <string>    LLM provider: mock, ollama, openai, anthropic, gemini (default: mock)")
 	fmt.Println("  --model <string>       Model name (default: mock-model)")
 	fmt.Println("  --temperature <float>  LLM temperature (default: 0.2)")
 	fmt.Println("  --max-tokens <int>     Max output tokens (default: 2048)")
