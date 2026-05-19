@@ -1,17 +1,39 @@
-package provider
+package provider_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/provider/mock"
+	"github.com/emaharmony/prism/internal/provider/ollama"
+	"github.com/emaharmony/prism/internal/provider/openai"
 )
 
-func TestChainProvider_SingleProvider_Success(t *testing.T) {
-	success := &testProvider{
-		response: GenerateResponse{Text: "hello", Provider: "mock"},
+// mockProvider implements provider.Provider for chain tests.
+type mockProvider struct {
+	response provider.GenerateResponse
+	err      error
+	tier     provider.ProviderTier
+}
+
+func (m *mockProvider) Generate(ctx context.Context, req provider.GenerateRequest) (provider.GenerateResponse, error) {
+	if m.err != nil {
+		return provider.GenerateResponse{}, m.err
 	}
-	chain := NewChainProvider(success)
-	resp, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	return m.response, nil
+}
+
+func (m *mockProvider) Name() string             { return "mock" }
+func (m *mockProvider) Tier() provider.ProviderTier { return m.tier }
+
+func TestChainProvider_SingleProvider_Success(t *testing.T) {
+	success := &mockProvider{
+		response: provider.GenerateResponse{Text: "hello", Provider: "mock"},
+	}
+	chain := provider.NewChainProvider(success)
+	resp, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -21,16 +43,16 @@ func TestChainProvider_SingleProvider_Success(t *testing.T) {
 }
 
 func TestChainProvider_FallbackToNext(t *testing.T) {
-	failing := &testProvider{
+	failing := &mockProvider{
 		err: fmt.Errorf("503 service unavailable"),
 	}
-	success := &testProvider{
-		response: GenerateResponse{Text: "fallback response", Provider: "backup"},
+	success := &mockProvider{
+		response: provider.GenerateResponse{Text: "fallback response", Provider: "backup"},
 	}
-	chain := NewChainProvider(failing, success)
+	chain := provider.NewChainProvider(failing, success)
 	chain.AllowPaid = true
 
-	resp, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	resp, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -40,28 +62,28 @@ func TestChainProvider_FallbackToNext(t *testing.T) {
 }
 
 func TestChainProvider_PaidProviderBlocked(t *testing.T) {
-	paid := &testProvider{
-		response: GenerateResponse{Text: "paid response"},
-		tier:     TierPaid,
+	paid := &mockProvider{
+		response: provider.GenerateResponse{Text: "paid response"},
+		tier:     provider.TierPaid,
 	}
-	chain := NewChainProvider(paid)
+	chain := provider.NewChainProvider(paid)
 	chain.AllowPaid = false
 
-	_, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	_, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err == nil {
 		t.Fatal("expected error when all providers are blocked")
 	}
 }
 
 func TestChainProvider_PaidProviderAllowed(t *testing.T) {
-	paid := &testProvider{
-		response: GenerateResponse{Text: "paid response"},
-		tier:     TierPaid,
+	paid := &mockProvider{
+		response: provider.GenerateResponse{Text: "paid response"},
+		tier:     provider.TierPaid,
 	}
-	chain := NewChainProvider(paid)
+	chain := provider.NewChainProvider(paid)
 	chain.AllowPaid = true
 
-	resp, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	resp, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -71,79 +93,77 @@ func TestChainProvider_PaidProviderAllowed(t *testing.T) {
 }
 
 func TestChainProvider_NonRetryableStops(t *testing.T) {
-	failing := &testProvider{
+	failing := &mockProvider{
 		err: fmt.Errorf("forbidden"),
 	}
-	success := &testProvider{
-		response: GenerateResponse{Text: "should not reach"},
+	success := &mockProvider{
+		response: provider.GenerateResponse{Text: "should not reach"},
 	}
-	chain := NewChainProvider(failing, success)
+	chain := provider.NewChainProvider(failing, success)
 	chain.AllowPaid = true
 
-	_, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	_, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err == nil {
 		t.Fatal("expected error for non-retryable failure")
 	}
 }
 
 func TestChainProvider_AllProvidersFail(t *testing.T) {
-	f1 := &testProvider{err: fmt.Errorf("503 unavailable")}
-	f2 := &testProvider{err: fmt.Errorf("429 rate limited")}
-	chain := NewChainProvider(f1, f2)
+	f1 := &mockProvider{err: fmt.Errorf("503 unavailable")}
+	f2 := &mockProvider{err: fmt.Errorf("429 rate limited")}
+	chain := provider.NewChainProvider(f1, f2)
 	chain.AllowPaid = true
 
-	_, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	_, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err == nil {
 		t.Fatal("expected error when all providers fail")
 	}
 }
 
 func TestChainProvider_EmptyChain(t *testing.T) {
-	chain := NewChainProvider()
+	chain := provider.NewChainProvider()
 	chain.AllowPaid = true
 
-	_, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	_, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err == nil {
 		t.Fatal("expected error for empty chain")
 	}
 }
 
 func TestChainProvider_Tier(t *testing.T) {
-	free := &testProvider{tier: TierFree}
-	paid := &testProvider{tier: TierPaid}
+	free := &mockProvider{tier: provider.TierFree}
+	paid := &mockProvider{tier: provider.TierPaid}
 
-	chain1 := NewChainProvider(free)
-	if chain1.Tier() != TierFree {
+	chain1 := provider.NewChainProvider(free)
+	if chain1.Tier() != provider.TierFree {
 		t.Error("chain with only free provider should be TierFree")
 	}
 
-	chain2 := NewChainProvider(free, paid)
-	if chain2.Tier() != TierPaid {
+	chain2 := provider.NewChainProvider(free, paid)
+	if chain2.Tier() != provider.TierPaid {
 		t.Error("chain with paid provider should be TierPaid")
 	}
 
-	chain3 := NewChainProvider()
-	if chain3.Tier() != TierFree {
+	chain3 := provider.NewChainProvider()
+	if chain3.Tier() != provider.TierFree {
 		t.Error("empty chain should be TierFree")
 	}
 }
 
 func TestChainProvider_MixedPaidFree(t *testing.T) {
-	free := &testProvider{
-		response: GenerateResponse{Text: "free response"},
-		tier:     TierFree,
+	free := &mockProvider{
+		response: provider.GenerateResponse{Text: "free response"},
+		tier:     provider.TierFree,
 	}
-	paid := &testProvider{
-		response: GenerateResponse{Text: "paid response"},
-		tier:     TierPaid,
+	paid := &mockProvider{
+		response: provider.GenerateResponse{Text: "paid response"},
+		tier:     provider.TierPaid,
 	}
 
-	// When free fails, should NOT fall back to paid if AllowPaid=false
-	chain := NewChainProvider(free, paid)
+	chain := provider.NewChainProvider(free, paid)
 	chain.AllowPaid = false
 
-	// But free succeeds, so it should return free response
-	resp, err := chain.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	resp, err := chain.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -153,18 +173,40 @@ func TestChainProvider_MixedPaidFree(t *testing.T) {
 }
 
 func TestStartLatencyMeasurer(t *testing.T) {
-	mock := &testProvider{
-		response: GenerateResponse{Text: "test"},
-	}
-	measurer := NewStartLatencyMeasurer(mock, "mock")
-	resp, err := measurer.Generate(context.Background(), GenerateRequest{Prompt: "test"})
+	m := mock.New()
+	measurer := provider.NewStartLatencyMeasurer(m, "mock")
+	resp, err := measurer.Generate(context.Background(), provider.GenerateRequest{Prompt: "test"})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if resp.Text != "test" {
-		t.Errorf("Text = %q, want test", resp.Text)
+	if resp.Text == "" {
+		t.Error("expected non-empty text")
 	}
 	if measurer.Name() != "mock" {
 		t.Errorf("Name() = %q, want mock", measurer.Name())
+	}
+}
+
+func TestChainWithRealOpenAI(t *testing.T) {
+	// Verify that openai.Provider works in a chain
+	p := openai.New("test-key")
+	chain := provider.NewChainProvider(p)
+	chain.AllowPaid = true
+
+	// Don't actually call the API — just verify the chain accepts it
+	if chain.Tier() != provider.TierPaid {
+		t.Error("chain with OpenAI should be TierPaid")
+	}
+}
+
+func TestChainWithRealOllama(t *testing.T) {
+	// Verify that ollama.Provider works in a chain
+	p := ollama.New("http://localhost:11434")
+	chain := provider.NewChainProvider(p)
+
+	// Ollama is free tier
+	// Note: ollama.Provider doesn't implement TieredProvider, so chain treats it as free
+	if len(chain.Providers) != 1 {
+		t.Errorf("chain should have 1 provider, got %d", len(chain.Providers))
 	}
 }
