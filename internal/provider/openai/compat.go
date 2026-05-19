@@ -20,7 +20,7 @@ func NewTogetherProvider(apiKey string) *Provider {
 	return &Provider{
 		APIKey:     apiKey,
 		BaseURL:    togetherBaseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: DefaultTransport},
 		TierVal:    TierPaid,
 	}
 }
@@ -34,7 +34,7 @@ func NewGroqProvider(apiKey string) *Provider {
 	return &Provider{
 		APIKey:     apiKey,
 		BaseURL:    groqBaseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: DefaultTransport},
 		TierVal:    TierPaid,
 	}
 }
@@ -47,7 +47,7 @@ func NewAzureProvider(apiKey, baseURL string) *Provider {
 	return &Provider{
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: DefaultTransport},
 		TierVal:    TierPaid,
 	}
 }
@@ -61,9 +61,9 @@ const ollamaOpenAIBaseURL = "http://localhost:11434/v1"
 // For the native Ollama provider, use the ollama package instead.
 func NewOllamaCompatProvider() *Provider {
 	return &Provider{
-		APIKey:     "ollama", // Ollama doesn't require an API key
-		BaseURL:    ollamaOpenAIBaseURL,
-		HTTPClient: &http.Client{Timeout: 300 * time.Second}, // Local inference can be slow
+		APIKey:  "ollama", // Ollama doesn't require an API key
+		BaseURL: ollamaOpenAIBaseURL,
+		HTTPClient: &http.Client{Timeout: 300 * time.Second, Transport: DefaultTransport}, // Local inference can be slow
 		TierVal:    provider.TierFree,
 	}
 }

@@ -24,6 +24,14 @@ import (
 // TierPaid indicates a paid cloud API provider.
 const TierPaid = provider.TierPaid
 
+// DefaultTransport provides a shared HTTP transport with connection pooling.
+// Reusing connections across providers reduces latency and resource usage.
+var DefaultTransport = &http.Transport{
+	MaxIdleConns:        100,
+	MaxIdleConnsPerHost: 20,
+	IdleConnTimeout:     90 * time.Second,
+}
+
 // Provider calls OpenAI's chat completion API using raw HTTP.
 // No SDK dependency — just net/http and encoding/json.
 //
@@ -45,7 +53,8 @@ func New(apiKey string) *Provider {
 		APIKey:  apiKey,
 		BaseURL: "https://api.openai.com/v1",
 		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout:   120 * time.Second,
+			Transport: DefaultTransport,
 		},
 		TierVal: TierPaid,
 	}
@@ -57,7 +66,7 @@ func NewWithBaseURL(apiKey, baseURL string) *Provider {
 	return &Provider{
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: DefaultTransport},
 		TierVal:     TierPaid,
 	}
 }
