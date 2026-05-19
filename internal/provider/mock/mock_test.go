@@ -1,4 +1,4 @@
-package provider_test
+package mock_test
 
 import (
 	"context"
@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/provider/mock"
 )
 
 func TestMockProviderSuccess(t *testing.T) {
-	p := provider.NewMockProvider()
+	p := mock.New()
 	req := provider.GenerateRequest{
 		RunID:       "run_test123",
 		Agent:       "lumi",
@@ -25,8 +26,8 @@ func TestMockProviderSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got error: %v", err)
 	}
-	if resp.Provider != provider.MockProviderName {
-		t.Errorf("expected provider %s, got %s", provider.MockProviderName, resp.Provider)
+	if resp.Provider != mock.Name {
+		t.Errorf("expected provider %s, got %s", mock.Name, resp.Provider)
 	}
 	if resp.Text == "" {
 		t.Error("expected non-empty text")
@@ -46,7 +47,7 @@ func TestMockProviderSuccess(t *testing.T) {
 }
 
 func TestFailingMockProvider(t *testing.T) {
-	p := provider.NewFailingMockProvider()
+	p := mock.NewFailing()
 	req := provider.GenerateRequest{
 		RunID:   "run_fail",
 		Agent:   "lumi",
@@ -63,14 +64,14 @@ func TestFailingMockProvider(t *testing.T) {
 }
 
 func TestMockProviderContextCancellation(t *testing.T) {
-	p := provider.NewMockProvider()
+	p := mock.New()
 	req := provider.GenerateRequest{
 		Task:   "cancel test",
 		Prompt: "test",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	_, err := p.Generate(ctx, req)
 	if err == nil {
@@ -79,13 +80,12 @@ func TestMockProviderContextCancellation(t *testing.T) {
 }
 
 func TestProviderInterface(t *testing.T) {
-	// Verify both MockProvider and FailingMockProvider implement Provider
-	var _ provider.Provider = provider.NewMockProvider()
-	var _ provider.Provider = provider.NewFailingMockProvider()
+	var _ provider.Provider = mock.New()
+	var _ provider.Provider = mock.NewFailing()
 }
 
 func TestMockProviderLatency(t *testing.T) {
-	p := provider.NewMockProvider()
+	p := mock.New()
 	req := provider.GenerateRequest{
 		Task:   "latency test",
 		Prompt: "test prompt content for counting",
@@ -103,5 +103,48 @@ func TestMockProviderLatency(t *testing.T) {
 	}
 	if resp.LatencyMS <= 0 {
 		t.Errorf("expected positive latency_ms, got %d", resp.LatencyMS)
+	}
+}
+
+func TestToolRequestProvider(t *testing.T) {
+	p := mock.NewToolRequest("file_write", map[string]any{"path": "output.md", "content": "hello"})
+	req := provider.GenerateRequest{
+		Task:   "write a file",
+		Prompt: "system prompt",
+	}
+
+	resp, err := p.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Text == "" {
+		t.Error("expected non-empty text")
+	}
+	if resp.Provider != mock.Name {
+		t.Errorf("expected provider %s, got %s", mock.Name, resp.Provider)
+	}
+}
+
+func TestMockProviderStreaming(t *testing.T) {
+	p := mock.New()
+	req := provider.GenerateRequest{
+		Task:   "streaming test",
+		Prompt: "test prompt",
+	}
+
+	ch, err := p.GenerateStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("GenerateStream() error = %v", err)
+	}
+
+	var tokens []string
+	for chunk := range ch {
+		if chunk.Error != nil {
+			t.Fatalf("stream error: %v", chunk.Error)
+		}
+		tokens = append(tokens, chunk.Tokens...)
+	}
+	if len(tokens) == 0 {
+		t.Error("expected at least one token chunk")
 	}
 }

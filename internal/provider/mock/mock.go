@@ -1,4 +1,11 @@
-package provider
+// Package mock provides a deterministic mock LLM provider for testing.
+//
+// MockProvider always succeeds with predictable output. FailingMockProvider
+// always returns an error. ToolRequestMockProvider returns a JSON tool request.
+//
+// All three implement the provider.Provider interface and the
+// provider.StreamingProvider interface.
+package mock
 
 import (
 	"context"
@@ -6,31 +13,33 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/emaharmony/prism/internal/provider"
 )
 
-const MockProviderName = "mock"
+// Name is the provider name reported by MockProvider.
+const Name = "mock"
 
 // MockProvider always succeeds with deterministic output.
 // Used for testing — no external dependencies.
-// Implements both Provider and StreamingProvider interfaces.
 type MockProvider struct {
 	shouldFail bool
 }
 
-// NewMockProvider creates a MockProvider that always succeeds.
-func NewMockProvider() *MockProvider {
+// New creates a MockProvider that always succeeds.
+func New() *MockProvider {
 	return &MockProvider{shouldFail: false}
 }
 
-// NewFailingMockProvider creates a MockProvider that always returns an error.
-func NewFailingMockProvider() *MockProvider {
+// NewFailing creates a MockProvider that always returns an error.
+func NewFailing() *MockProvider {
 	return &MockProvider{shouldFail: true}
 }
 
 // Generate returns a deterministic response or an error depending on configuration.
-func (m *MockProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
+func (m *MockProvider) Generate(ctx context.Context, req provider.GenerateRequest) (provider.GenerateResponse, error) {
 	if m.shouldFail {
-		return GenerateResponse{}, fmt.Errorf("mock provider configured to fail")
+		return provider.GenerateResponse{}, fmt.Errorf("mock provider configured to fail")
 	}
 
 	start := time.Now()
@@ -38,18 +47,18 @@ func (m *MockProvider) Generate(ctx context.Context, req GenerateRequest) (Gener
 	// Simulate a brief processing delay
 	select {
 	case <-ctx.Done():
-		return GenerateResponse{}, ctx.Err()
+		return provider.GenerateResponse{}, ctx.Err()
 	case <-time.After(10 * time.Millisecond):
 	}
 
 	latency := time.Since(start).Milliseconds()
 
-	return GenerateResponse{
+	return provider.GenerateResponse{
 		Text:         fmt.Sprintf("Mock response for task '%s' by agent '%s' in project '%s'.", req.Task, req.Agent, req.Project),
 		Model:        "mock-model",
-		Provider:     MockProviderName,
+		Provider:     Name,
 		LatencyMS:    latency,
-		PromptTokens: len(req.Prompt) / 4, // rough estimate
+		PromptTokens: len(req.Prompt) / 4,
 		OutputTokens: 50,
 		Raw: map[string]any{
 			"mock": true,
@@ -63,53 +72,52 @@ func (m *MockProvider) Generate(ctx context.Context, req GenerateRequest) (Gener
 	}, nil
 }
 
-// ToolRequestMockProvider returns JSON simulating an LLM that requests a tool call.
+// ToolRequestProvider returns JSON simulating an LLM that requests a tool call.
 // This is used for V3 tool execution tests.
-type ToolRequestMockProvider struct {
+type ToolRequestProvider struct {
 	toolName  string
 	toolInput map[string]any
 }
 
-// NewToolRequestMockProvider creates a provider that returns a tool_request JSON response.
-func NewToolRequestMockProvider(toolName string, toolInput map[string]any) *ToolRequestMockProvider {
-	return &ToolRequestMockProvider{
+// NewToolRequest creates a provider that returns a tool_request JSON response.
+func NewToolRequest(toolName string, toolInput map[string]any) *ToolRequestProvider {
+	return &ToolRequestProvider{
 		toolName:  toolName,
 		toolInput: toolInput,
 	}
 }
 
 // Generate returns a JSON string representing a tool request.
-func (p *ToolRequestMockProvider) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
+func (p *ToolRequestProvider) Generate(ctx context.Context, req provider.GenerateRequest) (provider.GenerateResponse, error) {
 	start := time.Now()
 	select {
 	case <-ctx.Done():
-		return GenerateResponse{}, ctx.Err()
+		return provider.GenerateResponse{}, ctx.Err()
 	case <-time.After(10 * time.Millisecond):
 	}
 	latency := time.Since(start).Milliseconds()
 
-	// Build tool_request JSON
 	inputJSON, _ := json.Marshal(p.toolInput)
 	text := fmt.Sprintf(`{"type": "tool_request", "tool": "%s", "input": %s}`, p.toolName, string(inputJSON))
 
-	return GenerateResponse{
+	return provider.GenerateResponse{
 		Text:         text,
 		Model:        "mock-model",
-		Provider:     MockProviderName,
+		Provider:     Name,
 		LatencyMS:    latency,
 		PromptTokens: len(req.Prompt) / 4,
 		OutputTokens: 50,
 	}, nil
 }
+
 // GenerateStream simulates streaming output by splitting the response into
-// word-sized chunks with small delays. It implements StreamingProvider.
-// Chunks are sent every 10ms to simulate real streaming behavior.
-func (m *MockProvider) GenerateStream(ctx context.Context, req GenerateRequest) (<-chan TokenChunk, error) {
+// word-sized chunks with small delays.
+func (m *MockProvider) GenerateStream(ctx context.Context, req provider.GenerateRequest) (<-chan provider.TokenChunk, error) {
 	if m.shouldFail {
 		return nil, fmt.Errorf("mock provider configured to fail")
 	}
 
-	ch := make(chan TokenChunk, 64)
+	ch := make(chan provider.TokenChunk, 64)
 	go func() {
 		defer close(ch)
 		response := fmt.Sprintf("Mock response for task '%s' by agent '%s' in project '%s'.", req.Task, req.Agent, req.Project)
@@ -117,18 +125,25 @@ func (m *MockProvider) GenerateStream(ctx context.Context, req GenerateRequest) 
 		for i, word := range words {
 			select {
 			case <-ctx.Done():
-				ch <- TokenChunk{Error: ctx.Err(), Finished: false}
+				ch <- provider.TokenChunk{Error: ctx.Err(), Finished: false}
 				return
 			default:
 			}
 
-			ch <- TokenChunk{
+			ch <- provider.TokenChunk{
 				Tokens:   []string{word + " "},
 				Index:    i,
 				Finished: i == len(words)-1,
 			}
-			time.Sleep(10 * time.Millisecond) // simulate streaming delay
+			time.Sleep(10 * time.Millisecond)
 		}
 	}()
 	return ch, nil
 }
+
+// Compile-time interface checks.
+var (
+	_ provider.Provider           = (*MockProvider)(nil)
+	_ provider.StreamingProvider  = (*MockProvider)(nil)
+	_ provider.Provider           = (*ToolRequestProvider)(nil)
+)

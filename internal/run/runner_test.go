@@ -18,7 +18,7 @@ import (
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/event"
 	"github.com/emaharmony/prism/internal/mutation"
-	"github.com/emaharmony/prism/internal/provider"
+	mockpkg "github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/review"
 	"github.com/emaharmony/prism/internal/run"
 	"github.com/emaharmony/prism/internal/tool"
@@ -571,7 +571,7 @@ func TestV2MockProviderSuccess(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewMockProvider(),
+		Provider:      mockpkg.New(),
 		Model:         "mock-model",
 		Temperature:   0.2,
 		MaxTokens:     2048,
@@ -729,7 +729,7 @@ func TestV2MockProviderWithMemory(t *testing.T) {
 		RequireMemory: false,
 		MemoryURL:     mockMemory.URL,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewMockProvider(),
+		Provider:      mockpkg.New(),
 		Model:         "mock-model",
 	}
 
@@ -829,7 +829,7 @@ func TestV2LLMFailure(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewFailingMockProvider(),
+		Provider:      mockpkg.NewFailing(),
 		Model:         "mock-model",
 	}
 
@@ -920,7 +920,7 @@ func TestV2DryRunPrompt(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewMockProvider(),
+		Provider:      mockpkg.New(),
 		Model:         "mock-model",
 		DryRunPrompt:  true,
 	}
@@ -1002,7 +1002,7 @@ func TestV2OutputArtifacts(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewMockProvider(),
+		Provider:      mockpkg.New(),
 		Model:         "mock-model",
 	}
 
@@ -1069,7 +1069,7 @@ func TestV2ContextInjectionInPrompt(t *testing.T) {
 		RequireMemory: false,
 		MemoryURL:     mockMemory.URL,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewMockProvider(),
+		Provider:      mockpkg.New(),
 		Model:         "mock-model",
 	}
 
@@ -1134,7 +1134,7 @@ func TestV2MemoryFailureGraceful(t *testing.T) {
 		RequireMemory:  false, // graceful: continue even if memory fails
 		MemoryURL:      "http://localhost:18790", // Not running
 		RunDir:         filepath.Join(tmpDir, "runs"),
-		Provider:       provider.NewMockProvider(),
+		Provider:       mockpkg.New(),
 		Model:          "mock-model",
 	}
 
@@ -1196,7 +1196,7 @@ func TestV2MemoryFailureStrict(t *testing.T) {
 		RequireMemory:  true, // strict: fail if memory unavailable
 		MemoryURL:      "http://localhost:18790", // Not running
 		RunDir:         filepath.Join(tmpDir, "runs"),
-		Provider:       provider.NewMockProvider(),
+		Provider:       mockpkg.New(),
 		Model:          "mock-model",
 	}
 
@@ -1303,7 +1303,7 @@ func TestV3ToolCallSummaryInSummary(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewToolRequestMockProvider("read_file", map[string]any{"path": "test.txt"}),
+		Provider:      mockpkg.NewToolRequest("read_file", map[string]any{"path": "test.txt"}),
 		ProviderName:  "mock",
 		Model:         "mock-model",
 		ToolExecutor:  executor,
@@ -1372,7 +1372,7 @@ func TestV3ToolResultFileWritten(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewToolRequestMockProvider("read_file", map[string]any{"path": "hello.txt"}),
+		Provider:      mockpkg.NewToolRequest("read_file", map[string]any{"path": "hello.txt"}),
 		ProviderName:  "mock",
 		Model:         "mock-model",
 		ToolExecutor:  executor,
@@ -1430,7 +1430,7 @@ func TestV3ToolEventsInEventLog(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewToolRequestMockProvider("echo", map[string]any{"text": "hello"}),
+		Provider:      mockpkg.NewToolRequest("echo", map[string]any{"text": "hello"}),
 		ProviderName:  "mock",
 		Model:         "mock-model",
 		ToolExecutor:  executor,
@@ -1500,7 +1500,7 @@ func TestV3ToolDeniedPolicy(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewToolRequestMockProvider("shell", map[string]any{"command": "rm -rf /"}),
+		Provider:      mockpkg.NewToolRequest("shell", map[string]any{"command": "rm -rf /"}),
 		ProviderName:  "mock",
 		Model:         "mock-model",
 		ToolExecutor:  executor,
@@ -1565,7 +1565,7 @@ func TestV3NoToolExecutor(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      provider.NewMockProvider(),
+		Provider:      mockpkg.New(),
 		ProviderName:  "mock",
 		Model:         "mock-model",
 		// ToolExecutor is nil — should behave like V2
@@ -1624,7 +1624,7 @@ func TestV5RunValidation(t *testing.T) {
 		Agent:              "lumi",
 		BusURL:             busURL,
 		RunDir:             tmpDir,
-		Provider:           provider.NewMockProvider(),
+		Provider:           mockpkg.New(),
 		ProviderName:       "mock",
 		Model:              "mock-model",
 		ValidationRegistry: validation.NewRegistry(),
@@ -1677,7 +1677,7 @@ func TestV5RunReview(t *testing.T) {
 		Agent:              "lumi",
 		BusURL:             busURL,
 		RunDir:             tmpDir,
-		Provider:           provider.NewMockProvider(),
+		Provider:           mockpkg.New(),
 		ProviderName:       "mock",
 		Model:              "mock-model",
 		ValidationRegistry: validation.NewRegistry(),
@@ -1751,7 +1751,7 @@ func TestV5ValidationEvents(t *testing.T) {
 		Agent:              "lumi",
 		BusURL:             busURL,
 		RunDir:             tmpDir,
-		Provider:           provider.NewMockProvider(),
+		Provider:           mockpkg.New(),
 		ProviderName:       "mock",
 		Model:              "mock-model",
 		ValidationRegistry: validation.NewRegistry(),
@@ -1837,7 +1837,7 @@ func TestV5ReviewWithFailedValidation(t *testing.T) {
 		Agent:              "lumi",
 		BusURL:             busURL,
 		RunDir:             tmpDir,
-		Provider:           provider.NewMockProvider(),
+		Provider:           mockpkg.New(),
 		ProviderName:       "mock",
 		Model:              "mock-model",
 		ValidationRegistry: validation.NewRegistry(),
@@ -2020,7 +2020,7 @@ func TestV5ValidationUnknownProfile(t *testing.T) {
 		Agent:              "lumi",
 		BusURL:             busURL,
 		RunDir:             tmpDir,
-		Provider:           provider.NewMockProvider(),
+		Provider:           mockpkg.New(),
 		ProviderName:       "mock",
 		Model:              "mock-model",
 		ValidationRegistry: validation.NewRegistry(),
@@ -2066,7 +2066,7 @@ func TestV5ReviewSummaryMetadata(t *testing.T) {
 		Agent:              "lumi",
 		BusURL:             busURL,
 		RunDir:             tmpDir,
-		Provider:           provider.NewMockProvider(),
+		Provider:           mockpkg.New(),
 		ProviderName:       "mock",
 		Model:              "mock-model",
 		ValidationRegistry: validation.NewRegistry(),
@@ -2171,7 +2171,7 @@ func TestV5PublishEventWithoutNATS(t *testing.T) {
 		Agent:        "lumi",
 		BusURL:       "",
 		RunDir:       tmpDir,
-		Provider:     provider.NewMockProvider(),
+		Provider:     mockpkg.New(),
 		ProviderName: "mock",
 		Model:        "mock-model",
 	}
