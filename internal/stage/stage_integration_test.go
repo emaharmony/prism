@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/emaharmony/prism/internal/event"
-	"github.com/emaharmony/prism/internal/provider"
+	mockpkg "github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/tool"
 )
 
@@ -145,7 +145,7 @@ func TestLLMStage_Validate(t *testing.T) {
 	}{
 		{
 			name:    "valid context",
-			rc:      &RunContext{Provider: provider.NewMockProvider(), Model: "mock-model"},
+			rc:      &RunContext{Provider: mockpkg.New(), Model: "mock-model"},
 			wantErr: false,
 		},
 		{
@@ -155,7 +155,7 @@ func TestLLMStage_Validate(t *testing.T) {
 		},
 		{
 			name:    "missing model",
-			rc:      &RunContext{Provider: provider.NewMockProvider()},
+			rc:      &RunContext{Provider: mockpkg.New()},
 			wantErr: true,
 		},
 	}
@@ -176,7 +176,7 @@ func TestLLMStage_Sync(t *testing.T) {
 		Task:         "say hello",
 		Project:      "prism",
 		Agent:        "lumi",
-		Provider:     provider.NewMockProvider(),
+		Provider:     mockpkg.New(),
 		ProviderName: "mock",
 		Model:        "mock-model",
 		Temperature:  0.2,
@@ -205,7 +205,7 @@ func TestLLMStage_DryRun(t *testing.T) {
 	rc := &RunContext{
 		RunID:        "run_dry_test",
 		Task:         "say hello",
-		Provider:     provider.NewMockProvider(),
+		Provider:     mockpkg.New(),
 		ProviderName: "mock",
 		Model:        "mock-model",
 		Events:       []event.Event{},
@@ -230,7 +230,7 @@ func TestLLMStage_Streaming(t *testing.T) {
 		Task:         "stream hello",
 		Project:      "prism",
 		Agent:        "lumi",
-		Provider:     provider.NewMockProvider(),
+		Provider:     mockpkg.New(),
 		ProviderName: "mock",
 		Model:        "mock-model",
 		Temperature:  0.2,
@@ -389,7 +389,7 @@ func TestFullPipeline_Integration(t *testing.T) {
 		Task:         "integration test task",
 		Project:      "prism",
 		Agent:        "lumi",
-		Provider:     provider.NewMockProvider(),
+		Provider:     mockpkg.New(),
 		ProviderName: "mock",
 		Model:        "mock-model",
 		Temperature:  0.2,
