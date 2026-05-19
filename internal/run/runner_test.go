@@ -1262,7 +1262,7 @@ func startMockMemoryServer(t *testing.T) *mockMemoryServer {
 	mux.HandleFunc("/context/build", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		resp := `{"context": "Test remembrance context for unit test.", "sources": [{"id": "test-doc-1", "category": "test", "tier": "1", "snippet": "test snippet one", "score": 0.95}, {"id": "test-doc-2", "category": "test", "tier": "2", "snippet": "test snippet two", "score": 0.85}]}`
+		resp := `{"query": "test", "project": "", "agent": "", "memories": [{"id": "test-doc-1", "compiled_truth": "Test remembrance context for unit test.", "summary": "test snippet one", "category": "test", "tier": "persist", "score": 0.95}, {"id": "test-doc-2", "compiled_truth": "test snippet two", "summary": "test snippet two", "category": "test", "tier": "active", "score": 0.85}], "entities": [], "open_threads": [], "total_results": 2}`
 		w.Write([]byte(resp))
 	})
 

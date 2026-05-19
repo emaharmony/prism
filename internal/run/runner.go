@@ -241,7 +241,7 @@ func (r *Runner) Run() (*RunResult, error) {
 			"agent":   r.config.Agent,
 		}, evt.ID)
 
-		ctxResp, err := r.memClient.BuildContext(r.config.Task, r.config.Project, r.config.Agent)
+		ctxResp, err := r.memClient.BuildContext(r.config.Task, r.config.Project, r.config.Agent, 10)
 		if err != nil {
 			// Memory failed
 			log.Printf("prism: remembrance context failed: %v", err)
@@ -266,20 +266,38 @@ func (r *Runner) Run() (*RunResult, error) {
 			contextStr = ""
 		} else if ctxResp != nil {
 			// Memory succeeded
-			contextStr = ctxResp.Context
+			// V2 ContextBuildResponse has Context field with compiled text
+			// Build context string from V2 response
+			// Format: each memory's compiled_truth or summary
+			var contextParts []string
+			for _, mem := range ctxResp.Memories {
+				if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
+					contextParts = append(contextParts, ct)
+				} else if s, ok := mem["summary"].(string); ok && s != "" {
+					contextParts = append(contextParts, s)
+				}
+			}
+			// Add entity context
+			for _, ent := range ctxResp.Entities {
+				if ct, ok := ent["compiled_truth"].(string); ok && ct != "" {
+					contextParts = append(contextParts, fmt.Sprintf("[%s] %s", ent["name"], ct))
+				}
+			}
+			contextStr = strings.Join(contextParts, "\n\n")
 			memoryStatus = "injected"
-			log.Printf("prism: remembrance context built (%d sources)", len(ctxResp.Sources))
+			sourcesCount := len(ctxResp.Memories)
+			log.Printf("prism: remembrance context built (%d sources)", sourcesCount)
 
 			// V1 backward compat
 			r.emitWithParent(event.V1EventTypes.MemoryContextBuilt, "prism-cli", map[string]any{
 				"task":          r.config.Task,
-				"sources_count": len(ctxResp.Sources),
+				"sources_count": sourcesCount,
 			}, evt.ID)
 
 			// V2 context.injected
 			r.emitWithParent(event.V2EventTypes.ContextInjected, "prism-cli", map[string]any{
 				"task":          r.config.Task,
-				"sources_count": len(ctxResp.Sources),
+				"sources_count": sourcesCount,
 			}, evt.ID)
 		} else {
 			// No context available (404)
