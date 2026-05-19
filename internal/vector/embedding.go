@@ -65,11 +65,12 @@ func deterministicVector(text string, dimension int) []float64 {
 		hashBytes = append(hashBytes, h.Sum(nil)...)
 	}
 
-	// Convert bytes to float64 values
+	// Convert bytes to float64 values spanning both positive and negative range
 	var norm float64
 	for i := 0; i < dimension; i++ {
 		bits := binary.LittleEndian.Uint64(hashBytes[i*8 : (i+1)*8])
-		val := float64(int64(bits%1000)) / 1000.0 // Range [-0.5, 0.5]
+		// Map to [-0.5, 0.5] for better vector space coverage
+		val := float64(int64(bits%1001)-500) / 1000.0
 		vector[i] = val
 		norm += val * val
 	}
