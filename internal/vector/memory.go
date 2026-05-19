@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -145,5 +146,5 @@ type DimensionError struct {
 }
 
 func (e *DimensionError) Error() string {
-	return "vector dimension mismatch: expected %d, got %d"
+	return fmt.Sprintf("vector dimension mismatch: expected %d, got %d", e.Expected, e.Got)
 }

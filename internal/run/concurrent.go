@@ -8,7 +8,6 @@ package run
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 )
 
@@ -19,7 +18,6 @@ type RunPool struct {
 	sem           chan struct{}
 	running       atomic.Int32
 	total         atomic.Int32
-	mu            sync.Mutex
 }
 
 // NewRunPool creates a new run pool with the given maximum concurrency.
