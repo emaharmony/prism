@@ -44,7 +44,7 @@ func New(baseURL string) *Provider {
 	}
 	return &Provider{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
-		HTTPClient: &http.Client{Timeout: DefaultHTTPTimeout},
+		HTTPClient: &http.Client{Timeout: DefaultHTTPTimeout, Transport: provider.DefaultTransport},
 	}
 }
 

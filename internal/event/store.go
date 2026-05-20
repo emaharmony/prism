@@ -89,6 +89,9 @@ func NewSQLiteEventStore(dbPath string) (*SQLiteEventStore, error) {
 	CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id);
 	CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 	CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_events_source ON events(run_id, type);
+	CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id);
+	CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
 	`
 	if _, err := db.Exec(createTable); err != nil {
 		db.Close()
@@ -187,6 +190,9 @@ func (s *SQLiteEventStore) Query(ctx context.Context, filter EventFilter) ([]Eve
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
+	}
+	if limit > 10000 {
+		limit = 10000 // cap at 10k to prevent unbounded queries
 	}
 	query += " LIMIT ?"
 	args = append(args, limit)
