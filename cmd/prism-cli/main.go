@@ -465,10 +465,32 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown workflow subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "cost":
+		costCmd.Parse(os.Args[2:])
+		if costCmd.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "Error: run ID required")
+			fmt.Fprintln(os.Stderr, "Usage: prism cost <run_id>")
+			os.Exit(1)
+		}
+		if err := runCostCommand(costCmd.Args()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "trace":
+		traceCmd.Parse(os.Args[2:])
+		if traceCmd.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "Error: run ID required")
+			fmt.Fprintln(os.Stderr, "Usage: prism trace <run_id>")
+			os.Exit(1)
+		}
+		if err := runTraceCommand(traceCmd.Args()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "search":
 		searchCmd(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.15.0")
+		fmt.Println("prism v0.17.0")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -493,6 +515,8 @@ func printUsage() {
 	fmt.Println("  prism dashboard [--port 8080]                 Start local dashboard")
 	fmt.Println("  prism agent list                              List registered agents")
 	fmt.Println("  prism agent show <name>                       Show agent details")
+	fmt.Println("  prism cost <run_id>                        Show token usage and cost report")
+	fmt.Println("  prism trace <run_id>                       Show event trace (causal DAG)")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println("  prism search --query <text> [options]         Search vector store")
 	fmt.Println()

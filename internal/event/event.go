@@ -137,13 +137,27 @@ type Event struct {
 
 // EventMetadata tracks runtime context, LLM provenance, and cost.
 type EventMetadata struct {
-	RunID     string `json:"run_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	Project   string `json:"project,omitempty"`
-	Agent     string `json:"agent,omitempty"`
-	Model     string `json:"model,omitempty"`
-	TokenCost int    `json:"token_cost,omitempty"`
-	LatencyMs int    `json:"latency_ms,omitempty"`
+	RunID       string    `json:"run_id,omitempty"`
+	SessionID   string    `json:"session_id,omitempty"`
+	Project     string    `json:"project,omitempty"`
+	Agent       string    `json:"agent,omitempty"`
+	Model       string    `json:"model,omitempty"`
+	TokenCost   int       `json:"token_cost,omitempty"`     // V1: total tokens (deprecated, use TokenUsage)
+	LatencyMs   int       `json:"latency_ms,omitempty"`    // V1: LLM latency
+
+	// V16: Enriched metadata
+	DurationMs  int64      `json:"duration_ms,omitempty"`   // Wall-clock duration
+	Outcome     string     `json:"outcome,omitempty"`        // "success" | "failure" | "timeout" | "skipped"
+	TokenUsage  *TokenUsage `json:"token_usage,omitempty"` // Detailed token breakdown
+}
+
+// TokenUsage provides a detailed breakdown of LLM token consumption.
+// Replaces the flat TokenCost (int) field with structured data.
+type TokenUsage struct {
+	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	TotalTokens      int     `json:"total_tokens,omitempty"`
+	EstimatedCostUsd float64 `json:"estimated_cost_usd,omitempty"` // in microdollars
 }
 
 // NewID generates a unique, sortable event ID using ULID.
@@ -241,6 +255,17 @@ var V5EventTypes = struct {
 	ReviewStarted:       "prism.review.started",
 	ReviewCompleted:     "prism.review.completed",
 	ReviewFailed:        "prism.review.failed",
+}
+
+// V16EventTypes defines the event types introduced in V16 (Intelligence Arc).
+// Cost tracking and enriched metadata events.
+var V16EventTypes = struct {
+	// Cost tracking
+	CostTracked  string
+	CostReported string
+}{
+	CostTracked:  "prism.cost.tracked",
+	CostReported: "prism.cost.reported",
 }
 
 // V4EventTypes defines the event types introduced in V4 (approval-gated mutations).
