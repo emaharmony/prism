@@ -44,7 +44,7 @@ Every meaningful action in Prism becomes a **canonical event** — an immutable,
 
 ## Event Namespaces
 
-Prism events are organized into **13 namespaces**, each representing a domain:
+Prism events are organized into **14 namespaces**, each representing a domain:
 
 | Namespace | Domain | Since |
 |-----------|--------|-------|
@@ -62,6 +62,7 @@ Prism events are organized into **13 namespaces**, each representing a domain:
 | `prism.adapter` | Adapter lifecycle | V9 |
 | `prism.projection` | State projections | V10 |
 | `prism.workflow` | Workflow orchestration | V7 |
+| `prism.cost` | Cost tracking | V16 |
 | `prism.system` | System health | V1 |
 | `prism.persistence` | WAL checkpoint | V14d |
 | `prism.output` | Output artifacts | V2 |
@@ -282,6 +283,13 @@ V7 workflow runtime. Named workflows compose Prism capabilities.
 | `prism.persistence.completed` | WAL checkpoint completed | `run_id`, `stage`, `checkpoint_id` |
 | `prism.output.written` | Output artifact written | `path`, `size_bytes` |
 
+### Cost Tracking (`prism.cost.*`) — V16
+
+| Event | When | Key Payload |
+|-------|------|-------------|
+| `prism.cost.tracked` | Token usage recorded for an LLM call | `provider`, `model`, `prompt_tokens`, `completion_tokens`, `estimated_cost_usd` |
+| `prism.cost.reported` | Cost report generated for a run | `run_id`, `total_tokens`, `estimated_cost_usd` |
+
 ---
 
 ## Causal Chains
@@ -379,6 +387,8 @@ prism dashboard
 | V9 | `adapter.*` |
 | V10 | `projection.*` |
 | V14d | `persistence.completed` |
+| V16 | `cost.tracked`, `cost.reported`, enriched `EventMetadata` (`duration_ms`, `outcome`, `token_usage`) |
+| V17 | HNSW vector index, connection pooling, event store indexes |
 
 All V1 events remain backward compatible. Newer versions add events alongside V1, never replacing them.
 
