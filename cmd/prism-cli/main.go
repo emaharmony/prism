@@ -88,6 +88,12 @@ func main() {
 	fromConfig := runCmd.Bool("from-config", false, "Load provider configuration from OpenClaw config")
 	configPath := runCmd.String("config", "", "Path to openclaw.json (default: ~/.openclaw/openclaw.json)")
 
+	// Context injection flags (V19)
+	runContextFlag := runCmd.String("context", "", "Named contexts to inject (comma-separated: soul,agents,user,heartbeat,memory)")
+	runContextAuto := runCmd.Bool("context-auto", false, "Auto-discover docs matching the task description")
+	runContextFile := runCmd.String("context-file", "", "Additional context file to inject")
+	runWorkspaceRoot := runCmd.String("workspace-root", "", "Workspace root directory (default: ~/.openclaw/workspace)")
+
 	// ── Subcommand: health ──────────────────────────────────────────
 	healthCmd := flag.NewFlagSet("health", flag.ExitOnError)
 	healthBusURL := healthCmd.String("bus-url", "nats://localhost:4222", "NATS bus URL")
@@ -166,6 +172,12 @@ func main() {
 				os.Exit(1)
 			}
 		}
+
+		// V19 context flags (will be wired into runConfig in a future change)
+		_ = *runContextFlag
+		_ = *runContextAuto
+		_ = *runContextFile
+		_ = *runWorkspaceRoot
 
 		executeRun(runConfig{
 			Task:           *taskFlag,
@@ -494,6 +506,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown workflow subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "context":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: context subcommand required (show)")
+			fmt.Fprintln(os.Stderr, "Usage: prism context show [--context soul,agents] [--auto] [--task <desc>]")
+			os.Exit(1)
+		}
+		if err := runContextCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "cost":
 		costCmd.Parse(os.Args[2:])
 		if costCmd.NArg() < 1 {
@@ -544,6 +566,7 @@ func printUsage() {
 	fmt.Println("  prism dashboard [--port 8080]                 Start local dashboard")
 	fmt.Println("  prism agent list                              List registered agents")
 	fmt.Println("  prism agent show <name>                       Show agent details")
+	fmt.Println("  prism context show [--context soul,agents]   Show context that would be injected")
 	fmt.Println("  prism cost <run_id>                        Show token usage and cost report")
 	fmt.Println("  prism trace <run_id>                       Show event trace (causal DAG)")
 	fmt.Println("  prism version                                 Print version")

@@ -73,7 +73,6 @@ var Schemas = map[string]Schema{
 
 	// Context (V2)
 	"prism.context.requested": {Required: []string{"task"}, Optional: []string{"project"}},
-	"prism.context.injected":  {Required: []string{"context_size"}, Optional: []string{"source"}},
 	"prism.context.failed":    {Required: []string{"error"}, Optional: []string{}},
 
 	// Memory (V1)
@@ -107,6 +106,10 @@ var Schemas = map[string]Schema{
 	// Cost (V16)
 	"prism.cost.tracked":  {Required: []string{"provider", "model"}, Optional: []string{"prompt_tokens", "completion_tokens", "estimated_cost_usd"}},
 	"prism.cost.reported": {Required: []string{"run_id"}, Optional: []string{"total_tokens", "estimated_cost_usd"}},
+
+	// Context injection (V19)
+	"prism.context.file_read":  {Required: []string{"file", "source"}, Optional: []string{"size_bytes", "estimated_tokens"}},
+	"prism.context.injected":   {Required: []string{"run_id"}, Optional: []string{"files", "total_tokens", "truncated", "truncation_applied"}},
 
 	// System
 	"prism.system.health":      {Required: []string{"status"}, Optional: []string{"version", "uptime"}},
