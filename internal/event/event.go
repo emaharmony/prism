@@ -268,6 +268,17 @@ var V16EventTypes = struct {
 	CostReported: "prism.cost.reported",
 }
 
+// V19EventTypes defines the event types introduced in V19 (Smart Context Injection).
+// Workspace context reading and injection events.
+var V19EventTypes = struct {
+	// Context injection
+	ContextFileRead  string
+	ContextInjected   string
+}{
+	ContextFileRead:  "prism.context.file_read",
+	ContextInjected:  "prism.context.injected",
+}
+
 // V4EventTypes defines the event types introduced in V4 (approval-gated mutations).
 var V4EventTypes = struct {
 	// Approval lifecycle

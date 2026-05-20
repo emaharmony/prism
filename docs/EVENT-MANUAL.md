@@ -44,7 +44,7 @@ Every meaningful action in Prism becomes a **canonical event** — an immutable,
 
 ## Event Namespaces
 
-Prism events are organized into **14 namespaces**, each representing a domain:
+Prism events are organized into **15 namespaces**, each representing a domain:
 
 | Namespace | Domain | Since |
 |-----------|--------|-------|
@@ -53,7 +53,7 @@ Prism events are organized into **14 namespaces**, each representing a domain:
 | `prism.tool` | Tool execution | V1/V3 |
 | `prism.memory` | Memory context | V1 |
 | `prism.llm` | LLM calls | V2 |
-| `prism.context` | Context injection | V2 |
+| `prism.context` | Context injection | 14 (V2 had `prism.context.requested/injected/failed`, V19 adds `prism.context.file_read` and redefines `prism.context.injected` with richer payload) |
 | `prism.approval` | Approval gates | V4 |
 | `prism.mutation` | File mutations | V4 |
 | `prism.validation` | Validation profiles | V5 |
@@ -63,6 +63,7 @@ Prism events are organized into **14 namespaces**, each representing a domain:
 | `prism.projection` | State projections | V10 |
 | `prism.workflow` | Workflow orchestration | V7 |
 | `prism.cost` | Cost tracking | V16 |
+| `prism.context` | Context injection | V19 |
 | `prism.system` | System health | V1 |
 | `prism.persistence` | WAL checkpoint | V14d |
 | `prism.output` | Output artifacts | V2 |
@@ -290,6 +291,13 @@ V7 workflow runtime. Named workflows compose Prism capabilities.
 | `prism.cost.tracked` | Token usage recorded for an LLM call | `provider`, `model`, `prompt_tokens`, `completion_tokens`, `estimated_cost_usd` |
 | `prism.cost.reported` | Cost report generated for a run | `run_id`, `total_tokens`, `estimated_cost_usd` |
 
+### Context Injection (`prism.context.*`) — V19
+
+| Event | When | Key Payload |
+|-------|------|-------------|
+| `prism.context.file_read` | Workspace file read for context injection | `file`, `source`, `size_bytes`, `estimated_tokens` |
+| `prism.context.injected` | Context injection complete for a run | `run_id`, `files`, `total_tokens`, `truncated`, `truncation_applied` |
+
 ---
 
 ## Causal Chains
@@ -389,6 +397,8 @@ prism dashboard
 | V14d | `persistence.completed` |
 | V16 | `cost.tracked`, `cost.reported`, enriched `EventMetadata` (`duration_ms`, `outcome`, `token_usage`) |
 | V17 | HNSW vector index, connection pooling, event store indexes |
+| V18 | OpenClaw config transfer (`--from-config`), ProviderRegistry, model metadata |
+| V19 | Smart context injection (pipeline stage, token budgeting, auto-discovery, `prism context show`) |
 
 All V1 events remain backward compatible. Newer versions add events alongside V1, never replacing them.
 
