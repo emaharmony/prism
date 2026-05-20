@@ -54,6 +54,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/emaharmony/prism/internal/config"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/provider/anthropic"
@@ -83,6 +84,10 @@ func main() {
 	dryRunPrompt := runCmd.Bool("dry-run-prompt", false, "Build prompt and artifacts but skip LLM call")
 	ollamaURL := runCmd.String("ollama-url", "http://localhost:11434", "Ollama base URL")
 
+	// OpenClaw config flags (V18)
+	fromConfig := runCmd.Bool("from-config", false, "Load provider configuration from OpenClaw config")
+	configPath := runCmd.String("config", "", "Path to openclaw.json (default: ~/.openclaw/openclaw.json)")
+
 	// ── Subcommand: health ──────────────────────────────────────────
 	healthCmd := flag.NewFlagSet("health", flag.ExitOnError)
 	healthBusURL := healthCmd.String("bus-url", "nats://localhost:4222", "NATS bus URL")
@@ -97,45 +102,69 @@ func main() {
 	case "run":
 		runCmd.Parse(os.Args[2:])
 
-		// Resolve provider
+		// Resolve provider — either from OpenClaw config or manual flags
 		var p provider.Provider
 		var providerName string
 		model := *modelFlag
+		var registry *provider.ProviderRegistry
 
-		switch *providerFlag {
-		case "mock":
-			p = mock.New()
-			providerName = "mock"
-	case "ollama":
-			p = ollama.New(*ollamaURL)
-			providerName = "ollama"
-		case "openai":
-			apiKey := os.Getenv("OPENAI_API_KEY")
-			if apiKey == "" {
-				fmt.Fprintln(os.Stderr, "Error: OPENAI_API_KEY environment variable required")
+		if *fromConfig {
+			cfgFile := config.FindOpenClawConfig(*configPath)
+			var err error
+			registry, err = config.LoadFromOpenClaw(cfgFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading OpenClaw config: %v\n", err)
 				os.Exit(1)
 			}
-			p = openai.New(apiKey)
-			providerName = "openai"
-		case "anthropic":
-			apiKey := os.Getenv("ANTHROPIC_API_KEY")
-			if apiKey == "" {
-				fmt.Fprintln(os.Stderr, "Error: ANTHROPIC_API_KEY environment variable required")
+
+			if registry.HasModel(model) {
+				p, err = registry.Get(model)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				info, _ := registry.ModelInfo(model)
+				providerName = info.ProviderName
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: model %q not found in OpenClaw config. Available: %v\n", model, registry.ListModels())
 				os.Exit(1)
 			}
-			p = anthropic.New(apiKey)
-			providerName = "anthropic"
-		case "gemini":
-			apiKey := os.Getenv("GEMINI_API_KEY")
-			if apiKey == "" {
-				fmt.Fprintln(os.Stderr, "Error: GEMINI_API_KEY environment variable required")
+		} else {
+			switch *providerFlag {
+			case "mock":
+				p = mock.New()
+				providerName = "mock"
+			case "ollama":
+				p = ollama.New(*ollamaURL)
+				providerName = "ollama"
+			case "openai":
+				apiKey := os.Getenv("OPENAI_API_KEY")
+				if apiKey == "" {
+					fmt.Fprintln(os.Stderr, "Error: OPENAI_API_KEY environment variable required")
+					os.Exit(1)
+				}
+				p = openai.New(apiKey)
+				providerName = "openai"
+			case "anthropic":
+				apiKey := os.Getenv("ANTHROPIC_API_KEY")
+				if apiKey == "" {
+					fmt.Fprintln(os.Stderr, "Error: ANTHROPIC_API_KEY environment variable required")
+					os.Exit(1)
+				}
+				p = anthropic.New(apiKey)
+				providerName = "anthropic"
+			case "gemini":
+				apiKey := os.Getenv("GEMINI_API_KEY")
+				if apiKey == "" {
+					fmt.Fprintln(os.Stderr, "Error: GEMINI_API_KEY environment variable required")
+					os.Exit(1)
+				}
+				p = gemini.New(apiKey)
+				providerName = "gemini"
+			default:
+				fmt.Fprintf(os.Stderr, "Error: unknown provider '%s' (expected mock, ollama, openai, anthropic, or gemini)\n", *providerFlag)
 				os.Exit(1)
 			}
-			p = gemini.New(apiKey)
-			providerName = "gemini"
-		default:
-			fmt.Fprintf(os.Stderr, "Error: unknown provider '%s' (expected mock, ollama, openai, anthropic, or gemini)\n", *providerFlag)
-			os.Exit(1)
 		}
 
 		executeRun(runConfig{
