@@ -45,7 +45,8 @@ func New(apiKey string) *Provider {
 		APIKey:  apiKey,
 		BaseURL: DefaultBaseURL,
 		HTTPClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout:   120 * time.Second,
+			Transport: provider.DefaultTransport,
 		},
 		TierVal: provider.TierPaid,
 	}
@@ -56,7 +57,7 @@ func NewWithBaseURL(apiKey, baseURL string) *Provider {
 	return &Provider{
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
-		HTTPClient: &http.Client{Timeout: 120 * time.Second},
+		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: provider.DefaultTransport},
 		TierVal:    provider.TierPaid,
 	}
 }
