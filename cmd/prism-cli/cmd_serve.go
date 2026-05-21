@@ -525,8 +525,7 @@ func createGeminiProvider(model string) (provider.Provider, error) {
 
 // providerModelIDs returns all registered model IDs (for logging).
 func providerModelIDs(reg *provider.ProviderRegistry) []string {
-	// ProviderRegistry doesn't expose a list method yet, so we use agent configs
-	return nil
+	return reg.ListModels()
 }
 
 // startHealthServer starts a simple HTTP server for health checks.
