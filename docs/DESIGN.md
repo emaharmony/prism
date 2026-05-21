@@ -1,285 +1,340 @@
-# Prism — Event-Native AI Agent Platform
+# Prism — System Design
 
-## Design Document v0.1
-**Date:** 2026-05-07
-**Authors:** Ema + Lumi
-**Status:** Draft — Pre-Implementation
+**Last Updated:** 2026-05-21
+**Based On:** PRISM-VISION.md v2 (Ema + Lumi aligned)
 
 ---
 
-## Vision
+## System Overview
 
-Prism is the spiritual successor to OpenClaw, built event-native from the ground up. Where OpenClaw is a request-response platform with hooks bolted on, Prism treats **events as the core primitive** — every action, decision, state change, and communication flows through an event bus that anything can subscribe to.
+Prism is an event-native agentic environment. Separate services communicate through a NATS event bus. Events trigger registered actions (webhook-style). Agents are first-class bus citizens with their own event namespaces. The orchestrator routes, delegates, and tracks tasks end-to-end.
 
-**One event in → spectrum of reactions out.**
+---
 
-## Core Metaphor
-
-A prism refracts white light into its component colors. Prism (the platform) refracts a single event into parallel, specialized agent reactions. Lumi (the light) flows through the prism (the event bus) and becomes a spectrum (fan-out to specialized agents).
+## Service Architecture
 
 ```
-Event → [Prism Bus] → Agent A (fire element)
-                      → Agent B (water element)
-                      → Agent C (audit logger)
-                      → Memory Store
-                      → Notification Channel
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Prism Runtime                                │
+│                                                                   │
+│  ┌───────────────────────────────────────────────────────────────┐ │
+│  │                    Orchestrator (Go)                          │ │
+│  │                                                              │ │
+│  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │ │
+│  │  │  Session    │  │   Agent      │  │   Task           │   │ │
+│  │  │  Manager    │  │   Router     │  │   Tracker         │   │ │
+│  │  └──────┬──────┘  └──────┬───────┘  └────────┬─────────┘   │ │
+│  │         │                │                    │              │ │
+│  └─────────┼────────────────┼────────────────────┼─────────────┘ │
+│            │                │                    │               │
+│  ┌─────────▼────────────────▼────────────────────▼─────────────┐ │
+│  │                    Event Bus (NATS JetStream)                │ │
+│  │                                                             │ │
+│  │  Namespaces:                                                │ │
+│  │    lumi.*          — Lumi agent events                     │ │
+│  │    mango.*         — Mango agent events                    │ │
+│  │    remembrance.*   — Memory events                         │ │
+│  │    prism.*         — System events (cost, policy, etc.)    │ │
+│  │    adapter.discord.* — Discord adapter events              │ │
+│  │    adapter.telegram.* — Telegram adapter events            │ │
+│  │    cron.*          — Scheduled task events                  │ │
+│  │                                                             │ │
+│  │  Registered Actions:                                        │ │
+│  │    lumi.agent.output     → remembrance.gate.extract        │ │
+│  │    mango.agent.output    → remembrance.gate.extract        │ │
+│  │    *.tool.completed      → prism.cost.track                │ │
+│  │    *.approval.requested  → adapter.discord.notify          │ │
+│  │    cron.triggered        → orchestrator.spawn_agent         │ │
+│  │                                                             │ │
+│  └─────────────────────────┬───────────────────────────────────┘ │
+│                            │                                     │
+│  ┌─────────────┬───────────┴───────────┬──────────────────┐    │
+│  ▼             ▼                       ▼                  ▼    │
+│  ┌─────────┐  ┌──────────┐  ┌──────────────┐  ┌─────────────┐ │
+│  │ Lumi    │  │  Mango   │  │ Remembrance  │  │   Adapters   │ │
+│  │ Agent   │  │  Agent   │  │  (Python)    │  │  (Discord,   │ │
+│  │         │  │          │  │              │  │  Telegram,   │ │
+│  │ - Plan  │  │  - Code  │  │  - Gate     │  │  Webchat,     │ │
+│  │ - Route  │  │  - Test │  │  - Extract  │  │  HTTP)       │ │
+│  │ - Review │  │  - Report│  │  - Persist  │  │              │ │
+│  │ - Report │  │          │  │  - Recall   │  │              │ │
+│  └────┬─────┘  └────┬─────┘  └──────┬──────┘  └──────┬──────┘ │
+│       │              │               │                │        │
+│  ┌────▼──────────────▼───────────────▼────────────────▼────┐   │
+│  │                    Core Services (Go)                   │   │
+│  │                                                        │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   │
+│  │  │  Policy  │ │  Cost    │ │ Context  │ │ Approval │ │   │
+│  │  │  Engine  │ │ Tracking │ │ Injection│ │  Gates   │ │   │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   │
+│  │  │   Tool   │ │ Workflow │ │ Projections│ │  Vector  │ │   │
+│  │  │ Executor │ │  Engine  │ │           │ │  Search  │ │   │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ │   │
+│  └────────────────────────────────────────────────────────┘   │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐   │
+│  │                    Storage Layer                        │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────────┐  │   │
+│  │  │  SQLite  │ │ events   │ │ Remembrance DB       │  │   │
+│  │  │ (events, │ │ .jsonl   │ │ (entities, facts,    │  │   │
+│  │  │  runs,   │ │ (append- │ │  aliases, vectors)    │  │   │
+│  │  │  sessions│ │  only    │ │                      │  │   │
+│  │  │  costs)  │ │  log)    │ │                      │  │   │
+│  │  └──────────┘ └──────────┘ └──────────────────────┘  │   │
+│  └────────────────────────────────────────────────────────┘   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Architecture Decisions
+---
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Core runtime | Go | Goroutines = natural actor model, concurrency primitives, single binary, fast |
-| Agent SDK | Python | LLM ecosystem lives in Python (LangGraph, AutoGen, CrewAI) |
-| Event backbone | NATS (JetStream) | Built-in persistence, replay, consumer groups, wildcards, Go-native |
-| Migration | OpenClaw config import | Read `openclaw.json` → emit Prism config |
-| License | Source-available | All-rights-reserved, permission-required. Future licensing may be evaluated |
-| State storage | SQLite (local) / PostgreSQL (server) | Event sourcing + projection tables |
+## Event Namespace Design
 
-## System Architecture
+### Per-Agent Namespaces
+
+Each agent publishes events under its own namespace. This is a fundamental design shift from V1-V19 where all events used `prism.*`.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   Prism Runtime (Go)              │
-│                                                   │
-│  ┌─────────┐  ┌─────────┐  ┌─────────────────┐  │
-│  │ Channel  │  │  Cron    │  │  ACP / A2A      │  │
-│  │ Adapters │  │ Scheduler│  │  Gateway        │  │
-│  └────┬─────┘  └────┬────┘  └───────┬─────────┘  │
-│       │              │               │            │
-│       ▼              ▼               ▼            │
-│  ┌─────────────────────────────────────────────┐ │
-│  │            Event Bus (NATS JetStream)         │ │
-│  │                                              │ │
-│  │  Subjects:                                   │ │
-│  │    prism.agent.*      — agent lifecycle      │ │
-│  │    prism.tool.*       — tool invocations     │ │
-│  │    prism.memory.*     — memory operations    │ │
-│  │    prism.channel.*    — channel messages      │ │
-│  │    prism.cron.*       — scheduled triggers   │ │
-│  │    prism.session.*    — session lifecycle     │ │
-│  │    prism.decision.*   — agent decisions       │ │
-│  └──────────┬──────────────┬─────────────────────┘ │
-│             │              │                        │
-│    ┌────────▼──────┐  ┌───▼──────────┐             │
-│    │ Agent Runtime │  │ Memory Store  │             │
-│    │ (Go + Python) │  │ (Event Sourced)│            │
-│    └───────────────┘  └──────────────┘              │
-│                                                     │
-│    ┌───────────────┐  ┌──────────────┐              │
-│    │ Tool Registry │  │ State Mgr    │              │
-│    └───────────────┘  └──────────────┘              │
-└─────────────────────────────────────────────────────┘
+lumi.agent.started          → Lumi begins reasoning
+lumi.agent.output           → Lumi produces output
+lumi.agent.completed       → Lumi finishes
+lumi.agent.failed           → Lumi encounters error
+lumi.llm.requested          → Lumi calls an LLM
+lumi.llm.completed          → LLM call completes
+lumi.tool.requested         → Lumi requests a tool
+lumi.tool.completed         → Tool call completes
+lumi.context.injected       → Context injected into Lumi
+
+mango.agent.started          → Mango begins coding
+mango.agent.output           → Mango produces output
+mango.agent.completed       → Mango finishes
+mango.tool.completed         → Mango finishes a tool call
+
+remembrance.memory.stored    → Context saved
+remembrance.memory.recalled  → Context retrieved
+remembrance.gate.extract    → Memory extraction triggered
 ```
 
-## Event Schema
+### System Namespaces (shared)
 
-Every event in Prism follows a canonical schema:
+```
+prism.task.created           → Task created
+prism.task.completed         → Task finished
+prism.cost.tracked           → Token cost recorded
+prism.cost.reported          → Cost report generated
+prism.policy.evaluated        → Policy decision made
+prism.approval.requested     → Approval needed
+prism.channel.received       → Message from Discord/Telegram
+prism.channel.sent           → Message sent to Discord/Telegram
+prism.session.created        → New session started
+prism.session.ended          → Session closed
+prism.cron.triggered         → Scheduled task fired
+```
 
-```json
-{
-  "id": "evt_01HXXXXXXXXXX",
-  "type": "prism.agent.decision",
-  "source": "lumi",
-  "timestamp": "2026-05-07T22:52:00Z",
-  "correlation_id": "corr_01HXXXXXXXXXX",
-  "parent_id": "evt_01HYYYYYYYYYY",
-  "payload": { },
-  "metadata": {
-    "model": "glm-5.1:cloud",
-    "prompt_hash": "sha256:abc123",
-    "token_cost": 4280,
-    "session_id": "sess_01HZZZZZZZZZZ",
-    "latency_ms": 3200
-  }
+### Registered Actions
+
+Events can trigger actions automatically — this is the webhook-style behavior:
+
+```yaml
+# Example registered actions
+- trigger: lumi.agent.output
+  action: remembrance.gate.extract    # Save Lumi's output to memory
+
+- trigger: mango.agent.output
+  action: remembrance.gate.extract    # Save Mango's output to memory
+
+- trigger: "*.tool.completed"
+  action: prism.cost.track           # Track token costs
+
+- trigger: "*.approval.requested"
+  action: adapter.discord.notify     # Send approval request to Discord
+
+- trigger: cron.triggered
+  action: orchestrator.spawn_agent    # Start an agent for scheduled task
+```
+
+---
+
+## Session Manager Design
+
+Sessions track conversations across messages, channels, and time.
+
+```
+Session {
+    id:           string        // ULID, unique per session
+    agent:        string        // Which agent (lumi, mango, etc.)
+    channel:      string        // discord, telegram, webchat
+    channel_id:   string        // Discord channel ID, etc.
+    user_id:      string        // Who's talking
+    started_at:   timestamp     // When this session started
+    last_active:  timestamp     // Last user message
+    context:      []string      // Recent message IDs (for compaction)
+    remembrance:  string        // Remembrance context ID
 }
 ```
 
-Fields:
-- `id` — ULID, globally unique, time-sortable
-- `type` — namespaced event type (dot-separated)
-- `source` — which agent/component produced this
-- `timestamp` — ISO 8601 UTC
-- `correlation_id` — links all events in a single workflow/request
-- `parent_id` — direct causal parent (event sourcing chain)
-- `payload` — event-specific data
-- `metadata` — LLM provenance, cost tracking, session context
+### Session Lifecycle
 
-## Event Types (Subject Tree)
+1. **Created:** First message from a user creates a session
+2. **Active:** Messages flow in and out, context grows
+3. **Compaction:** When context exceeds budget, Remembrance summarizes older messages
+4. **Idle reset:** After N minutes of inactivity, session resets (configurable)
+5. **Daily reset:** At 4am local time, new session starts fresh
+6. **Ended:** User types `/new` or session expires
 
-```
-prism.agent.spawned        — agent instance created
-prism.agent.decision       — agent made a reasoning decision
-prism.agent.output         — agent produced output for user
-prism.agent.error         — agent encountered error
-prism.agent.completed      — agent finished its task
+### Session → Remembrance Bridge
 
-prism.tool.called          — tool invocation started
-prism.tool.result          — tool returned result
-prism.tool.error          — tool invocation failed
-
-prism.memory.stored        — memory entry written
-prism.memory.retrieved     — memory entry read
-prism.memory.consolidated  — memory compaction ran
-
-prism.channel.received     — message arrived from channel (Discord, Signal, etc.)
-prism.channel.sent         — message sent to channel
-
-prism.cron.triggered       — scheduled job fired
-prism.cron.completed       — scheduled job finished
-
-prism.session.created      — session started
-prism.session.ended        — session closed
-
-prism.state.changed        — any state mutation (CQRS write side)
-```
-
-## Core Components
-
-### 1. Event Bus (NATS JetStream)
-The backbone. Every component publishes to and subscribes from the bus.
-
-Features used:
-- **Consumer groups** — parallel fan-out (multiple agents subscribe to same event independently)
-- **Durable consumers** — events persist until acknowledged (guaranteed delivery)
-- **Replay** — new consumers can replay from beginning (event sourcing, bootstrapping)
-- **Wildcards** — `prism.agent.*` subscribes to all agent events
-- **Backpressure** — push or pull delivery, rate limits per consumer
-
-### 2. Agent Runtime
-Go-managed goroutines that host agent instances. Each agent:
-- Subscribes to event subjects matching its capabilities
-- Processes events through LLM reasoning
-- Emits new events (decisions, outputs, tool calls)
-- Reports health and latency via heartbeat events
-
-Python agents communicate via gRPC to the Go runtime:
-```
-Python SDK → gRPC → Go Agent Runtime → Event Bus
-```
-
-### 3. Memory Store (Event-Sourced)
-Not a flat file system. An append-only event log with projection tables.
-
-- **Event log** — every `prism.memory.*` event, immutable, replayable
-- **Projections** — materialized views for fast queries (current state, search index, vector index)
-- **Consolidation** — background process that compacts old events into summaries
-- **Vector index** — embedding-based semantic search over memory events (future: pluggable vector DB)
-
-### 4. Channel Adapters
-Each channel (Discord, Telegram, Signal, WhatsApp, webchat) is an adapter that:
-- Subscribes to `prism.channel.received` for its channel type
-- Publishes `prism.channel.sent` when the agent responds
-- Translates between channel-specific formats and Prism's canonical event schema
-
-### 5. Tool Registry
-Tools register themselves by publishing a `prism.tool.registered` event with their schema. Agents discover tools by subscribing to tool registration events or querying the tool registry projection.
-
-Tool execution flow:
-1. Agent emits `prism.tool.called` with tool name + args
-2. Tool handler subscribes to `prism.tool.called.{tool_name}`
-3. Tool executes and emits `prism.tool.result` or `prism.tool.error`
-4. Correlation ID links the call to its result
-
-### 6. Cron Scheduler
-Schedules are just time-based event producers:
-1. Cron config stored as a persistent consumer with a time trigger
-2. When time fires, emits `prism.cron.triggered` with job payload
-3. Target agent subscribes to `prism.cron.triggered.{job_name}`
-4. On completion, emits `prism.cron.completed`
-
-### 7. State Manager (CQRS)
-Commands (write) go through events. Queries (read) go through projections.
-
-- **Write path:** Component emits `prism.state.changed` → event log → projection updated
-- **Read path:** Component queries projection (SQLite/Postgres) → fast response
-- Projections are rebuilt by replaying the event log if corrupted
-
-## Python SDK
-
-```python
-import prism
-
-# Subscribe to events
-@prism.on("prism.channel.received.discord")
-async def handle_discord_message(event):
-    response = await agent.reason(event.payload["text"])
-    prism.emit("prism.channel.sent", {
-        "channel": "discord",
-        "text": response,
-        "correlation_id": event.correlation_id
-    })
-
-# Emit events
-prism.emit("prism.agent.decision", {
-    "reasoning": "User needs deployment help",
-    "action": "spawn_coder",
-    "confidence": 0.92
-})
-
-# Use tools (emits prism.tool.called, waits for prism.tool.result)
-result = await prism.tool("github.create_issue", {
-    "repo": "emaharmony/prism",
-    "title": "Design event schema"
-})
-```
-
-## OpenClaw Migration Tool
-
-A CLI command that reads OpenClaw config and emits Prism config:
-
-```bash
-prism migrate --from-openclaw ~/.openclaw/openclaw.json
-```
-
-Mapping:
-| OpenClaw | Prism |
-|----------|-------|
-| `channels.discord` | Channel adapter: `prism.channel.received.discord` |
-| `session.dmScope` | Session config: `prism.session.*` |
-| `hooks.internal` | Event subscriptions: `prism.agent.*` → handler |
-| `plugins.entries` | Tool registrations: `prism.tool.registered.*` |
-| `gateway.bind` | Runtime config: host/port |
-| `models.*` | LLM provider config in agent definitions |
-| Memory DB (`MEMORY.md`) | Import into event log as `prism.memory.stored` events |
-| Cron jobs | `prism.cron.triggered.*` with schedule config |
-| Sub-agent spawns | `prism.agent.spawned` with parent correlation |
-
-## Monetization Model (Future Evaluation)
-
-| Tier | What's Included | Price |
-|------|----------------|-------|
-| **Community** | Full Prism runtime, event bus, agent SDK, memory, basic tools | Source-available, permission-required |
-| **Cloud** | Managed Prism hosting, auto-scaling, monitoring dashboard | Usage-based |
-| **Enterprise** | SSO, audit logging, custom retention, SLA, priority support | Annual license |
-
-The current license is all-rights-reserved and permission-required. Future licensing or commercial models may be evaluated later. The core framework is source-available for review and feedback; use requires written permission.
-
-## What This Solves (vs OpenClaw)
-
-| Problem | OpenClaw | Prism |
-|---------|----------|-------|
-| Can't hook into internal events | Hooks are limited, not extensible | Every action emits an event, subscribe to anything |
-| Memory is flat files | MEMORY.md + SQLite with no history | Event-sourced memory with replay, projections, vector search |
-| Polling for work | Cron wakes agent on timer | Events trigger agents immediately |
-| Sub-agent results are fire-and-forget | Completion events are limited | Full event chain with correlation IDs |
-| No audit trail | Logs to JSONL files | Every decision is an immutable event |
-| Can't debug agent reasoning post-hoc | Read logs, hope context is there | Time-travel: replay events to reconstruct agent state |
-| Plugins are opaque | Only whitelisted plugins, no custom hooks | Any component that subscribes to events IS a plugin |
-| Rate limiting is manual | Sleep/retry in agent code | Backpressure via NATS consumer limits |
-| Memory consolidation is fragile | Weekly cron, manual scripts | Event-sourced compaction with replay safety |
-
-## Next Steps
-
-1. ~~**Validate NATS JetStream**~~ ✅ Confirmed — NATS JetStream for event bus
-2. ~~**Prototype the event bus**~~ ✅ Done — `cmd/prism-bus/main.go`, embedded NATS, test events passing
-3. ~~**Build the Python SDK**~~ ✅ Done — `sdk/prism/` with client, events, decorators, tool calls
-4. ~~**Channel adapters**~~ ✅ Done — Discord + Telegram adapters built
-5. **Agent runtime** — Go goroutines hosting Python agents, LLM calls
-6. **Memory store** — Event-sourced append-only log + projections + vector search
-7. **Migration tool** — `prism migrate --from-openclaw`
-8. **Web UI** — Real-time event stream viewer
+Every `lumi.agent.output` and `mango.agent.output` event triggers Remembrance's gate pipeline:
+1. **Gate** — Is this worth remembering? (DistilBERT)
+2. **Extract** — What entities, facts, decisions are in this output? (Nemotron)
+3. **Persist** — Store in Remembrance DB with embeddings
+4. **Recall** — Next session, Remembrance provides relevant context automatically
 
 ---
 
-*"One beam of light. One event. A spectrum of reactions.""
+## Orchestrator Design
+
+The orchestrator is the brain of Prism. It runs as a persistent Go service (`prism serve`).
+
+### Responsibilities
+
+1. **Route incoming messages** to the right agent
+2. **Track sessions** — who's talking, which agent, conversation state
+3. **Manage agent lifecycle** — spawn, monitor, kill agents
+4. **Track tasks** — every task from start to finish, no dropped tasks
+5. **Trigger registered actions** — events → actions automatically
+6. **Schedule cron tasks** — recurring tasks, wake events
+7. **Enforce policies** — allow/deny/approve actions
+8. **Track costs** — token usage, estimated spend
+
+### API
+
+```bash
+# Start the orchestrator
+prism serve --from-config --workspace ~/.openclaw/workspace
+
+# Check status
+prism status
+
+# Manage sessions
+prism session list
+prism session show <id>
+
+# Manage agents
+prism agent list
+prism agent spawn mango --task "Fix the auth bug"
+prism agent kill <id>
+
+# Manage tasks
+prism task list
+prism task show <id>
+
+# Manage registered actions
+prism action list
+prism action register --trigger "lumi.agent.output" --action "remembrance.gate.extract"
+```
+
+---
+
+## Agent Router Design
+
+The router decides which agent handles each message.
+
+### Routing Logic
+
+1. **Direct address:** "Lumi, fix this" → route to Lumi
+2. **@mention:** "@Mango write the tests" → route to Mango
+3. **Intent detection:** "Write code for..." → route to Mango
+4. **Default:** Route to the primary agent (Lumi)
+5. **Delegation:** Lumi delegates to Mango, Mango reports back through events
+
+### Delegation Flow
+
+```
+You → "Lumi, fix the auth bug"
+  → Lumi reasons: "I need to look at the code, write a fix, and run tests"
+  → Lumi delegates to Mango: mango.task.created {parent: lumi.agent.output}
+    → Mango codes
+    → Mango reports: mango.agent.completed {parent: mango.task.created}
+  → Lumi reviews Mango's output
+  → Lumi reports to you: lumi.channel.sent
+```
+
+---
+
+## Remembrance Integration
+
+Remembrance hooks directly into the event bus as a Prism service.
+
+### Event Flow
+
+```
+lumi.agent.output
+  → remembrance.gate.extract (DistilBERT: worth remembering?)
+    → remembrance.extract (Nemotron: extract entities/facts)
+      → remembrance.persist (save to DB with embeddings)
+
+Next session:
+  → lumi.agent.started
+    → remembrance.recall (retrieve relevant context)
+      → lumi.context.injected (context from memory)
+```
+
+### Key Properties
+
+- **Zero-cost local** — all LLM calls use Ollama, no API keys required
+- **Universal** — not Prism-specific, works with any event namespace
+- **Seamless** — no model commands needed, registered actions handle it
+- **Long-term** — context persists across sessions, no loss of direction
+- **Lifecycle-aware** — context has a lifecycle (gate → extract → persist → recall → decay)
+
+---
+
+## Storage Architecture
+
+| Store | What | Engine | Size |
+|-------|------|--------|------|
+| Events | All events (append-only) | NATS JetStream + SQLite | Grows with usage |
+| Sessions | Active conversations | SQLite | MB |
+| Remembrance | Entities, facts, vectors | SQLite + HNSW | GB |
+| Runs | Task artifacts | Filesystem | Per-run |
+| Costs | Token usage | SQLite | MB |
+| Policies | Allow/deny/approve rules | YAML files | KB |
+
+---
+
+## Deployment
+
+### Single Machine (Dev/Personal)
+
+```bash
+# One command to start everything
+prism serve --from-config --workspace ~/.openclaw/workspace
+```
+
+All services (orchestrator, agents, Remembrance, adapters) run in one process with goroutines. NATS is embedded.
+
+### Multi-Instance (Production)
+
+```bash
+# Orchestrator
+prism serve --role orchestrator --nats nats://nats-cluster:4222
+
+# Agent node
+prism serve --role agent --nats nats://nats-cluster:4222
+
+# Remembrance node
+prism serve --role remembrance --nats nats://nats-cluster:4222
+```
+
+External NATS cluster, services scale independently.
+
+---
+
+## Compatibility with V1–V19
+
+All existing `prism.*` events continue to work. Per-agent namespaces (`lumi.*`, `mango.*`) are additive — they don't replace `prism.*` system events. The orchestrator translates between them:
+
+- `lumi.agent.output` with `correlation_id: X` is also published as `prism.agent.output` with the same correlation ID
+- This means existing V1–V19 code (cost tracking, policy, projections) continues to work without modification
