@@ -176,6 +176,31 @@ func TestRouteCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestRouteDirectAddressBeatsMention(t *testing.T) {
+	reg := agent.NewRegistry()
+	reg.Register(&agent.Agent{Name: "lumi", Role: "lead", Version: "1.0.0", Capabilities: []agent.AgentCapability{{Action: "plan", Description: "plan"}}})
+	reg.Register(&agent.Agent{Name: "mango", Role: "coder", Version: "1.0.0", Capabilities: []agent.AgentCapability{{Action: "code", Description: "code"}}})
+
+	cfg := &orchestrator.Config{
+		Agents: []orchestrator.AgentConfig{
+			{ID: "lumi", Role: "lead", Model: "glm-5.1:cloud", Primary: true},
+			{ID: "mango", Role: "coder", Model: "deepseek-v4-pro:cloud"},
+		},
+	}
+
+	r := New(reg, cfg)
+
+	// "Lumi, what about @Mango's code?" should route to Lumi (direct address)
+	// not Mango (@mention), because direct address takes priority
+	result := r.Route("Lumi, what about @Mango's code?")
+	if result.AgentID != "lumi" {
+		t.Errorf("direct address should beat @mention: expected 'lumi', got %q", result.AgentID)
+	}
+	if result.Method != "direct" {
+		t.Errorf("expected method 'direct', got %q", result.Method)
+	}
+}
+
 func TestRouteUnknownAddress(t *testing.T) {
 	reg := agent.NewRegistry()
 	reg.Register(&agent.Agent{Name: "lumi", Role: "lead", Version: "1.0.0", Capabilities: []agent.AgentCapability{{Action: "plan", Description: "plan"}}})

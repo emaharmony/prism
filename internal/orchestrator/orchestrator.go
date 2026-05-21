@@ -84,27 +84,7 @@ func (o *Orchestrator) Start() error {
 	}
 	o.natsURL = natsURL
 
-	// Register agents from config
-	for _, agentCfg := range o.Config.Agents {
-		a := &agent.Agent{
-			Name:         agentCfg.ID,
-			Role:         agentCfg.Role,
-			Version:      "1.0.0",
-			ProviderName: agentCfg.Provider,
-			Model:        agentCfg.Model,
-		}
-		for _, cap := range agentCfg.Capabilities {
-			a.Capabilities = append(a.Capabilities, agent.AgentCapability{
-				Action:      cap,
-				Description: cap,
-			})
-		}
-		if err := o.Agents.Register(a); err != nil {
-			o.mu.Unlock()
-			return fmt.Errorf("orchestrator: register agent %q: %w", agentCfg.ID, err)
-		}
-	}
-
+	// Agents are registered externally (by cmd_serve.go calling cfg.RegisterAgents)
 	o.healthy = true
 	o.mu.Unlock()
 

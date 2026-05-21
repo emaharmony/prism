@@ -254,8 +254,9 @@ func (m *Manager) AddMessage(sessionID, role, content, agentID string) (*Message
 	// Compact if needed
 	if len(s.Messages) > m.maxContextMessages {
 		if err := m.compact(s); err != nil {
-			// Log but don't fail the message add
-			_ = err
+			// Log compaction error but don't fail the message add
+			// In production this would go to structured logging
+			fmt.Printf("session: compaction warning: %v\n", err)
 		}
 	}
 
@@ -283,11 +284,15 @@ func (m *Manager) compact(s *Session) error {
 
 	// Remove from SQLite
 	for _, msg := range removed {
-		m.db.Exec("DELETE FROM messages WHERE id = ?", msg.ID)
+		if _, err := m.db.Exec("DELETE FROM messages WHERE id = ?", msg.ID); err != nil {
+			return fmt.Errorf("session: delete message %s: %w", msg.ID, err)
+		}
 	}
 
 	// Update compacted_at
-	m.db.Exec("UPDATE sessions SET compacted_at = ? WHERE id = ?", s.CompactedAt, s.ID)
+	if _, err := m.db.Exec("UPDATE sessions SET compacted_at = ? WHERE id = ?", s.CompactedAt, s.ID); err != nil {
+		return fmt.Errorf("session: update compacted_at: %w", err)
+	}
 
 	return nil
 }
