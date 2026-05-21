@@ -72,8 +72,29 @@ var directAddressPattern = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9-]*)[,\s]+`)
 var mentionPattern = regexp.MustCompile(`(?i)@([a-z0-9][a-z0-9-]*)`)
 
 // Route determines which agent should handle the given message content.
+// Priority order:
+//   1. Direct address at start: "Lumi, fix this" → route to named agent
+//   2. @mention: "@Mango write tests" → route to named agent
+//   3. Default: route to primary agent
+//
+// Direct address takes precedence over @mention because "Lumi, what about @Mango's code?"
+// is addressed to Lumi with an @mention in the body, not to Mango.
 func (r *Router) Route(content string) *RouteResult {
-	// 1. Check for @mention
+	// 1. Check for direct address at start of message
+	if match := directAddressPattern.FindStringSubmatch(content); len(match) > 1 {
+		addressedID := strings.ToLower(match[1])
+		if r.isKnownAgent(addressedID) {
+			cleaned := directAddressPattern.ReplaceAllString(content, "")
+			cleaned = strings.TrimSpace(cleaned)
+			return &RouteResult{
+				AgentID:        addressedID,
+				Method:         "direct",
+				CleanedContent: cleaned,
+			}
+		}
+	}
+
+	// 2. Check for @mention anywhere in message
 	if match := mentionPattern.FindStringSubmatch(content); len(match) > 1 {
 		mentionedID := strings.ToLower(match[1])
 		if r.isKnownAgent(mentionedID) {
@@ -82,21 +103,6 @@ func (r *Router) Route(content string) *RouteResult {
 			return &RouteResult{
 				AgentID:        mentionedID,
 				Method:         "mention",
-				CleanedContent: cleaned,
-			}
-		}
-	}
-
-	// 2. Check for direct address at start
-	if match := directAddressPattern.FindStringSubmatch(content); len(match) > 1 {
-		addressedID := strings.ToLower(match[1])
-		if r.isKnownAgent(addressedID) {
-			// Remove the prefix (e.g., "Lumi, " or "Mango ")
-			cleaned := directAddressPattern.ReplaceAllString(content, "")
-			cleaned = strings.TrimSpace(cleaned)
-			return &RouteResult{
-				AgentID:        addressedID,
-				Method:         "direct",
 				CleanedContent: cleaned,
 			}
 		}

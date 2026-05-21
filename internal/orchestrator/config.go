@@ -216,22 +216,21 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ResolveAgentIDs fills in auto-generated IDs for agents without explicit IDs.
-// Returns a new Config with IDs populated.
-func (c *Config) ResolveAgentIDs() *Config {
-	resolved := *c
-	resolved.Agents = make([]AgentConfig, len(c.Agents))
-
+// ResolveAndValidate resolves auto-generated agent IDs and validates the config.
+// This is a single-pass operation — resolve first, then validate — to avoid
+// the fragile two-pass approach where IDs might differ between passes.
+func (c *Config) ResolveAndValidate() error {
+	// Resolve auto-generated IDs first
 	autoGenCounter := 0
-	for i, a := range c.Agents {
-		resolved.Agents[i] = a
-		if resolved.Agents[i].ID == "" {
+	for i := range c.Agents {
+		if c.Agents[i].ID == "" {
 			autoGenCounter++
-			resolved.Agents[i].ID = fmt.Sprintf("prism%d", autoGenCounter)
+			c.Agents[i].ID = fmt.Sprintf("prism%d", autoGenCounter)
 		}
 	}
 
-	return &resolved
+	// Now validate with resolved IDs
+	return c.Validate()
 }
 
 // PrimaryAgent returns the agent marked as primary, or the first agent if none
@@ -261,10 +260,8 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Resolve auto-generated agent IDs
-	cfg = cfg.ResolveAgentIDs()
-
-	if err := cfg.Validate(); err != nil {
+	// Resolve auto-generated IDs and validate in a single pass
+	if err := cfg.ResolveAndValidate(); err != nil {
 		return nil, err
 	}
 
