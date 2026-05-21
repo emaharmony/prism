@@ -93,14 +93,14 @@ Prism is an event-native agentic environment. Separate services communicate thro
 
 ### Per-Agent Namespaces (Dynamic)
 
-Each agent publishes events under its own namespace. The namespace is **determined by the agent's ID in its configuration**, not hardcoded. "Lumi" and "Mango" are specific to one setup — another user might have "alex", "coder", or "support-bot".
+Each agent publishes events under its own namespace. The namespace is **determined by the agent's ID in its configuration**, not hardcoded. The only hardcoded namespace is `prism.*` for system-level events. If no agent ID is provided, auto-generate as `prism1`, `prism2`, etc.
 
 Agent definitions are in the config:
 
 ```yaml
 agents:
-  - id: lumi                # This becomes the event namespace
-    role: lead               # Role: lead, coder, researcher, etc.
+  - id: lumi                # Custom ID → lumi.* namespace
+    role: lead
     model: glm-5.1:cloud
     context: soul,agents
 
@@ -109,12 +109,12 @@ agents:
     model: deepseek-v4-pro:cloud
     context: agents
 
-  - id: researcher-01
-    role: researcher
+  # No ID → auto-generated as prism1
+  - role: researcher
     model: gpt-4o
 ```
 
-The `id` field becomes the event namespace prefix:
+The `id` field becomes the event namespace prefix. If omitted, auto-generated as `prism<N>`:
 
 ```
 <agent-id>.agent.started          → Agent begins reasoning

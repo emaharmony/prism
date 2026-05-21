@@ -65,7 +65,9 @@ Prism is NOT a monolith. It's a collection of separate services that communicate
 
 ### Per-Agent Namespaces (Dynamic)
 
-Each agent publishes events under its own namespace. The namespace is **determined by the agent's ID in its configuration**, not hardcoded. What we call "Lumi" and "Mango" is specific to one setup — another user might have "alex", "coder", and "analyst".
+Each agent publishes events under its own namespace. The namespace is **determined by the agent's ID in its configuration**, not hardcoded. The only hardcoded namespace is `prism.*` for system-level events.
+
+**No hardcoded agent names.** If no agent ID is provided in the config, the system auto-generates: `prism1`, `prism2`, `prism3`, etc.
 
 Agent definitions are in the config:
 
@@ -81,12 +83,12 @@ agents:
     model: deepseek-v4-pro:cloud
     context: agents
 
-  - id: researcher-01
-    role: researcher
+  # No ID provided — auto-generated as prism1
+  - role: researcher
     model: gpt-4o
 ```
 
-The `id` field becomes the event namespace prefix:
+The `id` field becomes the event namespace prefix. If omitted, auto-generated as `prism<N>`:
 
 ```
 <agent-id>.agent.started          → Agent begins reasoning
@@ -104,13 +106,13 @@ The `id` field becomes the event namespace prefix:
 Examples for different setups:
 
 ```
-# Ema's setup
+# Ema's setup (custom IDs)
 lumi.agent.started          → Lumi begins
 mango.tool.completed        → Mango finishes a tool call
 
-# Another user's setup
-alex.agent.started          → Alex begins
-coder.tool.completed       → Coder finishes a tool call
+# Setup with no custom IDs (auto-generated)
+prism1.agent.started        → First agent begins
+prism2.tool.completed      → Second agent finishes a tool call
 
 # Business setup
 support-bot.agent.output   → Support bot responds
@@ -252,7 +254,7 @@ Prism calls Ollama/OpenAI/Anthropic directly. No delegation to a separate LLM se
 
 ## Key Design Principles
 
-1. **Events are per-agent and dynamic.** `<agent-id>.llm.called`, not `prism.llm.called`. The agent ID comes from config — "lumi" and "mango" are examples, not hardcoded. Agents are first-class bus citizens.
+1. **Events are per-agent and dynamic.** `<agent-id>.llm.called`, not hardcoded. The agent ID comes from config — "lumi" and "mango" are examples. If no ID is given, auto-generate as `prism1`, `prism2`, etc. The only hardcoded namespace is `prism.*` for system events.
 2. **Registered actions, not model commands.** Events trigger actions automatically. The model doesn't run save-memory commands — the system does it.
 3. **Separate services, one bus.** Orchestrator, agents, Remembrance, adapters — all communicate through NATS.
 4. **Go + Python.** Go for performance and concurrency, Python for LLM ecosystem and Remembrance.

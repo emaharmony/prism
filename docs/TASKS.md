@@ -32,6 +32,7 @@
 | Task | Status | Notes |
 |------|--------|-------|
 | Design namespace translation layer | ⬜ | `<agent-id>.*` ↔ `prism.*` bridge, agent ID from config |
+| Auto-generate agent IDs when not provided | ⬜ | `prism1`, `prism2`, `prism3`... |
 | Add `<agent-id>.*` event types | ⬜ | Dynamic based on agent config, not hardcoded |
 | Add `remembrance.*` event types | ⬜ | Memory events |
 | Update event schema validation | ⬜ | V19 schema.go needs dynamic agent namespaces |
