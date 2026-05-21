@@ -1,0 +1,229 @@
+// Package discordbot provides the Discord bot adapter for Prism V20.
+//
+// Unlike the existing webhook-based discord adapter (which only posts
+// run summaries), this adapter implements a full Discord bot gateway:
+//   - Inbound: Receives Discord messages → publishes `<agent-id>.channel.received` events
+//   - Outbound: Subscribes to `<agent-id>.channel.sent` events → sends Discord messages
+//
+// This is the adapter that makes Prism live on Discord — you can talk to
+// it and it talks back.
+//
+// Uses discordgo (bwmarrin/discordgo) for the Discord gateway connection.
+package discordbot
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"strings"
+	"sync"
+
+	"github.com/bwmarrin/discordgo"
+)
+
+// BotAdapter connects Prism to Discord as a bot for bidirectional messaging.
+type BotAdapter struct {
+	token    string
+	session  *discordgo.Session
+	handlers []MessageHandler
+
+	mu     sync.RWMutex
+	ready  bool
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// MessageHandler processes an incoming Discord message.
+// Implementations typically route the message to the agent router.
+type MessageHandler func(msg *InboundMessage)
+
+// InboundMessage represents a Discord message coming into Prism.
+type InboundMessage struct {
+	ChannelID string // Discord channel ID
+	UserID    string // Discord user ID
+	UserName  string // Discord username
+	Content   string // Message content
+	GuildID   string // Discord server ID (empty for DMs)
+	IsDM      bool   // True if this is a direct message
+	MessageID string // Discord message ID (for replies)
+}
+
+// OutboundMessage represents a message going from Prism to Discord.
+type OutboundMessage struct {
+	ChannelID string // Discord channel to send to
+	Content   string // Message content
+	IsReply   bool   // True if this should be a reply
+	ReplyTo   string // Message ID to reply to (if IsReply)
+}
+
+// NewBotAdapter creates a new Discord bot adapter with the given bot token.
+func NewBotAdapter(token string) *BotAdapter {
+	return &BotAdapter{
+		token: token,
+	}
+}
+
+// Name returns the adapter name.
+func (b *BotAdapter) Name() string {
+	return "discord-bot"
+}
+
+// Start connects to Discord and begins listening for messages.
+// Blocks until the connection is established or an error occurs.
+func (b *BotAdapter) Start(ctx context.Context) error {
+	b.ctx, b.cancel = context.WithCancel(ctx)
+
+	dg, err := discordgo.New("Bot " + b.token)
+	if err != nil {
+		return fmt.Errorf("discord-bot: create session: %w", err)
+	}
+	b.session = dg
+
+	// Register Discord event handlers
+	dg.AddHandler(b.onReady)
+	dg.AddHandler(b.onMessageCreate)
+
+	// We need message content intent for reading messages
+	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages
+
+	// Open connection
+	if err := dg.Open(); err != nil {
+		return fmt.Errorf("discord-bot: open connection: %w", err)
+	}
+
+	// Wait for context cancellation
+	<-b.ctx.Done()
+
+	// Clean shutdown
+	dg.Close()
+	return nil
+}
+
+// Stop disconnects from Discord.
+func (b *BotAdapter) Stop() error {
+	if b.cancel != nil {
+		b.cancel()
+	}
+	if b.session != nil {
+		return b.session.Close()
+	}
+	return nil
+}
+
+// OnMessage registers a handler for incoming Discord messages.
+func (b *BotAdapter) OnMessage(handler MessageHandler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.handlers = append(b.handlers, handler)
+}
+
+// Send sends a message to a Discord channel.
+func (b *BotAdapter) Send(msg *OutboundMessage) error {
+	if b.session == nil {
+		return fmt.Errorf("discord-bot: not connected")
+	}
+
+	content := msg.Content
+
+	// Discord message length limit is 2000 characters
+	// Split long messages into multiple sends
+	if len(content) <= 2000 {
+		return b.sendMessage(msg.ChannelID, content, msg)
+	}
+
+	// Split at the last newline before 2000 chars
+	chunks := splitMessage(content, 1900) // leave some margin
+	for i, chunk := range chunks {
+		if err := b.sendMessage(msg.ChannelID, chunk, msg); err != nil {
+			return fmt.Errorf("discord-bot: send chunk %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// sendMessage sends a single message to a Discord channel.
+func (b *BotAdapter) sendMessage(channelID, content string, msg *OutboundMessage) error {
+	if msg.IsReply && msg.ReplyTo != "" {
+		ref := &discordgo.MessageReference{
+			MessageID: msg.ReplyTo,
+			ChannelID: channelID,
+		}
+		_, err := b.session.ChannelMessageSendReply(channelID, content, ref)
+		return err
+	}
+	_, err := b.session.ChannelMessageSend(channelID, content)
+	return err
+}
+
+// onReady handles the Discord ready event.
+func (b *BotAdapter) onReady(s *discordgo.Session, r *discordgo.Ready) {
+	b.mu.Lock()
+	b.ready = true
+	b.mu.Unlock()
+	log.Printf("discord-bot: connected as %s#%s", s.State.User.Username, s.State.User.Discriminator)
+}
+
+// onMessageCreate handles incoming Discord messages.
+func (b *BotAdapter) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	// Ignore messages from the bot itself
+	if m.Author.ID == s.State.User.ID {
+		return
+	}
+
+	// Ignore empty messages
+	content := strings.TrimSpace(m.Content)
+	if content == "" {
+		return
+	}
+
+	inbound := &InboundMessage{
+		ChannelID: m.ChannelID,
+		UserID:    m.Author.ID,
+		UserName:  m.Author.Username,
+		Content:   content,
+		GuildID:   m.GuildID,
+		IsDM:      m.GuildID == "",
+		MessageID: m.ID,
+	}
+
+	// Notify all registered handlers
+	b.mu.RLock()
+	handlers := make([]MessageHandler, len(b.handlers))
+	copy(handlers, b.handlers)
+	b.mu.RUnlock()
+
+	for _, handler := range handlers {
+		handler(inbound)
+	}
+}
+
+// IsReady returns whether the bot has connected to Discord.
+func (b *BotAdapter) IsReady() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.ready
+}
+
+// splitMessage splits a long message into chunks at the last newline
+// before maxLen characters. If there are no newlines, splits at maxLen.
+func splitMessage(content string, maxLen int) []string {
+	if len(content) <= maxLen {
+		return []string{content}
+	}
+
+	var chunks []string
+	for len(content) > maxLen {
+		// Find the last newline before maxLen
+		splitAt := maxLen
+		lastNewline := strings.LastIndex(content[:maxLen], "\n")
+		if lastNewline > 0 {
+			splitAt = lastNewline + 1
+		}
+		chunks = append(chunks, content[:splitAt])
+		content = content[splitAt:]
+	}
+	if len(content) > 0 {
+		chunks = append(chunks, content)
+	}
+	return chunks
+}
