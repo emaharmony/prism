@@ -542,8 +542,10 @@ func main() {
 		searchCmd(os.Args[2:])
 	case "serve":
 		executeServe(os.Args[2:])
+	case "status":
+		executeStatus(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.20.0")
+		fmt.Println("prism v0.20.1")
 	default:
 		printUsage()
 		os.Exit(1)
