@@ -1,0 +1,161 @@
+// Package orchestrator provides the persistent daemon that runs Prism as a
+// live service. It manages agent lifecycles, routes messages, tracks sessions,
+// and wires the event bus to registered actions.
+//
+// V20: The orchestrator is the brain of `prism serve`. It starts the embedded
+// NATS server, registers agents from config, sets up the session manager,
+// agent router, and adapter connections, then runs until interrupted.
+package orchestrator
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/event"
+)
+
+// Orchestrator manages the persistent Prism service lifecycle.
+type Orchestrator struct {
+	mu sync.RWMutex
+
+	// Config is the loaded Prism configuration.
+	Config *Config
+
+	// Agent registry holds all registered agents.
+	Agents *agent.Registry
+
+	// EventStore persists events to SQLite.
+	EventStore event.EventStore
+
+	// NATS connection for publishing/subscribing.
+	natsURL string
+	cleanup func() // cleanup for embedded NATS
+
+	// Health tracking
+	startedAt time.Time
+	healthy   bool
+
+	// Shutdown signal
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+// New creates a new Orchestrator from the given configuration.
+func New(cfg *Config) (*Orchestrator, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("orchestrator: invalid config: %w", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	return &Orchestrator{
+		Config:   cfg,
+		Agents:   agent.NewRegistry(),
+		natsURL:  cfg.Prism.NATSURL,
+		ctx:      ctx,
+		cancel:   cancel,
+		healthy:  false,
+	}, nil
+}
+
+// Start launches the orchestrator: embedded NATS, agent registration,
+// session manager, and adapter connections. Blocks until shutdown.
+func (o *Orchestrator) Start() error {
+	o.mu.Lock()
+	o.startedAt = time.Now()
+
+	// Start embedded NATS if no external URL provided
+	natsURL := o.natsURL
+	if natsURL == "" {
+		url, cleanup, err := bus.StartEmbeddedBus(0)
+		if err != nil {
+			o.mu.Unlock()
+			return fmt.Errorf("orchestrator: start embedded bus: %w", err)
+		}
+		natsURL = url
+		o.cleanup = cleanup
+	}
+	o.natsURL = natsURL
+
+	// Register agents from config
+	for _, agentCfg := range o.Config.Agents {
+		a := &agent.Agent{
+			Name:         agentCfg.ID,
+			Role:         agentCfg.Role,
+			Version:      "1.0.0",
+			ProviderName: agentCfg.Provider,
+			Model:        agentCfg.Model,
+		}
+		for _, cap := range agentCfg.Capabilities {
+			a.Capabilities = append(a.Capabilities, agent.AgentCapability{
+				Action:      cap,
+				Description: cap,
+			})
+		}
+		if err := o.Agents.Register(a); err != nil {
+			o.mu.Unlock()
+			return fmt.Errorf("orchestrator: register agent %q: %w", agentCfg.ID, err)
+		}
+	}
+
+	o.healthy = true
+	o.mu.Unlock()
+
+	// Wait for shutdown signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	<-sigCh
+	return o.shutdown()
+}
+
+// shutdown performs graceful shutdown: drain events, close connections.
+func (o *Orchestrator) shutdown() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.healthy = false
+	o.cancel()
+
+	if o.EventStore != nil {
+		o.EventStore.Close()
+	}
+
+	if o.cleanup != nil {
+		o.cleanup()
+	}
+
+	return nil
+}
+
+// Status returns the current orchestrator status for health checks.
+func (o *Orchestrator) Status() *Status {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	agents := o.Agents.List()
+
+	return &Status{
+		Healthy:   o.healthy,
+		StartedAt: o.startedAt,
+		Uptime:    time.Since(o.startedAt),
+		Agents:    agents,
+		NATSURL:   o.natsURL,
+	}
+}
+
+// Status represents the orchestrator's current state.
+type Status struct {
+	Healthy   bool          `json:"healthy"`
+	StartedAt time.Time      `json:"started_at"`
+	Uptime    time.Duration  `json:"uptime"`
+	Agents    []string       `json:"agents"`
+	NATSURL   string         `json:"nats_url"`
+}

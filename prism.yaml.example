@@ -1,0 +1,86 @@
+# Prism Configuration — prism.yaml
+#
+# This is the primary configuration file for Prism.
+# It defines agents, channels, actions, and service settings.
+# No dependency on OpenClaw — Prism is its own system.
+#
+# Agent IDs become event namespace prefixes:
+#   id: lumi → lumi.agent.started, lumi.tool.completed, etc.
+#   If no ID is provided, auto-generated as prism1, prism2, etc.
+
+prism:
+  # NATS bus URL. Empty = embedded NATS server.
+  nats_url: ""
+  # Data directory for SQLite databases and run artifacts.
+  data_dir: "~/.prism/data"
+  # Log level: debug, info, warn, error
+  log_level: "info"
+
+agents:
+  - id: lumi
+    role: lead
+    provider: ollama
+    model: "glm-5.1:cloud"
+    primary: true
+    context:
+      - soul
+      - agents
+      - user
+    capabilities:
+      - plan
+      - route
+      - review
+      - report
+
+  - id: mango
+    role: coder
+    provider: ollama
+    model: "deepseek-v4-pro:cloud"
+    context:
+      - agents
+    capabilities:
+      - code
+      - test
+      - report
+
+channels:
+  - type: discord
+    token: "${DISCORD_BOT_TOKEN}"
+    channels:
+      - "general"
+      - "dev"
+
+actions:
+  # Save agent output to memory
+  - trigger: "*.agent.output"
+    action: "remembrance.gate.extract"
+    enabled: true
+
+  # Track token costs for every tool completion
+  - trigger: "*.tool.completed"
+    action: "prism.cost.track"
+    enabled: true
+
+  # Track LLM costs
+  - trigger: "*.llm.completed"
+    action: "prism.cost.track"
+    enabled: true
+
+  # Send approval requests to Discord
+  - trigger: "*.approval.requested"
+    action: "adapter.discord.notify"
+    enabled: true
+
+sessions:
+  # How long before an idle session resets (minutes)
+  idle_timeout_minutes: 30
+  # Hour (0-23) when sessions reset daily
+  daily_reset_hour: 4
+  # Maximum messages in a session before compaction
+  max_context_messages: 100
+  # Compaction strategy: "truncate" (V20) or "summarize" (V21 with Remembrance)
+  compaction_strategy: "truncate"
+
+remembrance:
+  enabled: false
+  url: "http://localhost:18790"

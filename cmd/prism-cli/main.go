@@ -540,8 +540,10 @@ func main() {
 		}
 	case "search":
 		searchCmd(os.Args[2:])
+	case "serve":
+		executeServe(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.17.0")
+		fmt.Println("prism v0.20.0")
 	default:
 		printUsage()
 		os.Exit(1)
