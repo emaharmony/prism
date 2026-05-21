@@ -290,11 +290,18 @@ func (c *Config) RegisterAgents(registry *agent.Registry) error {
 			ProviderName: agentCfg.Provider,
 			Model:        agentCfg.Model,
 		}
-		for _, cap := range agentCfg.Capabilities {
-			a.Capabilities = append(a.Capabilities, agent.AgentCapability{
-				Action:      cap,
-				Description: cap,
-			})
+		// If no capabilities are specified, add a default based on role
+		if len(agentCfg.Capabilities) == 0 {
+			a.Capabilities = []agent.AgentCapability{
+				{Action: agentCfg.Role, Description: agentCfg.Role},
+			}
+		} else {
+			for _, cap := range agentCfg.Capabilities {
+				a.Capabilities = append(a.Capabilities, agent.AgentCapability{
+					Action:      cap,
+					Description: cap,
+				})
+			}
 		}
 		if err := registry.Register(a); err != nil {
 			return fmt.Errorf("register agent %q: %w", agentCfg.ID, err)
