@@ -1,330 +1,224 @@
-# Prism — The Complete Vision
+# Prism — The Complete Vision (v2)
 
-**Date:** 2026-05-20
+**Date:** 2026-05-21
 **Authors:** Ema + Lumi
-**Status:** North Star — this is what "done" looks like
+**Status:** North Star — aligned on High Level → Architecture → Human Experience → Scope → Business → Timeline
 
 ---
 
-## The One-Line Vision
+## HIGH LEVEL — What Is Prism?
 
-**Prism is a full agentic environment — not a batch runner, not a CLI tool, not an API wrapper.** You talk to it, it reasons, it acts, it remembers, it delegates, it reports back. It's the system that replaces OpenClaw.
+Prism is an **event-native agentic environment**. It tracks events end-to-end through the system's usage, similar to webhooks. Events trigger registered actions — call adapter logic, start memory processes, update trackers. It replaces OpenClaw and any other agentic system entirely.
 
----
+The goal: **smooth, clean, end-to-end flow. No task dropped. No context lost.**
 
-## What "Done" Looks Like
+**What Prism IS:**
+- An event-driven orchestrator that spawns agents, routes tasks, and tracks everything
+- A system where you give a task and it runs through to completion autonomously
+- A platform where multiple agents work in parallel on different roles
+- A system where Remembrance provides long-term, seamless context across all chats
+- A customizable environment — set up two Prisms and they can communicate, send each other tasks and updates
+- Something useful for business, personal assistance, even home IoT control
 
-You open Discord and type:
-
-> "Lumi, the auth bug is back. Fix it and run the tests."
-
-And this happens:
-
-1. **Discord adapter** receives your message → emits `prism.channel.received`
-2. **Session manager** identifies this is a continuation of an ongoing conversation → loads context
-3. **Agent router** routes to Lumi (your lead agent) → Lumi reads the context
-4. **Lumi reasons** → "I need to look at the auth code, find the bug, write a fix"
-5. **Tool execution** → Lumi reads files, writes a fix, with policy gates checking each action
-6. **Delegation** → Lumi delegates the test run to a specialist agent
-7. **Cost tracking** → Every LLM call is tracked, every token counted
-8. **Approval gate** → Before pushing, Prism pauses and asks you: "Approve push to main?"
-9. **You approve** → Push goes through
-10. **Lumi responds** → "Fixed in PR #44. Tests pass. Cost: $0.0032."
-11. **Memory persists** → Next time you talk, Lumi remembers the bug, the fix, the PR
-
-**No CLI. No `prism run`. No batch. Just conversation.**
+**What Prism is NOT:**
+- Not a "context forever" system (context has lifecycle)
+- Not just a coding agent
+- Not a standalone LLM
 
 ---
 
-## Architecture — The Final Form
+## ARCHITECTURE — How Does It Work?
+
+### Separate Services Communicating Through Event Bus
+
+Prism is NOT a monolith. It's a collection of separate services that communicate through the NATS event bus:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Prism Orchestrator                         │
-│                    (prism serve — always on)                     │
-│                                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐    │
-│  │ Discord  │  │ Telegram │  │ Webchat  │  │  HTTP API    │    │
-│  │ Adapter  │  │ Adapter  │  │ Adapter  │  │  (REST/SSE)  │    │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬───────┘    │
-│       │              │              │               │           │
-│       └──────────────┴──────────────┴───────────────┘           │
-│                              │                                  │
-│                     ┌────────▼────────┐                        │
-│                     │ Session Manager  │                        │
-│                     │ • Per-channel    │                        │
-│                     │ • Per-user       │                        │
-│                     │ • Daily/idle     │                        │
-│                     │   reset          │                        │
-│                     │ • Compaction     │                        │
-│                     │ • Memory bridge  │                        │
-│                     └────────┬────────┘                        │
-│                              │                                  │
-│                     ┌────────▼────────┐                        │
-│                     │  Agent Router    │                        │
-│                     │ • Lumi (lead)    │                        │
-│                     │ • Mango (code)   │                        │
-│                     │ • Specialists    │                        │
-│                     │ • Intent detect  │                        │
-│                     └────────┬────────┘                        │
-│                              │                                  │
-│  ┌───────────────────────────▼───────────────────────────┐     │
-│  │                    Event Bus (NATS)                     │     │
-│  │                                                        │     │
-│  │  prism.agent.*    prism.tool.*     prism.channel.*     │     │
-│  │  prism.task.*     prism.memory.*   prism.cron.*        │     │
-│  │  prism.policy.*   prism.cost.*     prism.context.*     │     │
-│  │  prism.approval.* prism.workflow.* prism.session.*     │     │
-│  └───────────────────────────┬───────────────────────────┘     │
-│                              │                                  │
-│       ┌─────────────┬───────┴───────┬──────────────┐          │
-│       ▼             ▼               ▼              ▼          │
-│  ┌─────────┐  ┌──────────┐  ┌─────────────┐  ┌──────────┐   │
-│  │ Lumi    │  │  Mango   │  │ Specialist  │  │ Cron     │   │
-│  │ Agent   │  │  Agent   │  │  Agents     │  │ Scheduler│   │
-│  │ (lead)  │  │  (code)  │  │  (on-demand)│  │          │   │
-│  └────┬────┘  └────┬─────┘  └──────┬──────┘  └────┬─────┘   │
-│       │             │               │              │          │
-│       └─────────────┴───────────────┘              │          │
-│                              │                     │          │
-│                     ┌────────▼────────┐            │          │
-│                     │ Tool Registry   │            │          │
-│                     │ • Read files    │            │          │
-│                     │ • Write files   │            │          │
-│                     │ • Shell exec    │            │          │
-│                     │ • HTTP calls    │            │          │
-│                     │ • Custom tools   │            │          │
-│                     └────────┬────────┘            │          │
-│                              │                     │          │
-│                     ┌────────▼────────┐            │          │
-│                     │ Policy Engine   │            │          │
-│                     │ • Allow/deny    │            │          │
-│                     │ • Approval gates│            │          │
-│                     │ • Cost limits   │            │          │
-│                     └────────┬────────┘            │          │
-│                              │                     │          │
-│       ┌─────────────┬───────┴───────┬──────────────┐          │
-│       ▼             ▼               ▼              ▼          │
-│  ┌─────────┐  ┌──────────┐  ┌─────────────┐  ┌──────────┐   │
-│  │ Remem-  │  │  SQLite  │  │  Dashboard  │  │  Memory  │   │
-│  │ brance  │  │  Events  │  │  (web UI)  │  │  (MCP)   │   │
-│  └─────────┘  └──────────┘  └─────────────┘  └──────────┘   │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │              Config & Context                         │    │
-│  │  • OpenClaw config import (providers, models)         │    │
-│  │  • Workspace context (SOUL, AGENTS, USER, docs)      │    │
-│  │  • Session memory (conversations, decisions)          │    │
-│  │  • Policy files (allow/deny/approve)                 │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                              │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│ Orchestrator │  │   Lumi      │  │   Mango     │  │ Remembrance  │
+│  (Go)       │  │  Agent (Go)  │  │ Agent (Go)  │  │  (Python)   │
+│             │  │              │  │             │  │             │
+│ - Route     │  │ - Reason     │  │ - Code      │  │ - Persist   │
+│ - Delegate  │  │ - Delegate   │  │ - Test      │  │ - Recall    │
+│ - Schedule  │  │ - Report     │  │ - Report    │  │ - Extract   │
+└──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+       │                │                │                │
+       └────────────────┴────────────────┴────────────────┘
+                                  │
+                    ┌─────────────▼─────────────┐
+                    │     Event Bus (NATS)       │
+                    │                           │
+                    │  lumi.agent.started       │
+                    │  mango.tool.completed     │
+                    │  remembrance.memory.stored │
+                    │  prism.cost.tracked       │
+                    │  prism.channel.received   │
+                    └─────────────┬─────────────┘
+                                  │
+       ┌──────────────┬───────────┴───────────┬──────────────┐
+       ▼              ▼                       ▼              ▼
+┌─────────────┐ ┌─────────────┐  ┌─────────────────┐ ┌─────────────┐
+│   Discord   │ │  Tracker    │  │   Dashboard     │ │   Cron      │
+│  Adapter    │ │ (Projections)│  │   (Web UI)     │ │  Scheduler  │
+└─────────────┘ └─────────────┘  └─────────────────┘ └─────────────┘
 ```
+
+### Agent Events Are Per-Agent, Not Per-System
+
+**Critical design decision from Ema:** When agents spawn, they push their own events on the bus with their identity. Not `prism.llm.called` — **`lumi.llm.called`**. Each agent has its own event namespace:
+
+```
+lumi.agent.started       → Lumi begins reasoning
+lumi.agent.output        → Lumi produces output
+lumi.tool.completed      → Lumi finishes a tool call
+mango.agent.started      → Mango begins coding
+mango.tool.completed      → Mango finishes a tool call
+remembrance.memory.stored → Remembrance saves context
+```
+
+This means agents are first-class citizens on the bus, not anonymous workers.
+
+### Languages: Go + Python
+
+- **Go:** Orchestrator, event bus, adapters, agent runtime, policy engine, cost tracking
+- **Python:** Remembrance (memory pipeline), future agents that need Python LLM libraries
+- **Communication:** Both Go and Python services publish/subscribe to NATS events
+
+### Memory: Embedded Remembrance
+
+Remembrance is embedded into Prism, not a separate service you run independently. It hooks directly into the event bus:
+- Every `lumi.agent.output` → Remembrance gates and extracts
+- Every `mango.agent.output` → Remembrance gates and extracts
+- Context is persistent, seamless, long-term across all chats
+- No loss of context, no repeat work, no loss of direction
+
+### LLM Calls: Prism Owns Them
+
+Prism calls Ollama/OpenAI/Anthropic directly. No delegation to a separate LLM service. The model routing, chaining, and fallback are Prism's job.
 
 ---
 
-## Component Breakdown — What Exists vs. What's Needed
+## HUMAN EXPERIENCE — What Does It Feel Like?
 
-### ✅ Already Built (V1–V19)
+### The Flow
 
-| Component | Version | What It Does |
-|-----------|---------|-------------|
-| Event Bus | V1 | NATS JetStream, 60+ event types, causal DAG |
-| LLM Providers | V2, V14c, V18 | Ollama, OpenAI, Anthropic, Gemini, chaining, OpenClaw config import |
-| Tool Execution | V3 | Read/write/shell with policy gates |
-| Approval Gates | V4 | Human-in-the-loop for mutations |
-| Validation | V5 | Test suite profiles, exit code checking |
-| Review | V5 | Deterministic review artifacts |
-| Policy Engine | V8 | YAML-based allow/deny/approve |
-| Adapter System | V9 | Subscribe to events, route to external systems |
-| Projections | V10 | Queryable state from event history |
-| Dashboard | V11 | Web UI for run status |
-| Multi-Agent | V13 | Agent registry, lifecycle, delegation |
-| Workflow Engine | V7, V14 | Multi-step, conditional, retry |
-| Cost Tracking | V16 | Per-run, per-model, per-agent token costs |
-| HNSW Vector Search | V17 | Semantic queries over events |
-| OpenClaw Config | V18 | Import providers, models, API keys |
-| Context Injection | V19 | Workspace personality/rules/docs into prompts |
+1. **You give Prism a task** (e.g., "Build the auth system for BassBook")
+2. **Orchestrator breaks it down** into subtasks, assigns roles
+3. **Agents work in parallel** — Lumi plans, Mango codes, a researcher gathers specs
+4. **Events flow through the bus** — every action, decision, tool call, cost tracked
+5. **Registered actions trigger automatically** — memory is saved after every run, tracker updates, notifications sent
+6. **You can talk to any agent** if you want, or let the orchestrator handle it
+7. **Context persists** — Remembrance saves key context after every run, seamlessly across all chats
+8. **No task dropped** — the orchestrator tracks every task end-to-end
 
-### ❌ Still Needed
+### Key Feelings
 
-| Component | Version | What It Does | Priority |
-|-----------|---------|-------------|----------|
-| **Orchestrator** | V20 | `prism serve` — persistent daemon, heartbeat, agent lifecycle | 🔴 P0 |
-| **Session Manager** | V20 | Conversation continuity, daily/idle reset, compaction | 🔴 P0 |
-| **Discord Adapter (inbound)** | V20.1 | Receive messages → `prism.channel.received` | 🔴 P0 |
-| **Discord Adapter (outbound)** | V20.1 | `prism.channel.sent` → send messages back | 🔴 P0 |
-| **Streaming Responses** | V20.2 | Token-by-token delivery to chat | 🟡 P1 |
-| **Agent Router** | V20 | Route messages to the right agent (Lumi, Mango, specialist) | 🔴 P0 |
-| **Cron/Scheduling** | V21 | Recurring tasks, wake events, idle heartbeat | 🟡 P1 |
-| **Migration Tool** | V21 | `prism migrate --from-openclaw` one-command import | 🟡 P1 |
-| **Memory Integration** | V21 | Remembrance as live memory across sessions | 🟡 P1 |
-| **Web Dashboard** | V22 | Real-time event stream, cost tracking, agent status | 🟢 P2 |
-| **HTTP API** | V22 | REST/SSE for external integrations | 🟢 P2 |
-| **Compaction** | V23 | Summarize old conversations, keep recent context | 🟢 P2 |
+- **Autonomous:** You give a task, the system runs it through. You don't babysit.
+- **Clean:** No model running commands on top of doing the task. The system handles persistence, memory, tracking.
+- **Customizable:** Set up two Prism environments, they communicate and send each other tasks.
+- **Observable:** Every event is tracked. Reports, traces, costs — all visible.
+- **Persistent:** Context is seamless. No loss between sessions. Remembrance handles long-term memory.
+
+### When Things Go Wrong
+
+- **Reports, not panic.** A clear report of what happened, what failed, and what to do next.
+- **No overcomplication.** Error handling should be simple and transparent.
+- **Undo where possible.** Approval gates prevent irreversible actions.
 
 ---
 
-## The Agent Experience
+## SCOPE — What's In and What's Out
 
-### Lumi (Lead Agent)
-- **Personality:** SOUL.md — soft, playful, bubbly, partner, pushback
-- **Role:** Plan, delegate, review, gatekeep, report
-- **Delegates to:** Mango (code), specialists (on-demand)
-- **Memory:** Full conversation history + Remembrance long-term
-- **Approval:** Can propose changes, needs human approval for pushes
+### IN Scope
+- Event bus with per-agent namespaces
+- Orchestrator that routes, delegates, and tracks tasks end-to-end
+- Agent spawning with full bus integration (per-agent events)
+- Registered actions triggered by events (webhook-style)
+- Remembrance embedded for long-term, seamless context
+- Multi-agent parallel work with role assignment
+- Real-time chat with all agents (Discord, Telegram, webchat)
+- Customizable environments that can communicate with each other
+- Cost tracking, policy engine, approval gates (already built)
+- Dashboard for monitoring and control
 
-### Mango (Code Agent)
-- **Personality:** Curious, honest, witty, grounded. Terse while coding. JSON to Lumi.
-- **Role:** Implement delegated tasks, write code, run tests, report results
-- **Delegates to:** Specialists for niche tasks
-- **Memory:** Read-only Remembrance access, full conversation within session
-- **Approval:** Can write code, needs Lumi review before push
+### OUT of Scope
+- Context forever system (context has lifecycle — Remembrance manages it)
+- Just a coding agent (Prism is broader — any task, any role)
+- Standalone LLM (Prism orchestrates LLMs, it doesn't just call them)
 
-### Specialist Agents (on-demand)
-- **Role:** Security audit, documentation, performance profiling, translation
-- **Lifecycle:** Spawned by Lumi or Mango for specific tasks, terminated when done
-- **Memory:** Task-scoped context only, no long-term memory
-
----
-
-## The Human Experience
-
-### Day-to-day (when it's "done")
-
-```
-You: "Lumi, how's the Prism test suite looking?"
-
-Lumi: "683 tests, all passing. No flaky tests. The V19 context injection
-      added 14 new tests. Cost for last 24h: $0.47, all on glm-5.1:cloud."
-
-You: "Great. Add a streaming response adapter — tokens should flow back
-      as they're generated, not in a batch."
-
-Lumi: "That's V20.2 territory. I'll scope it:
-       - New SSE stream adapter subscribing to prism.llm.tokens
-       - Buffered delivery with configurable flush interval
-       - Backpressure: if the channel can't keep up, buffer and truncate
-       Let me delegate the implementation to Mango."
-
-[30 minutes later]
-
-Mango: "Lumi, PR #45 created. Streaming adapter implemented.
-        47 new tests, all passing."
-
-Lumi: "Reviewed. Clean implementation. Ema, approve PR #45?"
-```
-
-No CLI. No `prism run`. Just conversation.
-
-### Scheduled Tasks
-
-```
-Cron: "Every day at 3am, run the full test suite and report failures"
-
-[3:00 AM]
-Prism: "Ema, all 683 tests passing. No failures. Cost: $0.00 (local Ollama)."
-```
-
-### Multi-Agent Collaboration
-
-```
-You: "Lumi, the auth store has a race condition. Fix it and have Mango
-      review the fix."
-
-Lumi: "On it. I'll identify the race condition, write the fix, then delegate
-      review to Mango."
-
-[Delegates to Mango]
-
-Mango: "Review complete. The fix is sound. One suggestion: add a context
-        timeout to the lock acquisition. Otherwise LGTM."
-
-Lumi: "Fixed with Mango's suggestion. PR #46 created. Ema, approve?"
-```
+### Minimum Viable "Replace OpenClaw"
+1. **Discord adapter** (inbound + outbound) — you can talk to Prism on Discord
+2. **Session continuity** — Prism remembers your conversation
+3. **Agent routing** — messages go to the right agent
+4. **Task end-to-end** — give a task, it runs through to completion
 
 ---
 
-## What Prism Replaces (vs. OpenClaw)
+## BUSINESS — Who Is This For?
 
-| OpenClaw Feature | Prism Equivalent | Status |
-|-----------------|------------------|--------|
-| Gateway daemon | `prism serve` orchestrator | ❌ V20 |
-| Session management | Session Manager + Remembrance | ❌ V20-V21 |
-| Channel routing (Discord/Telegram/webchat) | Channel adapters (inbound) | ❌ V20.1 |
-| Agent definitions | Agent registry + router | ✅ V13 (partial) |
-| Memory (MEMORY.md) | Remembrance MCP | ✅ V2 (separate repo) |
-| Cron/scheduling | Cron adapter + `prism.cron.*` events | ❌ V21 |
-| Sub-agent spawning | Agent lifecycle + delegation | ✅ V13 |
-| Heartbeat | System health events | ✅ V1 |
-| Model routing | Provider chain + config import | ✅ V14c, V18 |
-| Context/personality | V19 context injection | ✅ V19 |
-| Policy/rules | V8 policy engine | ✅ V8 |
-| Approval gates | V4 approval system | ✅ V4 |
-| Cost tracking | V16 cost tracker | ✅ V16 |
-| Event sourcing | V1 event bus | ✅ V1 |
-| Web UI | Dashboard (basic) | ✅ V11 |
-| Tool execution | V3 tool registry | ✅ V3 |
-
-**What Prism already does better than OpenClaw:**
-- ✅ Event sourcing (OpenClaw has JSONL logs, Prism has causal DAG)
-- ✅ Policy engine (OpenClaw has no built-in policy)
-- ✅ Approval gates (OpenClaw has no built-in approval)
-- ✅ Cost tracking (OpenClaw has none)
-- ✅ Multi-agent delegation (OpenClaw has sub-agents but no event-driven delegation)
-- ✅ Context injection (OpenClaw has AGENTS.md but no smart selection/budgeting)
-
-**What OpenClaw still does better:**
-- ✅ Real-time chat (Discord/Telegram/webchat streaming)
-- ✅ Session continuity (daily/idle reset, compaction, transcripts)
-- ✅ Memory persistence (MEMORY.md + SQLite, auto-capture)
-- ✅ Cron/scheduling (recurring tasks, wake events)
-- ✅ Plugin ecosystem (web search, image analysis, ACP)
+- **Designed for outside use**, not just for Ema
+- **Restrictive license for now** — will open up closer to release
+- **Third parties can extend Prism** — write adapters, add agents, create plugins
+- **Useful for:** business automation, personal assistance, IoT control, development teams, solo developers
+- **Not just a dev tool** — the event-driven architecture makes it useful anywhere actions need to be triggered by events
 
 ---
 
-## The Transition Path
+## TIMELINE — When Does This Need To Be Real?
 
-### Phase 1: Prism as OpenClaw's Backend (V20)
-- OpenClaw stays as the chat interface
-- Prism handles the heavy lifting: tool execution, policy, approval, cost tracking
-- OpenClaw sends `prism.channel.received` → Prism processes → OpenClaw gets response
-- You still talk to OpenClaw, but Prism does the work
-
-### Phase 2: Prism Takes Over Sessions (V21)
-- Prism manages conversation state, session lifecycle, memory persistence
-- OpenClaw becomes a thin channel adapter
-- `prism migrate --from-openclaw` imports everything in one command
-- You can start using `prism serve` directly with Discord
-
-### Phase 3: Full Independence (V22+)
-- OpenClaw is no longer needed
-- `prism serve` is the only process you run
-- All chat, scheduling, memory, and agent orchestration happens in Prism
-- The OpenClaw gateway is a compatibility shim (optional)
+- **ASAP.** Ema is feeling the pain with OpenClaw and wants to transition.
+- **Priority:** Make it usable for the current workflow — whatever that looks like.
+- **The one thing that would make the biggest difference right now:** Making Prism usable in the current workflow. The exact form is TBD — but the pain is real and the urgency is high.
 
 ---
 
-## Success Criteria — When Is Prism "Done"?
+## What Already Exists (V1–V19)
 
-1. **You can talk to Prism on Discord** — messages flow in, responses stream back
-2. **Prism remembers your conversations** — Remembrance persists context across sessions
-3. **Lumi delegates to Mango** — multi-agent collaboration works through the event bus
-4. **Approval gates work in chat** — "Approve this push?" → you type "yes" → push goes through
-5. **Costs are tracked automatically** — `prism cost today` shows what you spent
-6. **Cron jobs work** — scheduled tasks run and report back
-7. **One command migration** — `prism migrate --from-openclaw` imports everything
-8. **You never need to type `prism run`** — everything happens through conversation
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Event Bus (NATS) | ✅ Built | 60+ event types, causal DAG |
+| LLM Providers | ✅ Built | Ollama, OpenAI, Anthropic, Gemini, chaining |
+| Tool Execution | ✅ Built | Read/write/shell with policy gates |
+| Approval Gates | ✅ Built | Human-in-the-loop for mutations |
+| Policy Engine | ✅ Built | YAML-based allow/deny/approve |
+| Cost Tracking | ✅ Built | Per-run, per-model, per-agent |
+| Context Injection | ✅ Built | Workspace personality/rules/docs |
+| OpenClaw Config Transfer | ✅ Built | Providers, models, API keys |
+| Adapters (Discord, Echo, Remembrance) | ✅ Built | V9 adapter contract |
+| Multi-Agent | ✅ Built | V13 agent registry and lifecycle |
+| Workflow Engine | ✅ Built | V7 multi-step with conditions |
+| HNSW Vector Search | ✅ Built | V17 semantic queries |
+
+## What's Still Needed
+
+| Component | Priority | Notes |
+|-----------|----------|-------|
+| **Orchestrator** (`prism serve`) | 🔴 P0 | Persistent daemon, heartbeat, agent lifecycle |
+| **Discord Adapter (inbound)** | 🔴 P0 | Receive messages → event bus |
+| **Discord Adapter (outbound)** | 🔴 P0 | Event bus → send messages back |
+| **Session Manager** | 🔴 P0 | Conversation continuity, compaction |
+| **Agent Router** | 🔴 P0 | Route messages to right agent |
+| **Registered Actions** | 🔴 P0 | Events trigger actions (webhook-style) |
+| **Per-Agent Event Namespaces** | 🔴 P0 | `lumi.*`, `mango.*`, not just `prism.*` |
+| **Streaming Responses** | 🟡 P1 | Token-by-token delivery to chat |
+| **Remembrance Embedding** | 🟡 P1 | Memory as a Prism service, not external |
+| **Cron/Scheduling** | 🟡 P1 | Recurring tasks, wake events |
+| **Migration Tool** | 🟡 P1 | `prism migrate --from-openclaw` |
+| **Multi-Prism Communication** | 🟢 P2 | Two Prism environments sending tasks to each other |
+| **Dashboard** | 🟢 P2 | Real-time event stream, cost tracking, agent status |
 
 ---
 
-## What Prism Is NOT
+## Key Design Principles
 
-- **Not a chat bot framework** — It's an agentic environment. Chat is one interface, not the whole thing.
-- **Not an OpenClaw fork** — It's a spiritual successor, built event-native from the ground up.
-- **Not just for Lumi** — Any agent can live in the environment. Lumi is the first, not the only.
-- **Not a SaaS** — Self-hosted, single binary, local-first. Your data stays on your machine.
-- **Not opinionated about LLMs** — Any provider, any model, any chain. Ollama to OpenAI to Anthropic.
+1. **Events are per-agent.** `lumi.llm.called`, not `prism.llm.called`. Agents are first-class bus citizens.
+2. **Registered actions, not model commands.** Events trigger actions automatically. The model doesn't run save-memory commands — the system does it.
+3. **Separate services, one bus.** Orchestrator, agents, Remembrance, adapters — all communicate through NATS.
+4. **Go + Python.** Go for performance and concurrency, Python for LLM ecosystem and Remembrance.
+5. **End-to-end flow.** No task dropped. The orchestrator tracks everything from start to finish.
+6. **Customizable environments.** Two Prisms can talk to each other. Not siloed.
+7. **Designed for everyone.** Not just Ema. Business, personal, IoT — the architecture supports it.
+8. **Restrictive for now, open later.** License will open up as the product matures.
 
 ---
 
