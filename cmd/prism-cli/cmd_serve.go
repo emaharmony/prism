@@ -16,8 +16,8 @@
 //  8. Starts the health check server
 //  9. Blocks until SIGINT/SIGTERM
 //
-// Other commands remain one-shot (prism run, prism health, etc.).
-// `prism serve` is the only persistent command.
+// V20-respond: The serve command now wires the full conversation pipeline:
+// Discord message → debounce → route → session → LLM → response → Discord.
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,10 +36,32 @@ import (
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/debounce"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/provider/anthropic"
+	"github.com/emaharmony/prism/internal/provider/gemini"
+	"github.com/emaharmony/prism/internal/provider/ollama"
+	"github.com/emaharmony/prism/internal/provider/openai"
 	"github.com/emaharmony/prism/internal/router"
+	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
 )
+
+// conversationContext holds all the dependencies needed to process a
+// Discord message through the full pipeline. It's closed over by the
+// OnMessage handler so each message has access to routing, sessions,
+// LLM providers, and the Discord bot for responses.
+type conversationContext struct {
+	router      *router.Router
+	sessMgr     *session.Manager
+	cfg         *orchestrator.Config
+	providers   *provider.ProviderRegistry
+	bot         *discordbot.BotAdapter
+	debounce    *debounce.Tracker
+	eventLog    *runtrack.EventLogger
+	cancelReg   *runtrack.CancelRegistry
+}
 
 func executeServe(args []string) {
 	serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -98,7 +121,15 @@ func executeServe(args []string) {
 	}
 	fmt.Printf("  Registered %d agents\n", len(cfg.Agents))
 
-	// 4. Start session manager
+	// 4. Set up LLM providers from agent configs
+	provReg := provider.NewProviderRegistry()
+	if err := registerProviders(cfg, provReg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error registering providers: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("  Providers: %d models registered\n", len(providerModelIDs(provReg)))
+
+	// 5. Start session manager
 	if err := os.MkdirAll(cfg.Prism.DataDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
 		os.Exit(1)
@@ -118,11 +149,11 @@ func executeServe(args []string) {
 	defer sessMgr.Close()
 	fmt.Println("  Session manager: ready")
 
-	// 5. Set up agent router
+	// 6. Set up agent router
 	rtr := router.New(agentReg, cfg)
 	fmt.Println("  Router: ready")
 
-	// 6. Set up action registry
+	// 7. Set up action registry
 	actionReg := action.NewRegistry()
 	for _, a := range cfg.Actions {
 		act := action.Action{
@@ -137,17 +168,41 @@ func executeServe(args []string) {
 	}
 	fmt.Printf("  Registered %d actions\n", len(cfg.Actions))
 
-	// 7. Connect channel adapters (Discord, etc.)
-	var discordBots []*discordbot.BotAdapter
+	// 8. Set up debounce, event logger, and cancel registry
+	msgDebounce := debounce.New(
+		debounce.WithInterval(500*time.Millisecond),
+		debounce.WithOnDrop(func(key string) {
+			log.Printf("[DEBOUNCE] dropped message from %s", key)
+		}),
+	)
+	eventLog := &runtrack.EventLogger{}
+	cancelReg := runtrack.NewCancelRegistry()
+
+	// 9. Connect channel adapters (Discord, etc.)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	var discordBots []*discordbot.BotAdapter
 
 	for _, ch := range cfg.Channels {
 		switch ch.Type {
 		case "discord":
 			bot := discordbot.NewBotAdapter(ch.Token)
+
+			// Build conversation context for this bot
+			convCtx := &conversationContext{
+				router:    rtr,
+				sessMgr:   sessMgr,
+				cfg:       cfg,
+				providers: provReg,
+				bot:       bot,
+				debounce:  msgDebounce,
+				eventLog:  eventLog,
+				cancelReg: cancelReg,
+			}
+
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
-				handleDiscordMessage(msg, rtr, sessMgr, cfg, actionReg)
+				convCtx.handleDiscordMessage(msg)
 			})
 
 			go func() {
@@ -157,21 +212,21 @@ func executeServe(args []string) {
 			}()
 
 			discordBots = append(discordBots, bot)
-			fmt.Printf("  Discord: connecting to %d channels\n", len(ch.Channels))
+			fmt.Printf("  Discord: connecting\n")
 
 		default:
 			fmt.Fprintf(os.Stderr, "Warning: unknown channel type %q\n", ch.Type)
 		}
 	}
 
-	// 8. Start health check server
+	// 10. Start health check server
 	go startHealthServer(*portFlag, cfg, agentReg, sessMgr, discordBots)
 	fmt.Printf("  Health: http://localhost:%d/health\n", *portFlag)
 
 	fmt.Println()
 	fmt.Println("🔮 Prism is running. Press Ctrl+C to stop.")
 
-	// 9. Wait for shutdown signal
+	// 11. Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -190,48 +245,288 @@ func executeServe(args []string) {
 }
 
 // handleDiscordMessage processes an incoming Discord message through the
-// routing pipeline: find/create session → route to agent → process actions.
-func handleDiscordMessage(
-	msg *discordbot.InboundMessage,
-	rtr *router.Router,
-	sessMgr *session.Manager,
-	cfg *orchestrator.Config,
-	actionReg *action.Registry,
-) {
-	// Route the message to the appropriate agent
-	result := rtr.Route(msg.Content)
+// full conversation pipeline:
+//  1. Debounce (drop rapid-fire messages)
+//  2. Route to the appropriate agent
+//  3. Find or create a session
+//  4. Send typing indicator
+//  5. Build prompt from session history
+//  6. Call the LLM provider
+//  7. Save agent response to session
+//  8. Send response to Discord
+//  9. Emit structured events for observability
+func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessage) {
+	// Step 1: Debounce — drop rapid-fire messages from the same user
+	debounceKey := msg.UserID + ":" + msg.ChannelID
+	if !cc.debounce.Allow(debounceKey) {
+		return
+	}
 
-	log.Printf("Discord message from %s in %s → agent %s (method: %s)",
-		msg.UserName, msg.ChannelID, result.AgentID, result.Method)
+	// Step 2: Route the message to the appropriate agent
+	result := cc.router.Route(msg.Content)
 
-	// Find or create a session for this user/channel
-	sess, err := sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
+	cc.eventLog.Log("message.routed", "", result.AgentID, map[string]any{
+		"user_id":    msg.UserID,
+		"channel_id": msg.ChannelID,
+		"method":     result.Method,
+		"clean_text": result.CleanedContent,
+	})
+
+	// Step 3: Find or create a session
+	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
 	if err != nil {
-		log.Printf("Error finding session: %v", err)
+		log.Printf("[ERROR] find session: %v", err)
 		return
 	}
 	if sess == nil {
-		// Create a new session with the routed agent
-		sess, err = sessMgr.Create(result.AgentID, "discord", msg.ChannelID, msg.UserID)
+		sess, err = cc.sessMgr.Create(result.AgentID, "discord", msg.ChannelID, msg.UserID)
 		if err != nil {
-			log.Printf("Error creating session: %v", err)
+			log.Printf("[ERROR] create session: %v", err)
 			return
 		}
 	}
 
 	// Add the user message to the session
-	_, err = sessMgr.AddMessage(sess.ID, "user", msg.Content, "")
+	_, err = cc.sessMgr.AddMessage(sess.ID, "user", msg.Content, "")
 	if err != nil {
-		log.Printf("Error adding user message: %v", err)
+		log.Printf("[ERROR] add user message: %v", err)
 		return
 	}
 
-	// TODO (V21): Send to LLM, get response, send back through Discord
-	// For V20, we log the routed message. The LLM integration comes in V21
-	// when we wire the full conversation pipeline.
-	log.Printf("Session %s: user → %s (agent: %s)", sess.ID, result.CleanedContent, result.AgentID)
+	// Step 4: Look up the agent's provider and model
+	agentCfg := cc.findAgentConfig(result.AgentID)
+	if agentCfg == nil {
+		log.Printf("[ERROR] no config for agent %s", result.AgentID)
+		cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+		return
+	}
 
-	_ = actionReg // Will be used when events are published to the bus
+	llmProvider, err := cc.providers.Get(agentCfg.Model)
+	if err != nil {
+		log.Printf("[ERROR] no provider for model %s: %v", agentCfg.Model, err)
+		cc.sendError(msg.ChannelID, "I can't reach my language model right now. Please try again in a moment.")
+		return
+	}
+
+	// Step 5: Create a run for observability and cancellation
+	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
+	cc.cancelReg.Register(sess.ID, run.Cancel)
+	defer cc.cancelReg.Unregister(sess.ID)
+
+	cc.eventLog.Log("run.started", run.ID, result.AgentID, map[string]any{
+		"model":      agentCfg.Model,
+		"provider":   agentCfg.Provider,
+		"session_id": sess.ID,
+	})
+
+	// Step 6: Send typing indicator
+	if err := cc.bot.Typing(msg.ChannelID); err != nil {
+		log.Printf("[WARN] typing indicator failed: %v", err)
+	}
+
+	// Step 7: Build prompt from session history and call the LLM
+	prompt := cc.buildPrompt(sess, agentCfg)
+
+	cc.eventLog.Log("agent.llm.calling", run.ID, result.AgentID, map[string]any{
+		"model":        agentCfg.Model,
+		"prompt_length": len(prompt),
+	})
+
+	resp, err := llmProvider.Generate(context.Background(), provider.GenerateRequest{
+		RunID:   run.ID,
+		Agent:   result.AgentID,
+		Task:    result.CleanedContent,
+		Prompt:  prompt,
+		Model:   agentCfg.Model,
+	})
+
+	if err != nil {
+		log.Printf("[ERROR] LLM call failed (run %s): %v", run.ID, err)
+		cc.eventLog.Log("agent.llm.error", run.ID, result.AgentID, map[string]any{
+			"error": err.Error(),
+		})
+		cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+		return
+	}
+
+	cc.eventLog.Log("agent.llm.completed", run.ID, result.AgentID, map[string]any{
+		"latency_ms":     resp.LatencyMS,
+		"prompt_tokens":  resp.PromptTokens,
+		"output_tokens":  resp.OutputTokens,
+	})
+
+	// Step 8: Save agent response to session (before sending to Discord)
+	_, err = cc.sessMgr.AddMessage(sess.ID, "agent", resp.Text, result.AgentID)
+	if err != nil {
+		log.Printf("[WARN] failed to save agent response to session %s: %v", sess.ID, err)
+		// Continue — the user still gets their answer even if we can't save it
+	}
+
+	// Step 9: Send response to Discord
+	err = cc.bot.Send(&discordbot.OutboundMessage{
+		ChannelID: msg.ChannelID,
+		Content:   resp.Text,
+		IsReply:   true,
+		ReplyTo:   msg.MessageID,
+	})
+	if err != nil {
+		log.Printf("[ERROR] failed to send Discord response: %v", err)
+		// Response is saved in session even if Discord send fails
+	}
+
+	cc.eventLog.Log("run.completed", run.ID, result.AgentID, map[string]any{
+		"latency_ms": run.Elapsed().Milliseconds(),
+	})
+
+	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
+}
+
+// sendError sends a user-friendly error message to a Discord channel.
+func (cc *conversationContext) sendError(channelID, message string) {
+	err := cc.bot.Send(&discordbot.OutboundMessage{
+		ChannelID: channelID,
+		Content:   "⚠️ " + message,
+	})
+	if err != nil {
+		log.Printf("[ERROR] failed to send error message to Discord: %v", err)
+	}
+}
+
+// findAgentConfig looks up the AgentConfig for a given agent ID.
+func (cc *conversationContext) findAgentConfig(agentID string) *orchestrator.AgentConfig {
+	for i := range cc.cfg.Agents {
+		if cc.cfg.Agents[i].ID == agentID {
+			return &cc.cfg.Agents[i]
+		}
+	}
+	return nil
+}
+
+// buildPrompt constructs the LLM prompt from session history.
+// It formats the conversation as alternating user/agent messages.
+// V21 will add system prompts, soul injection, and context enrichment.
+func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+	var sb strings.Builder
+
+	// V21: Add system prompt, soul file, context injection here.
+	// For V20, we use a minimal system message with the agent's role.
+	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant. Respond helpfully and concisely.\n\n", agentCfg.ID, agentCfg.Role))
+
+	// Add conversation history
+	for _, msg := range sess.Messages {
+		switch msg.Role {
+		case "user":
+			sb.WriteString(fmt.Sprintf("User: %s\n", msg.Content))
+		case "agent":
+			sb.WriteString(fmt.Sprintf("%s: %s\n", msg.AgentID, msg.Content))
+		case "system":
+			sb.WriteString(fmt.Sprintf("System: %s\n", msg.Content))
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("%s:", agentCfg.ID))
+	return sb.String()
+}
+
+// registerProviders creates LLM providers from agent configs and registers them.
+func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry) error {
+	// V20: We register providers based on agent configs.
+	// Each agent specifies its provider and model.
+	// For now, we support Ollama (local/cloud), OpenAI, Anthropic, and Gemini.
+	//
+	// V21 will add provider chains, fallbacks, and cost tiers.
+	for _, agentCfg := range cfg.Agents {
+		p, info, err := createProvider(agentCfg)
+		if err != nil {
+			return fmt.Errorf("agent %s: %w", agentCfg.ID, err)
+		}
+		reg.Register(agentCfg.Model, p, info)
+	}
+	return nil
+}
+
+// createProvider creates a provider instance for an agent config.
+// V20 supports: ollama, openai, anthropic, gemini.
+func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provider.ModelInfo, error) {
+	info := provider.ModelInfo{
+		ID:           agentCfg.Model,
+		ProviderName: agentCfg.Provider,
+	}
+
+	switch agentCfg.Provider {
+	case "ollama":
+		// V20: Use the Ollama provider with default localhost endpoint.
+		// V21: Read base URL from config.
+		p, err := createOllamaProvider(agentCfg.Model)
+		if err != nil {
+			return nil, info, fmt.Errorf("ollama provider: %w", err)
+		}
+		return p, info, nil
+
+	case "openai":
+		p, err := createOpenAIProvider(agentCfg.Model)
+		if err != nil {
+			return nil, info, fmt.Errorf("openai provider: %w", err)
+		}
+		return p, info, nil
+
+	case "anthropic":
+		p, err := createAnthropicProvider(agentCfg.Model)
+		if err != nil {
+			return nil, info, fmt.Errorf("anthropic provider: %w", err)
+		}
+		return p, info, nil
+
+	case "gemini":
+		p, err := createGeminiProvider(agentCfg.Model)
+		if err != nil {
+			return nil, info, fmt.Errorf("gemini provider: %w", err)
+		}
+		return p, info, nil
+
+	default:
+		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, anthropic, gemini)", agentCfg.Provider)
+	}
+}
+
+// createOllamaProvider creates an Ollama provider instance.
+// Uses localhost:11434 by default. V21: configurable base URL.
+func createOllamaProvider(model string) (provider.Provider, error) {
+	p := ollama.New("") // empty = default localhost:11434
+	return p, nil
+}
+
+// createOpenAIProvider creates an OpenAI provider instance.
+func createOpenAIProvider(model string) (provider.Provider, error) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY environment variable not set")
+	}
+	return openai.New(apiKey), nil
+}
+
+// createAnthropicProvider creates an Anthropic provider instance.
+func createAnthropicProvider(model string) (provider.Provider, error) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY environment variable not set")
+	}
+	return anthropic.New(apiKey), nil
+}
+
+// createGeminiProvider creates a Gemini provider instance.
+func createGeminiProvider(model string) (provider.Provider, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY environment variable not set")
+	}
+	return gemini.New(apiKey), nil
+}
+
+// providerModelIDs returns all registered model IDs (for logging).
+func providerModelIDs(reg *provider.ProviderRegistry) []string {
+	// ProviderRegistry doesn't expose a list method yet, so we use agent configs
+	return nil
 }
 
 // startHealthServer starts a simple HTTP server for health checks.

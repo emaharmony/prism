@@ -49,6 +49,9 @@ type PrismConfig struct {
 	// DataDir is where SQLite databases and run artifacts are stored.
 	DataDir string `yaml:"data_dir"`
 
+	// Port is the health check server port. Default 8321.
+	Port int `yaml:"port"`
+
 	// LogLevel sets verbosity: debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
 }
@@ -137,6 +140,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Prism: PrismConfig{
 			NATSURL:  "",
+		Port:     8321,
 			DataDir:  filepath.Join(os.Getenv("HOME"), ".prism", "data"),
 			LogLevel: "info",
 		},
