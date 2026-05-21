@@ -27,17 +27,16 @@
 | Add `prism status` CLI command | ⬜ | Shows running agents, sessions, uptime |
 | Integration test: start, run, stop | ⬜ | Verify daemon lifecycle |
 
-### M1.2: Per-Agent Event Namespaces
+### M1.2: Per-Agent Event Namespaces (Dynamic)
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Design namespace translation layer | ⬜ | `lumi.*` ↔ `prism.*` bridge |
-| Add `lumi.*` event types | ⬜ | Lumi-specific events |
-| Add `mango.*` event types | ⬜ | Mango-specific events |
+| Design namespace translation layer | ⬜ | `<agent-id>.*` ↔ `prism.*` bridge, agent ID from config |
+| Add `<agent-id>.*` event types | ⬜ | Dynamic based on agent config, not hardcoded |
 | Add `remembrance.*` event types | ⬜ | Memory events |
-| Update event schema validation | ⬜ | V19 schema.go needs agent namespaces |
+| Update event schema validation | ⬜ | V19 schema.go needs dynamic agent namespaces |
 | Backward compatibility test | ⬜ | Existing `prism.*` events still work |
-| Update cost tracking for agent namespaces | ⬜ | `lumi.llm.completed` tracks Lumi's costs |
+| Update cost tracking for agent namespaces | ⬜ | `<agent-id>.llm.completed` tracks per-agent costs |
 
 ### M1.3: Session Manager
 
@@ -178,12 +177,12 @@
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Per-agent namespace vs `prism.*` prefix | 🔴 Decide | Ema confirmed per-agent. Need to design bridge layer. |
+| Per-agent namespace (dynamic) | ✅ Decided | `<agent-id>.*` from config, not hardcoded. Need to design bridge layer. |
 | Remembrance integration depth | 🟡 Decide | Embedded service vs. HTTP calls? Ema said embedded. |
 | Discord library choice | ⬜ Decide | discordgo vs. disgo vs. custom? |
 | Session storage format | ⬜ Decide | SQLite schema for sessions |
 | Streaming protocol | ⬜ Decide | SSE vs. WebSocket vs. Discord native streaming |
-| Agent configuration format | ⬜ Decide | How to define agents (YAML, JSON, Go struct?) |
+| Agent configuration format | ⬜ Decide | YAML config with id/role/model/context fields |
 
 ---
 

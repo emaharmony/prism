@@ -63,20 +63,61 @@ Prism is NOT a monolith. It's a collection of separate services that communicate
 └─────────────┘ └─────────────┘  └─────────────────┘ └─────────────┘
 ```
 
-### Agent Events Are Per-Agent, Not Per-System
+### Per-Agent Namespaces (Dynamic)
 
-**Critical design decision from Ema:** When agents spawn, they push their own events on the bus with their identity. Not `prism.llm.called` — **`lumi.llm.called`**. Each agent has its own event namespace:
+Each agent publishes events under its own namespace. The namespace is **determined by the agent's ID in its configuration**, not hardcoded. What we call "Lumi" and "Mango" is specific to one setup — another user might have "alex", "coder", and "analyst".
+
+Agent definitions are in the config:
+
+```yaml
+agents:
+  - id: lumi                # This becomes the event namespace
+    role: lead               # Role: lead, coder, researcher, etc.
+    model: glm-5.1:cloud
+    context: soul,agents     # V19 context injection
+
+  - id: mango
+    role: coder
+    model: deepseek-v4-pro:cloud
+    context: agents
+
+  - id: researcher-01
+    role: researcher
+    model: gpt-4o
+```
+
+The `id` field becomes the event namespace prefix:
 
 ```
-lumi.agent.started       → Lumi begins reasoning
-lumi.agent.output        → Lumi produces output
-lumi.tool.completed      → Lumi finishes a tool call
-mango.agent.started      → Mango begins coding
-mango.tool.completed      → Mango finishes a tool call
-remembrance.memory.stored → Remembrance saves context
+<agent-id>.agent.started          → Agent begins reasoning
+<agent-id>.agent.output           → Agent produces output
+<agent-id>.agent.completed       → Agent finishes
+<agent-id>.agent.failed            → Agent encounters error
+<agent-id>.llm.requested          → Agent calls an LLM
+<agent-id>.llm.completed          → LLM call completes
+<agent-id>.tool.requested         → Agent requests a tool
+<agent-id>.tool.completed         → Tool call completes
+<agent-id>.context.injected       → Context injected into agent
+<agent-id>.channel.sent           → Agent sends message to user
 ```
 
-This means agents are first-class citizens on the bus, not anonymous workers.
+Examples for different setups:
+
+```
+# Ema's setup
+lumi.agent.started          → Lumi begins
+mango.tool.completed        → Mango finishes a tool call
+
+# Another user's setup
+alex.agent.started          → Alex begins
+coder.tool.completed       → Coder finishes a tool call
+
+# Business setup
+support-bot.agent.output   → Support bot responds
+sales-agent.agent.started → Sales agent begins
+```
+
+This means agents are first-class citizens on the bus, not anonymous workers. The namespace is fully dynamic — configured by the user, not hardcoded by the system.
 
 ### Languages: Go + Python
 
@@ -199,7 +240,7 @@ Prism calls Ollama/OpenAI/Anthropic directly. No delegation to a separate LLM se
 | **Session Manager** | 🔴 P0 | Conversation continuity, compaction |
 | **Agent Router** | 🔴 P0 | Route messages to right agent |
 | **Registered Actions** | 🔴 P0 | Events trigger actions (webhook-style) |
-| **Per-Agent Event Namespaces** | 🔴 P0 | `lumi.*`, `mango.*`, not just `prism.*` |
+| **Per-Agent Event Namespaces** | 🔴 P0 | Dynamic `<agent-id>.*` based on config, not hardcoded |
 | **Streaming Responses** | 🟡 P1 | Token-by-token delivery to chat |
 | **Remembrance Embedding** | 🟡 P1 | Memory as a Prism service, not external |
 | **Cron/Scheduling** | 🟡 P1 | Recurring tasks, wake events |
@@ -211,7 +252,7 @@ Prism calls Ollama/OpenAI/Anthropic directly. No delegation to a separate LLM se
 
 ## Key Design Principles
 
-1. **Events are per-agent.** `lumi.llm.called`, not `prism.llm.called`. Agents are first-class bus citizens.
+1. **Events are per-agent and dynamic.** `<agent-id>.llm.called`, not `prism.llm.called`. The agent ID comes from config — "lumi" and "mango" are examples, not hardcoded. Agents are first-class bus citizens.
 2. **Registered actions, not model commands.** Events trigger actions automatically. The model doesn't run save-memory commands — the system does it.
 3. **Separate services, one bus.** Orchestrator, agents, Remembrance, adapters — all communicate through NATS.
 4. **Go + Python.** Go for performance and concurrency, Python for LLM ecosystem and Remembrance.

@@ -91,26 +91,47 @@ Prism is an event-native agentic environment. Separate services communicate thro
 
 ## Event Namespace Design
 
-### Per-Agent Namespaces
+### Per-Agent Namespaces (Dynamic)
 
-Each agent publishes events under its own namespace. This is a fundamental design shift from V1-V19 where all events used `prism.*`.
+Each agent publishes events under its own namespace. The namespace is **determined by the agent's ID in its configuration**, not hardcoded. "Lumi" and "Mango" are specific to one setup — another user might have "alex", "coder", or "support-bot".
+
+Agent definitions are in the config:
+
+```yaml
+agents:
+  - id: lumi                # This becomes the event namespace
+    role: lead               # Role: lead, coder, researcher, etc.
+    model: glm-5.1:cloud
+    context: soul,agents
+
+  - id: mango
+    role: coder
+    model: deepseek-v4-pro:cloud
+    context: agents
+
+  - id: researcher-01
+    role: researcher
+    model: gpt-4o
+```
+
+The `id` field becomes the event namespace prefix:
 
 ```
-lumi.agent.started          → Lumi begins reasoning
-lumi.agent.output           → Lumi produces output
-lumi.agent.completed       → Lumi finishes
-lumi.agent.failed           → Lumi encounters error
-lumi.llm.requested          → Lumi calls an LLM
-lumi.llm.completed          → LLM call completes
-lumi.tool.requested         → Lumi requests a tool
-lumi.tool.completed         → Tool call completes
-lumi.context.injected       → Context injected into Lumi
+<agent-id>.agent.started          → Agent begins reasoning
+<agent-id>.agent.output           → Agent produces output
+<agent-id>.agent.completed       → Agent finishes
+<agent-id>.agent.failed            → Agent encounters error
+<agent-id>.llm.requested          → Agent calls an LLM
+<agent-id>.llm.completed          → LLM call completes
+<agent-id>.tool.requested         → Agent requests a tool
+<agent-id>.tool.completed         → Tool call completes
+<agent-id>.context.injected       → Context injected into agent
+<agent-id>.channel.sent           → Agent sends message to user
+```
 
-mango.agent.started          → Mango begins coding
-mango.agent.output           → Mango produces output
-mango.agent.completed       → Mango finishes
-mango.tool.completed         → Mango finishes a tool call
+Service namespaces (Remembrance, adapters) use their own prefixes:
 
+```
 remembrance.memory.stored    → Context saved
 remembrance.memory.recalled  → Context retrieved
 remembrance.gate.extract    → Memory extraction triggered
@@ -334,7 +355,7 @@ External NATS cluster, services scale independently.
 
 ## Compatibility with V1–V19
 
-All existing `prism.*` events continue to work. Per-agent namespaces (`lumi.*`, `mango.*`) are additive — they don't replace `prism.*` system events. The orchestrator translates between them:
+All existing `prism.*` events continue to work. Per-agent namespaces are dynamic — configured by the user in their agent definitions. The namespace prefix comes from the agent's `id` field, not hardcoded. The orchestrator translates between them:
 
 - `lumi.agent.output` with `correlation_id: X` is also published as `prism.agent.output` with the same correlation ID
 - This means existing V1–V19 code (cost tracking, policy, projections) continues to work without modification
