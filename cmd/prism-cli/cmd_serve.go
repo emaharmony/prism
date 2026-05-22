@@ -46,6 +46,7 @@ import (
 	"github.com/emaharmony/prism/internal/provider/gemini"
 	"github.com/emaharmony/prism/internal/provider/ollama"
 	"github.com/emaharmony/prism/internal/provider/openai"
+	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
@@ -69,6 +70,7 @@ type conversationContext struct {
 	ctxBuilder  *context.Builder    // V21: workspace context injection
 	natsConn    *nats.Conn           // V21: NATS bus connection for event publishing
 	actionReg   *action.Registry     // V21: action registry for event-triggered actions
+	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
 }
 
 func executeServe(args []string) {
@@ -215,6 +217,18 @@ func executeServe(args []string) {
 				ctxBuilder = context.NewBuilder(filepath.Join(os.Getenv("HOME"), ".openclaw", "workspace"))
 			}
 
+			// V21: Create Remembrance client if enabled
+			var remClient *remembrance.Client
+			if cfg.Remembrance.Enabled {
+				remClient = remembrance.NewClient(cfg.Remembrance.URL)
+				if remClient.IsAvailable() {
+					fmt.Println("  Remembrance: connected")
+				} else {
+					log.Printf("[WARN] Remembrance enabled but not reachable at %s", cfg.Remembrance.URL)
+					remClient = nil // Disable gracefully
+				}
+			}
+
 			// Build conversation context for this bot
 			convCtx := &conversationContext{
 				router:    rtr,
@@ -228,6 +242,7 @@ func executeServe(args []string) {
 				ctxBuilder: ctxBuilder,
 				natsConn:  natsConn,
 				actionReg: actionReg,
+				remClient: remClient,
 			}
 
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
@@ -440,6 +455,25 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"channel_id": msg.ChannelID,
 		"user_id":    msg.UserID,
 	})
+
+	// Step 10: Auto-save to Remembrance (V21)
+	// Asynchronously capture the agent output for long-term memory.
+	// This is fire-and-forget — memory save failure should never block the response.
+	if cc.remClient != nil {
+		go func() {
+			_, err := cc.remClient.Capture(
+				resp.Text,
+				result.AgentID,
+				"conversation",
+				"working", // Working memory tier
+			)
+			if err != nil {
+				log.Printf("[REMEMBRANCE] capture failed (run %s): %v", run.ID, err)
+			} else {
+				log.Printf("[REMEMBRANCE] captured output from run %s", run.ID)
+			}
+		}()
+	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 }
