@@ -22,6 +22,7 @@ package main
 
 import (
 	ctxcontext "context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -48,6 +49,8 @@ import (
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
+
+	"github.com/nats-io/nats.go"
 )
 
 // conversationContext holds all the dependencies needed to process a
@@ -63,7 +66,9 @@ type conversationContext struct {
 	debounce    *debounce.Tracker
 	eventLog    *runtrack.EventLogger
 	cancelReg   *runtrack.CancelRegistry
-	ctxBuilder  *context.Builder // V21: workspace context injection
+	ctxBuilder  *context.Builder    // V21: workspace context injection
+	natsConn    *nats.Conn           // V21: NATS bus connection for event publishing
+	actionReg   *action.Registry     // V21: action registry for event-triggered actions
 }
 
 func executeServe(args []string) {
@@ -115,6 +120,15 @@ func executeServe(args []string) {
 	} else {
 		fmt.Printf("  NATS: external at %s\n", natsURL)
 	}
+
+	// 2b. Connect to NATS
+	natsConn, err := bus.ConnectToBus(natsURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to NATS: %v\n", err)
+		os.Exit(1)
+	}
+	defer natsConn.Close()
+	fmt.Println("  NATS: connected")
 
 	// 3. Register agents
 	agentReg := agent.NewRegistry()
@@ -212,6 +226,8 @@ func executeServe(args []string) {
 				eventLog:  eventLog,
 				cancelReg: cancelReg,
 				ctxBuilder: ctxBuilder,
+				natsConn:  natsConn,
+				actionReg: actionReg,
 			}
 
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
@@ -284,6 +300,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"method":     result.Method,
 		"clean_text": result.CleanedContent,
 	})
+	cc.publishEvent("prism.channel.received", map[string]any{
+		"user_id":    msg.UserID,
+		"channel_id": msg.ChannelID,
+		"agent_id":  result.AgentID,
+		"method":     result.Method,
+	})
 
 	// Step 3: Find or create a session
 	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
@@ -331,6 +353,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"provider":   agentCfg.Provider,
 		"session_id": sess.ID,
 	})
+	cc.publishEvent(result.AgentID+".run.started", map[string]any{
+		"run_id":     run.ID,
+		"model":      agentCfg.Model,
+		"provider":   agentCfg.Provider,
+		"session_id": sess.ID,
+	})
 
 	// Step 6: Send typing indicator
 	if err := cc.bot.Typing(msg.ChannelID); err != nil {
@@ -342,6 +370,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	cc.eventLog.Log("agent.llm.calling", run.ID, result.AgentID, map[string]any{
 		"model":        agentCfg.Model,
+		"prompt_length": len(prompt),
+	})
+	cc.publishEvent(result.AgentID+".llm.calling", map[string]any{
+		"run_id":        run.ID,
+		"model":          agentCfg.Model,
 		"prompt_length": len(prompt),
 	})
 
@@ -367,6 +400,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"prompt_tokens":  resp.PromptTokens,
 		"output_tokens":  resp.OutputTokens,
 	})
+	cc.publishEvent(result.AgentID+".llm.completed", map[string]any{
+		"run_id":          run.ID,
+		"latency_ms":      resp.LatencyMS,
+		"prompt_tokens":   resp.PromptTokens,
+		"output_tokens":   resp.OutputTokens,
+	})
 
 	// Step 8: Save agent response to session (before sending to Discord)
 	_, err = cc.sessMgr.AddMessage(sess.ID, "agent", resp.Text, result.AgentID)
@@ -391,6 +430,17 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"latency_ms": run.Elapsed().Milliseconds(),
 	})
 
+	cc.publishEvent(result.AgentID+".run.completed", map[string]any{
+		"run_id":     run.ID,
+		"latency_ms": run.Elapsed().Milliseconds(),
+		"output":     resp.Text,
+	})
+	cc.publishEvent(result.AgentID+".channel.sent", map[string]any{
+		"run_id":     run.ID,
+		"channel_id": msg.ChannelID,
+		"user_id":    msg.UserID,
+	})
+
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 }
 
@@ -403,6 +453,30 @@ func (cc *conversationContext) sendError(channelID, message string) {
 	if err != nil {
 		log.Printf("[ERROR] failed to send error message to Discord: %v", err)
 	}
+}
+
+// publishEvent publishes an event to the NATS bus.
+// V21: Events use per-agent namespace prefixes (<agent-id>.*).
+// System events use the prism.* namespace.
+// If NATS is not connected, the event is logged but not published.
+func (cc *conversationContext) publishEvent(subject string, payload map[string]any) {
+	if cc.natsConn == nil || !cc.natsConn.IsConnected() {
+		log.Printf("[EVENT] %s (NATS not connected, skipped)", subject)
+		return
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[EVENT] marshal error for %s: %v", subject, err)
+		return
+	}
+
+	if err := cc.natsConn.Publish(subject, data); err != nil {
+		log.Printf("[EVENT] publish error for %s: %v", subject, err)
+		return
+	}
+
+	log.Printf("[EVENT] → %s", subject)
 }
 
 // findAgentConfig looks up the AgentConfig for a given agent ID.
