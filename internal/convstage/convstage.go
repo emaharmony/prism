@@ -163,6 +163,17 @@ func (s *ConversationStage) processStream(ctx context.Context, chunkCh <-chan pr
 		defer close(streamDone)
 
 		for chunk := range chunkCh {
+			// Cooperative cancellation: abort reading if context is done,
+			// even if the provider doesn't check ctx.Done() itself.
+			select {
+			case <-ctx.Done():
+				mu.Lock()
+				streamErr = ctx.Err()
+				mu.Unlock()
+				return
+			default:
+			}
+
 			if chunk.Error != nil {
 				mu.Lock()
 				streamErr = chunk.Error
@@ -172,6 +183,13 @@ func (s *ConversationStage) processStream(ctx context.Context, chunkCh <-chan pr
 
 			mu.Lock()
 			for _, token := range chunk.Tokens {
+				// Defense-in-depth: stop accumulating if text exceeds 10KB.
+				// Discord's limit is 2000 chars; 10KB is well beyond useful output.
+				if fullText.Len()+len(token) > 10240 {
+					streamErr = fmt.Errorf("response exceeded maximum size (10KB)")
+					mu.Unlock()
+					return
+				}
 				fullText.WriteString(token)
 				deferredEdit += token
 				totalTokens++

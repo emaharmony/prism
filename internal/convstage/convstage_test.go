@@ -341,3 +341,111 @@ func TestConversationStage_StreamingBatching(t *testing.T) {
 		t.Error("should have at least a placeholder send")
 	}
 }
+
+// --- Feedback Loop 3: Additional edge-case tests ---
+
+func TestEditMessageSafe_EditError(t *testing.T) {
+	sender := &mockSender{editErr: fmt.Errorf("Discord rate limited")}
+	stage := NewConversationStage(sender, nil, "mock-model", "lumi")
+
+	// Should not panic when EditMessage fails — just logs
+	stage.editMessageSafe("channel-1", "msg-123", "Hello world!")
+
+	// No edits actually recorded since editErr is set
+	if sender.getEditCount() != 0 {
+		t.Errorf("expected 0 edits (all fail), got %d", sender.getEditCount())
+	}
+}
+
+func TestConversationStage_BothStreamAndSyncFail(t *testing.T) {
+	sender := &mockSender{}
+	prov := mock.NewFailing() // Both GenerateStream and Generate fail
+
+	stage := NewConversationStage(sender, prov, "mock-model", "lumi")
+
+	result, err := stage.ExecuteStreaming(context.Background(), "prompt", "channel-1")
+	if err == nil {
+		t.Error("expected error when both streaming and sync fail")
+	}
+	if result != nil {
+		t.Error("expected nil result when both fail")
+	}
+
+	// Placeholder should exist and be edited with error message
+	edits := sender.getAllEdits()
+	if len(edits) == 0 {
+		t.Error("placeholder should be edited with error message")
+	} else {
+		lastEdit := edits[len(edits)-1]
+		if !strings.Contains(lastEdit, "⚠️") {
+			t.Errorf("error edit should contain warning, got %q", lastEdit)
+		}
+	}
+}
+
+func TestConversationStage_MaxTextSizeGuard(t *testing.T) {
+	sender := &mockSender{}
+
+	// Create a provider that sends tokens exceeding the 10KB limit
+	chunkCh := make(chan provider.TokenChunk, 10)
+	go func() {
+		// Send 11KB of text in chunks
+		bigToken := strings.Repeat("x", 2048)
+		for i := 0; i < 6; i++ { // 6 * 2048 = 12KB
+			chunkCh <- provider.TokenChunk{Tokens: []string{bigToken}, Index: i}
+		}
+		chunkCh <- provider.TokenChunk{Tokens: []string{}, Index: 6, Finished: true}
+		close(chunkCh)
+	}()
+
+	stage := NewConversationStage(sender, mock.New(), "mock-model", "lumi")
+	result := stage.processStream(context.Background(), chunkCh, "channel-1", "msg-123")
+
+	if !result.Streamed {
+		t.Error("should still report streamed=true")
+	}
+	// Text should be truncated due to size guard
+	if len(result.Text) > 10240 {
+		t.Errorf("text should be capped at ~10KB, got %d bytes", len(result.Text))
+	}
+}
+
+func TestConversationStage_CooperativeCancellation(t *testing.T) {
+	sender := &mockSender{}
+
+	// Create a provider that sends tokens slowly and doesn't check ctx.Done()
+	chunkCh := make(chan provider.TokenChunk, 20)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		// Send tokens every 50ms
+		for i := 0; i < 20; i++ {
+			select {
+			case chunkCh <- provider.TokenChunk{Tokens: []string{fmt.Sprintf("word%d ", i)}, Index: i}:
+			case <-ctx.Done():
+				close(chunkCh)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		chunkCh <- provider.TokenChunk{Tokens: []string{}, Index: 20, Finished: true}
+		close(chunkCh)
+	}()
+
+	// Cancel after 150ms — should get ~3 tokens
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+
+	stage := NewConversationStage(sender, mock.New(), "mock-model", "lumi")
+	result := stage.processStream(ctx, chunkCh, "channel-1", "msg-123")
+
+	if !result.Streamed {
+		t.Error("should report streamed=true")
+	}
+	// Should have some partial text
+	if len(result.Text) == 0 {
+		t.Error("should have captured some tokens before cancellation")
+	}
+}
