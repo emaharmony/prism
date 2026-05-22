@@ -197,6 +197,15 @@ func (b *BotAdapter) onMessageCreate(s *discordgo.Session, m *discordgo.MessageC
 	}
 }
 
+// Typing sends the "typing" indicator to a Discord channel.
+// The indicator lasts for ~10 seconds or until a message is sent.
+func (b *BotAdapter) Typing(channelID string) error {
+	if b.session == nil {
+		return fmt.Errorf("discord-bot: not connected")
+	}
+	return b.session.ChannelTyping(channelID)
+}
+
 // IsReady returns whether the bot has connected to Discord.
 func (b *BotAdapter) IsReady() bool {
 	b.mu.RLock()

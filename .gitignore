@@ -42,3 +42,6 @@ runs/*
 prism-agent.exe
 prism-bus.exe
 prism.exe
+
+# Local config (contains secrets)
+prism.yaml
