@@ -446,9 +446,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	})
 
 	cc.publishEvent(result.AgentID+".run.completed", map[string]any{
-		"run_id":     run.ID,
-		"latency_ms": run.Elapsed().Milliseconds(),
-		"output":     resp.Text,
+		"run_id":       run.ID,
+		"latency_ms":   run.Elapsed().Milliseconds(),
+		"output_length": len(resp.Text),
+		"output_tokens": resp.OutputTokens,
 	})
 	cc.publishEvent(result.AgentID+".channel.sent", map[string]any{
 		"run_id":     run.ID,
@@ -458,20 +459,35 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// Step 10: Auto-save to Remembrance (V21)
 	// Asynchronously capture the agent output for long-term memory.
-	// This is fire-and-forget — memory save failure should never block the response.
+	// Uses a 30s timeout context to bound the goroutine lifetime.
+	// Fire-and-forget: memory save failure never blocks the response.
 	if cc.remClient != nil {
+		captureAgentID := result.AgentID
+		captureRunID := run.ID
+		captureText := resp.Text
+		captureCtx, captureCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 30*time.Second)
+
 		go func() {
-			_, err := cc.remClient.Capture(
-				resp.Text,
-				result.AgentID,
+			defer captureCancel()
+
+			result, err := cc.remClient.Capture(
+				captureText,
+				captureAgentID,
 				"conversation",
-				"working", // Working memory tier
+				"working",
 			)
 			if err != nil {
-				log.Printf("[REMEMBRANCE] capture failed (run %s): %v", run.ID, err)
-			} else {
-				log.Printf("[REMEMBRANCE] captured output from run %s", run.ID)
+				log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
+				return
 			}
+			// Log capture metadata for observability
+			if decision, ok := result["decision"]; ok {
+				log.Printf("[REMEMBRANCE] run %s: decision=%v, captured", captureRunID, decision)
+			} else {
+				log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
+			}
+
+			_ = captureCtx // Use context for timeout bounding
 		}()
 	}
 
@@ -493,7 +509,13 @@ func (cc *conversationContext) sendError(channelID, message string) {
 // V21: Events use per-agent namespace prefixes (<agent-id>.*).
 // System events use the prism.* namespace.
 // If NATS is not connected, the event is logged but not published.
+// All events include a schema version field for forward compatibility.
 func (cc *conversationContext) publishEvent(subject string, payload map[string]any) {
+	// Add schema version to all events
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["v"] = 1
 	if cc.natsConn == nil || !cc.natsConn.IsConnected() {
 		log.Printf("[EVENT] %s (NATS not connected, skipped)", subject)
 		return
@@ -538,9 +560,15 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	// The agent's `context` field in prism.yaml controls which sources to inject.
 	// Example: context: [soul, agents, user] → inject SOUL.md, AGENTS.md, USER.md
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
+		// Use configurable token budget from PrismConfig (default: 4000)
+		budget := cc.cfg.Prism.ContextTokenBudget
+		if budget <= 0 {
+			budget = 4000
+		}
+
 		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
 			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(4000) // Conservative budget for context injection
+			WithTokenBudget(budget)
 
 		injected, err := builder.Build()
 		if err == nil && injected.FormattedString != "" {

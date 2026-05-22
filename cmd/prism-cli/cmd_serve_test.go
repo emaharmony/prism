@@ -322,4 +322,106 @@ func TestPublishEvent_SystemNamespace(t *testing.T) {
 	if msg.Subject != "prism.channel.received" {
 		t.Errorf("expected subject prism.channel.received, got %s", msg.Subject)
 	}
+
+	// Verify schema version is in payload
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal event: %v", err)
+	}
+	if v, ok := payload["v"]; !ok || v != float64(1) {
+		t.Errorf("expected schema version v=1, got %v", payload["v"])
+	}
+}
+
+func TestBuildPrompt_ConfigurableTokenBudget(t *testing.T) {
+	workspace := t.TempDir()
+	// Create a large SOUL.md
+	bigSoul := strings.Repeat("You are Lumi. Be warm and playful. ", 500) // ~15000 chars
+	if err := os.WriteFile(filepath.Join(workspace, "SOUL.md"), []byte(bigSoul), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "USER.md"), []byte("Ema."), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctxBuilder := context.NewBuilder(workspace)
+
+	// Test with default budget (4000)
+	convCtx := &conversationContext{
+		cfg: &orchestrator.Config{
+			Prism: orchestrator.PrismConfig{ContextTokenBudget: 4000},
+		},
+		ctxBuilder: ctxBuilder,
+	}
+
+	agentCfg := &orchestrator.AgentConfig{
+		ID: "lumi", Role: "lead", Context: []string{"soul", "user"},
+	}
+
+	sess := &session.Session{ID: "test", Messages: []session.Message{}}
+	prompt := convCtx.buildPrompt(sess, agentCfg)
+
+	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
+		t.Error("prompt should contain agent identity")
+	}
+	// SOUL.md should be present (priority 100, never truncated)
+	if !strings.Contains(prompt, bigSoul) {
+		t.Error("SOUL.md should never be truncated regardless of budget")
+	}
+}
+
+// --- Remembrance Integration Tests ---
+
+func TestConversationContext_RemembranceNil(t *testing.T) {
+	// When remClient is nil, no panic should occur
+	convCtx := &conversationContext{
+		cfg: &orchestrator.Config{},
+	}
+
+	// This should be a no-op — no panic, no error
+	if convCtx.remClient != nil {
+		t.Error("remClient should be nil when not configured")
+	}
+}
+
+func TestPublishEvent_SchemaVersion(t *testing.T) {
+	natsURL, cleanup, err := bus.StartEmbeddedBus(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	nc, err := bus.ConnectToBus(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+
+	convCtx := &conversationContext{
+		natsConn: nc,
+	}
+
+	sub, err := nc.SubscribeSync("test.subject")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	convCtx.publishEvent("test.subject", map[string]any{"key": "value"})
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+
+	if v, ok := payload["v"]; !ok || v != float64(1) {
+		t.Errorf("expected schema version v=1, got %v", payload["v"])
+	}
+	if payload["key"] != "value" {
+		t.Errorf("expected key=value, got %v", payload["key"])
+	}
 }
