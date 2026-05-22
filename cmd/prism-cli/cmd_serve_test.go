@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/session"
@@ -172,5 +175,151 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 	// Should still work — missing files are skipped gracefully
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
 		t.Error("prompt should contain agent identity even with missing workspace files")
+	}
+}
+
+// --- NATS Event Publishing Tests ---
+
+func TestPublishEvent_WithNATS(t *testing.T) {
+	// Start an embedded NATS server for testing
+	natsURL, cleanup, err := bus.StartEmbeddedBus(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	nc, err := bus.ConnectToBus(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+
+	convCtx := &conversationContext{
+		natsConn: nc,
+	}
+
+	// Subscribe and verify the event is published
+	sub, err := nc.SubscribeSync("lumi.run.started")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	convCtx.publishEvent("lumi.run.started", map[string]any{
+		"run_id": "test-123",
+		"model":  "glm-5.1:cloud",
+	})
+
+	msg, err := sub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected to receive event on NATS: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal event payload: %v", err)
+	}
+
+	if payload["run_id"] != "test-123" {
+		t.Errorf("expected run_id=test-123, got %v", payload["run_id"])
+	}
+	if payload["model"] != "glm-5.1:cloud" {
+		t.Errorf("expected model=glm-5.1:cloud, got %v", payload["model"])
+	}
+}
+
+func TestPublishEvent_WithoutNATS(t *testing.T) {
+	convCtx := &conversationContext{
+		natsConn: nil, // No NATS connection
+	}
+
+	// Should not panic — just log and skip
+	convCtx.publishEvent("lumi.run.started", map[string]any{
+		"run_id": "test-123",
+	})
+	// If we get here, it didn't panic
+}
+
+func TestPublishEvent_PerAgentNamespace(t *testing.T) {
+	natsURL, cleanup, err := bus.StartEmbeddedBus(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	nc, err := bus.ConnectToBus(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+
+	convCtx := &conversationContext{
+		natsConn: nc,
+	}
+
+	// Subscribe to specific subjects (wildcards don't work with SubscribeSync in tests)
+	lumiSub, err := nc.SubscribeSync("lumi.run.started")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mangoSub, err := nc.SubscribeSync("mango.run.started")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Publish lumi event
+	convCtx.publishEvent("lumi.run.started", map[string]any{"agent": "lumi"})
+	// Publish mango event
+	convCtx.publishEvent("mango.run.started", map[string]any{"agent": "mango"})
+
+	// Verify lumi received its event
+	msg, err := lumiSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("lumi should receive event: %v", err)
+	}
+	if msg.Subject != "lumi.run.started" {
+		t.Errorf("expected subject lumi.run.started, got %s", msg.Subject)
+	}
+
+	// Verify mango received its event
+	msg, err = mangoSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("mango should receive event: %v", err)
+	}
+	if msg.Subject != "mango.run.started" {
+		t.Errorf("expected subject mango.run.started, got %s", msg.Subject)
+	}
+}
+
+func TestPublishEvent_SystemNamespace(t *testing.T) {
+	natsURL, cleanup, err := bus.StartEmbeddedBus(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	nc, err := bus.ConnectToBus(natsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+
+	convCtx := &conversationContext{
+		natsConn: nc,
+	}
+
+	// Subscribe to specific system event subject
+	sysSub, err := nc.SubscribeSync("prism.channel.received")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	convCtx.publishEvent("prism.channel.received", map[string]any{"channel": "discord"})
+
+	msg, err := sysSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("should receive prism.* event: %v", err)
+	}
+	if msg.Subject != "prism.channel.received" {
+		t.Errorf("expected subject prism.channel.received, got %s", msg.Subject)
 	}
 }
