@@ -49,6 +49,10 @@ type PrismConfig struct {
 	// DataDir is where SQLite databases and run artifacts are stored.
 	DataDir string `yaml:"data_dir"`
 
+	// Workspace is the root directory for context injection (SOUL.md, AGENTS.md, etc.).
+	// Defaults to $HOME/.openclaw/workspace if empty.
+	Workspace string `yaml:"workspace"`
+
 	// Port is the health check server port. Default 8321.
 	Port int `yaml:"port"`
 
