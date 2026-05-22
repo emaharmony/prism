@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/mock"
 )
 
@@ -68,6 +69,23 @@ func (m *mockSender) getEditCount() int {
 	return len(m.edits)
 }
 
+func (m *mockSender) getAllEdits() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]string, len(m.edits))
+	copy(result, m.edits)
+	return result
+}
+
+// mockPartialFailProvider succeeds at sync Generate but fails GenerateStream.
+type mockPartialFailProvider struct {
+	mock.MockProvider
+}
+
+func (m *mockPartialFailProvider) GenerateStream(ctx context.Context, req provider.GenerateRequest) (<-chan provider.TokenChunk, error) {
+	return nil, fmt.Errorf("streaming not available for this provider")
+}
+
 // --- Tests ---
 
 func TestConversationStage_SyncExecute(t *testing.T) {
@@ -103,23 +121,15 @@ func TestConversationStage_StreamingSuccess(t *testing.T) {
 	if !result.Streamed {
 		t.Error("streaming execute should report Streamed=true")
 	}
-
-	// Mock provider generates "Mock response for task 'prompt' by agent 'lumi' in project ''."
-	// It should contain the key content
 	if result.Text == "" {
 		t.Error("streaming result should have non-empty text")
 	}
-
-	// Should have a placeholder send
 	if len(sender.sends) < 1 {
 		t.Error("should have at least a placeholder send")
 	}
-
-	// Should have at least one edit (final flush)
 	if sender.getEditCount() < 1 {
 		t.Error("should have at least one edit (final flush)")
 	}
-
 	lastEdit := sender.getLastEdit()
 	if !strings.Contains(lastEdit, "Mock response") {
 		t.Errorf("final edit should contain 'Mock response', got %q", lastEdit)
@@ -136,54 +146,149 @@ func TestConversationStage_StreamingFallback_PlaceholderFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteStreaming failed: %v", err)
 	}
-
-	// Should fall back to sync since placeholder failed
 	if result.Streamed {
 		t.Error("fallback to sync should not report Streamed=true")
 	}
 }
 
-func TestConversationStage_StreamingProviderFails(t *testing.T) {
+func TestConversationStage_StreamingFallback_SyncSuccess(t *testing.T) {
+	// Provider that fails streaming but succeeds at sync Generate
 	sender := &mockSender{}
-	prov := mock.NewFailing() // GenerateStream returns error
+	prov := &mockPartialFailProvider{MockProvider: *mock.New()}
 
 	stage := NewConversationStage(sender, prov, "mock-model", "lumi")
 
 	result, err := stage.ExecuteStreaming(context.Background(), "prompt", "channel-1")
-	// Should handle gracefully — falls back to sync, which also fails
-	_ = result
-	// The failing mock also fails on sync Generate, so we expect an error
-	if err == nil {
-		// If it somehow succeeded (shouldn't with failing mock), that's also fine
-		// as long as there's no panic
+	if err != nil {
+		t.Fatalf("ExecuteStreaming failed: %v", err)
+	}
+
+	// Should fall back to sync successfully
+	if result.Streamed {
+		t.Error("fallback to sync should not report Streamed=true")
+	}
+
+	// Placeholder should exist and be edited to show the sync response
+	if sender.getEditCount() < 1 {
+		t.Error("placeholder should be edited with sync response")
+	}
+	lastEdit := sender.getLastEdit()
+	if !strings.Contains(lastEdit, "Mock response") {
+		t.Errorf("placeholder edit should contain sync response, got %q", lastEdit)
 	}
 }
 
-func TestConversationStage_StreamingCancel(t *testing.T) {
+func TestConversationStage_StreamingError_WithPartialText(t *testing.T) {
 	sender := &mockSender{}
-	prov := mock.New()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	stage := NewConversationStage(sender, prov, "mock-model", "lumi")
-
-	// Cancel after a short delay
+	// Create a streaming provider that sends partial text then errors
+	chunkCh := make(chan provider.TokenChunk, 10)
 	go func() {
-		time.Sleep(30 * time.Millisecond)
-		cancel()
+		chunkCh <- provider.TokenChunk{Tokens: []string{"Hello from the model. "}, Index: 0}
+		chunkCh <- provider.TokenChunk{Tokens: []string{}, Index: 1, Error: fmt.Errorf("connection lost")}
+		close(chunkCh)
 	}()
 
-	// Should handle cancellation gracefully — no panic, no deadlock
-	result, _ := stage.ExecuteStreaming(ctx, "prompt", "channel-1")
-	_ = result
+	stage := NewConversationStage(sender, mock.New(), "mock-model", "lumi")
+	result := stage.processStream(context.Background(), chunkCh, "channel-1", "msg-123")
+
+	if !result.Streamed {
+		t.Error("streaming with error should still report Streamed=true")
+	}
+	if result.Text != "Hello from the model. " {
+		t.Errorf("partial text should be preserved, got %q", result.Text)
+	}
+
+	// Last edit should include partial text + error indicator
+	lastEdit := sender.getLastEdit()
+	if !strings.Contains(lastEdit, "Hello from the model.") {
+		t.Errorf("error message should include partial text, got %q", lastEdit)
+	}
+	if !strings.Contains(lastEdit, "⚠️") {
+		t.Errorf("error message should contain warning indicator, got %q", lastEdit)
+	}
+}
+
+func TestConversationStage_StreamingError_NoPartialText(t *testing.T) {
+	sender := &mockSender{}
+
+	chunkCh := make(chan provider.TokenChunk, 10)
+	go func() {
+		chunkCh <- provider.TokenChunk{Tokens: []string{}, Index: 0, Error: fmt.Errorf("immediate failure")}
+		close(chunkCh)
+	}()
+
+	stage := NewConversationStage(sender, mock.New(), "mock-model", "lumi")
+	result := stage.processStream(context.Background(), chunkCh, "channel-1", "msg-123")
+
+	if !result.Streamed {
+		t.Error("streaming with error should still report Streamed=true")
+	}
+
+	lastEdit := sender.getLastEdit()
+	if !strings.Contains(lastEdit, "⚠️") {
+		t.Errorf("should show generic error when no partial text, got %q", lastEdit)
+	}
+}
+
+func TestConversationStage_StreamingCancel_WithPartialText(t *testing.T) {
+	sender := &mockSender{}
+
+	chunkCh := make(chan provider.TokenChunk, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		chunkCh <- provider.TokenChunk{Tokens: []string{"Starting to think..."}, Index: 0}
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		close(chunkCh)
+	}()
+
+	stage := NewConversationStage(sender, mock.New(), "mock-model", "lumi")
+	result := stage.processStream(ctx, chunkCh, "channel-1", "msg-123")
+
+	if !result.Streamed {
+		t.Error("canceled stream should report Streamed=true")
+	}
+	if result.Text != "Starting to think..." {
+		t.Errorf("partial text should be preserved on cancel, got %q", result.Text)
+	}
+
+	lastEdit := sender.getLastEdit()
+	if !strings.Contains(lastEdit, "Canceled") {
+		t.Errorf("canceled stream should show 'Canceled', got %q", lastEdit)
+	}
+	if !strings.Contains(lastEdit, "Starting to think...") {
+		t.Errorf("canceled edit should include partial text, got %q", lastEdit)
+	}
 }
 
 func TestEditMessageSafe_Truncation(t *testing.T) {
 	sender := &mockSender{}
 	stage := NewConversationStage(sender, nil, "mock-model", "lumi")
 
-	// Content longer than 2000 chars
 	longContent := strings.Repeat("x", 3000)
+	stage.editMessageSafe("channel-1", "msg-123", longContent)
+
+	if sender.getEditCount() != 1 {
+		t.Fatalf("expected 1 edit, got %d", sender.getEditCount())
+	}
+	lastEdit := sender.getLastEdit()
+	if len(lastEdit) > 2000 {
+		t.Errorf("edit should be truncated to <= 2000 chars, got %d", len(lastEdit))
+	}
+	if !strings.HasSuffix(lastEdit, "...") {
+		t.Error("truncated edit should end with '...'")
+	}
+}
+
+func TestEditMessageSafe_UTF8Truncation(t *testing.T) {
+	sender := &mockSender{}
+	stage := NewConversationStage(sender, nil, "mock-model", "lumi")
+
+	// Create content with emoji that spans >2000 runes
+	emoji := "🎉🎊🎈🎁🎄🎅🎆✨💫🌟⭐🔥💯🎵🎶🎸🎹🎺🎻🥁🪘🪇🪈🪉🪊🪋🪌🪍🪎🪏"
+	longContent := strings.Repeat(emoji, 200) // Well over 2000 chars with multi-byte chars
 	stage.editMessageSafe("channel-1", "msg-123", longContent)
 
 	if sender.getEditCount() != 1 {
@@ -191,11 +296,15 @@ func TestEditMessageSafe_Truncation(t *testing.T) {
 	}
 
 	lastEdit := sender.getLastEdit()
-	if len(lastEdit) > 2000 {
-		t.Errorf("edit should be truncated to <= 2000 chars, got %d", len(lastEdit))
+	// Verify the result is valid UTF-8 (no corrupted multi-byte sequences)
+	for _, r := range lastEdit {
+		if r == '\ufffd' {
+			t.Error("truncation produced invalid UTF-8 (replacement character found)")
+			break
+		}
 	}
-	if !strings.HasSuffix(lastEdit, "...") {
-		t.Error("truncated edit should end with '...'")
+	if len(lastEdit) > 2000 {
+		t.Errorf("edit should be <= 2000 chars, got %d", len(lastEdit))
 	}
 }
 
@@ -208,9 +317,27 @@ func TestEditMessageSafe_ShortContent(t *testing.T) {
 	if sender.getEditCount() != 1 {
 		t.Fatalf("expected 1 edit, got %d", sender.getEditCount())
 	}
-
 	lastEdit := sender.getLastEdit()
 	if lastEdit != "Hello world!" {
 		t.Errorf("short content should not be modified, got %q", lastEdit)
+	}
+}
+
+func TestConversationStage_StreamingBatching(t *testing.T) {
+	sender := &mockSender{}
+	prov := mock.New()
+
+	stage := NewConversationStage(sender, prov, "mock-model", "lumi")
+
+	result, err := stage.ExecuteStreaming(context.Background(), "prompt", "channel-1")
+	if err != nil {
+		t.Fatalf("ExecuteStreaming failed: %v", err)
+	}
+
+	if result.Text == "" {
+		t.Error("streaming result should have non-empty text")
+	}
+	if len(sender.sends) < 1 {
+		t.Error("should have at least a placeholder send")
 	}
 }
