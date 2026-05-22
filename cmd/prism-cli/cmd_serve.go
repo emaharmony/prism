@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/action"
+	"github.com/emaharmony/prism/internal/convstage"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
@@ -53,6 +54,28 @@ import (
 
 	"github.com/nats-io/nats.go"
 )
+
+// botMessageSender adapts discordbot.BotAdapter to implement convstage.MessageSender.
+// This allows the ConversationStage to send/edit Discord messages without
+// depending on the concrete BotAdapter type.
+type botMessageSender struct {
+	bot *discordbot.BotAdapter
+}
+
+func (b *botMessageSender) Send(channelID, content string) error {
+	return b.bot.Send(&discordbot.OutboundMessage{
+		ChannelID: channelID,
+		Content:   content,
+	})
+}
+
+func (b *botMessageSender) SendPlaceholder(channelID, content string) (string, error) {
+	return b.bot.SendPlaceholder(channelID, content)
+}
+
+func (b *botMessageSender) EditMessage(channelID, messageID, content string) error {
+	return b.bot.EditMessage(channelID, messageID, content)
+}
 
 // conversationContext holds all the dependencies needed to process a
 // Discord message through the full pipeline. It's closed over by the
@@ -380,7 +403,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		log.Printf("[WARN] typing indicator failed: %v", err)
 	}
 
-	// Step 7: Build prompt from session history and call the LLM
+	// Step 7: Build prompt and execute via ConversationStage
 	prompt := cc.buildPrompt(sess, agentCfg)
 
 	cc.eventLog.Log("agent.llm.calling", run.ID, result.AgentID, map[string]any{
@@ -393,14 +416,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"prompt_length": len(prompt),
 	})
 
-	resp, err := llmProvider.Generate(ctxcontext.Background(), provider.GenerateRequest{
-		RunID:   run.ID,
-		Agent:   result.AgentID,
-		Task:    result.CleanedContent,
-		Prompt:  prompt,
-		Model:   agentCfg.Model,
-	})
+	// Use ConversationStage for LLM call + response delivery
+	sender := &botMessageSender{bot: cc.bot}
+	stage := convstage.NewConversationStage(sender, llmProvider, agentCfg.Model, result.AgentID)
 
+	stageResult, err := stage.ExecuteStreaming(ctxcontext.Background(), prompt, msg.ChannelID)
 	if err != nil {
 		log.Printf("[ERROR] LLM call failed (run %s): %v", run.ID, err)
 		cc.eventLog.Log("agent.llm.error", run.ID, result.AgentID, map[string]any{
@@ -411,35 +431,26 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	cc.eventLog.Log("agent.llm.completed", run.ID, result.AgentID, map[string]any{
-		"latency_ms":     resp.LatencyMS,
-		"prompt_tokens":  resp.PromptTokens,
-		"output_tokens":  resp.OutputTokens,
+		"latency_ms":     stageResult.LatencyMS,
+		"output_tokens":  stageResult.OutputTokens,
+		"streamed":       stageResult.Streamed,
 	})
 	cc.publishEvent(result.AgentID+".llm.completed", map[string]any{
 		"run_id":          run.ID,
-		"latency_ms":      resp.LatencyMS,
-		"prompt_tokens":   resp.PromptTokens,
-		"output_tokens":   resp.OutputTokens,
+		"latency_ms":      stageResult.LatencyMS,
+		"output_tokens":   stageResult.OutputTokens,
+		"streamed":        stageResult.Streamed,
 	})
 
-	// Step 8: Save agent response to session (before sending to Discord)
-	_, err = cc.sessMgr.AddMessage(sess.ID, "agent", resp.Text, result.AgentID)
+	// Step 8: Save agent response to session
+	_, err = cc.sessMgr.AddMessage(sess.ID, "agent", stageResult.Text, result.AgentID)
 	if err != nil {
 		log.Printf("[WARN] failed to save agent response to session %s: %v", sess.ID, err)
-		// Continue — the user still gets their answer even if we can't save it
 	}
 
-	// Step 9: Send response to Discord
-	err = cc.bot.Send(&discordbot.OutboundMessage{
-		ChannelID: msg.ChannelID,
-		Content:   resp.Text,
-		IsReply:   true,
-		ReplyTo:   msg.MessageID,
-	})
-	if err != nil {
-		log.Printf("[ERROR] failed to send Discord response: %v", err)
-		// Response is saved in session even if Discord send fails
-	}
+	// Step 9 is now handled by ConversationStage (streaming or sync delivery)
+
+	// Remembrance auto-save uses stageResult.Text
 
 	cc.eventLog.Log("run.completed", run.ID, result.AgentID, map[string]any{
 		"latency_ms": run.Elapsed().Milliseconds(),
@@ -448,8 +459,8 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	cc.publishEvent(result.AgentID+".run.completed", map[string]any{
 		"run_id":       run.ID,
 		"latency_ms":   run.Elapsed().Milliseconds(),
-		"output_length": len(resp.Text),
-		"output_tokens": resp.OutputTokens,
+		"output_length": len(stageResult.Text),
+		"output_tokens": stageResult.OutputTokens,
 	})
 	cc.publishEvent(result.AgentID+".channel.sent", map[string]any{
 		"run_id":     run.ID,
@@ -464,7 +475,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	if cc.remClient != nil {
 		captureAgentID := result.AgentID
 		captureRunID := run.ID
-		captureText := resp.Text
+		captureText := stageResult.Text
 		captureCtx, captureCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 30*time.Second)
 
 		go func() {
