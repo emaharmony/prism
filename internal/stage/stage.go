@@ -63,9 +63,28 @@ type RunContext struct {
 	// Tool results (populated by ToolStage)
 	ToolResults []map[string]any
 
+	// Session information (populated by SessionStage)
+	SessionID string
+
+	// Routing information (populated by RoutingStage)
+	CleanedContent string
+	RouteMethod   string
+	AgentConfig   *AgentConfigSnapshot
+
+	// Streaming callback for real-time token delivery (set by handler)
+	StreamCallback StreamCallbackFunc
+
+	// Session save failed (non-fatal warning)
+	SessionSaveFailed bool
+
 	// Dry run mode (skip LLM call, just build prompt)
 	DryRunPrompt bool
 }
+
+// StreamCallbackFunc is called by LLMStage for each token chunk during streaming.
+// The handler creates a closure that delivers tokens to the channel (Discord, CLI, etc.).
+// If nil, LLMStage accumulates tokens internally without real-time delivery.
+type StreamCallbackFunc func(token string, index int, finished bool) error
 
 // StageResult is the output of a single stage execution.
 type StageResult struct {
@@ -189,10 +208,38 @@ func (p *Pipeline) Run(ctx context.Context, initial *RunContext) (*RunContext, e
 	return current, nil
 }
 
+// copyBase returns a shallow copy of all RunContext fields.
+// With* methods use this to avoid field drift when new fields are added.
+func (rc *RunContext) copyBase() RunContext {
+	return RunContext{
+		RunID:            rc.RunID,
+		CorrelationID:    rc.CorrelationID,
+		Task:             rc.Task,
+		Project:          rc.Project,
+		Agent:            rc.Agent,
+		Provider:         rc.Provider,
+		ProviderName:     rc.ProviderName,
+		Model:            rc.Model,
+		Temperature:      rc.Temperature,
+		MaxTokens:        rc.MaxTokens,
+		RunDir:           rc.RunDir,
+		Events:           rc.Events,
+		Results:          rc.Results,
+		LLMResponse:      rc.LLMResponse,
+		ToolResults:      rc.ToolResults,
+		SessionID:        rc.SessionID,
+		CleanedContent:   rc.CleanedContent,
+		RouteMethod:      rc.RouteMethod,
+		AgentConfig:      rc.AgentConfig,
+		StreamCallback:   rc.StreamCallback,
+		SessionSaveFailed: rc.SessionSaveFailed,
+		DryRunPrompt:     rc.DryRunPrompt,
+	}
+}
+
 // WithEvent returns a new RunContext with an event appended.
 // This is the copy-on-write mechanism: stages append events by calling
 // rc.WithEvent(evt) and returning the new context.
-// Results is deep-copied to prevent shared mutable references.
 func (rc *RunContext) WithEvent(evt event.Event) *RunContext {
 	newEvents := make([]event.Event, len(rc.Events), len(rc.Events)+1)
 	copy(newEvents, rc.Events)
@@ -204,96 +251,63 @@ func (rc *RunContext) WithEvent(evt event.Event) *RunContext {
 		newResults[k] = v
 	}
 
-	return &RunContext{
-		RunID:         rc.RunID,
-		CorrelationID: rc.CorrelationID,
-		Task:          rc.Task,
-		Project:       rc.Project,
-		Agent:         rc.Agent,
-		Provider:      rc.Provider,
-		ProviderName:  rc.ProviderName,
-		Model:         rc.Model,
-		Temperature:   rc.Temperature,
-		MaxTokens:     rc.MaxTokens,
-		RunDir:        rc.RunDir,
-		Events:        newEvents,
-		Results:       newResults,
-		LLMResponse:   rc.LLMResponse,
-		ToolResults:   rc.ToolResults,
-		DryRunPrompt:  rc.DryRunPrompt,
-	}
+	newRC := rc.copyBase()
+	newRC.Events = newEvents
+	newRC.Results = newResults
+	return &newRC
 }
 
 // WithResults returns a new RunContext with updated results.
-// Results is deep-copied to prevent shared mutable references.
 func (rc *RunContext) WithResults(results map[string]*StageResult) *RunContext {
 	newResults := make(map[string]*StageResult, len(results))
 	for k, v := range results {
 		newResults[k] = v
 	}
 
-	return &RunContext{
-		RunID:         rc.RunID,
-		CorrelationID: rc.CorrelationID,
-		Task:          rc.Task,
-		Project:       rc.Project,
-		Agent:         rc.Agent,
-		Provider:      rc.Provider,
-		ProviderName:  rc.ProviderName,
-		Model:         rc.Model,
-		Temperature:   rc.Temperature,
-		MaxTokens:     rc.MaxTokens,
-		RunDir:        rc.RunDir,
-		Events:        rc.Events,
-		Results:       newResults,
-		LLMResponse:   rc.LLMResponse,
-		ToolResults:   rc.ToolResults,
-		DryRunPrompt:  rc.DryRunPrompt,
-	}
+	newRC := rc.copyBase()
+	newRC.Results = newResults
+	return &newRC
 }
 
 // WithLLMResponse returns a new RunContext with the LLM response set.
-// This prevents stages from manually constructing RunContexts with field drift.
 func (rc *RunContext) WithLLMResponse(response string) *RunContext {
-	return &RunContext{
-		RunID:         rc.RunID,
-		CorrelationID: rc.CorrelationID,
-		Task:          rc.Task,
-		Project:       rc.Project,
-		Agent:         rc.Agent,
-		Provider:      rc.Provider,
-		ProviderName:  rc.ProviderName,
-		Model:         rc.Model,
-		Temperature:   rc.Temperature,
-		MaxTokens:     rc.MaxTokens,
-		RunDir:        rc.RunDir,
-		Events:        rc.Events,
-		Results:       rc.Results,
-		LLMResponse:   response,
-		ToolResults:   rc.ToolResults,
-		DryRunPrompt:  rc.DryRunPrompt,
-	}
+	newRC := rc.copyBase()
+	newRC.LLMResponse = response
+	return &newRC
 }
 
 // WithRunDir returns a new RunContext with the run directory set.
-// Used by ConnectionStage to set the resolved run path.
 func (rc *RunContext) WithRunDir(runDir string) *RunContext {
-	return &RunContext{
-		RunID:         rc.RunID,
-		CorrelationID: rc.CorrelationID,
-		Task:          rc.Task,
-		Project:       rc.Project,
-		Agent:         rc.Agent,
-		Provider:      rc.Provider,
-		ProviderName:  rc.ProviderName,
-		Model:         rc.Model,
-		Temperature:   rc.Temperature,
-		MaxTokens:     rc.MaxTokens,
-		RunDir:        runDir,
-		Events:        rc.Events,
-		Results:       rc.Results,
-		LLMResponse:   rc.LLMResponse,
-		ToolResults:   rc.ToolResults,
-		DryRunPrompt:  rc.DryRunPrompt,
-	}
+	newRC := rc.copyBase()
+	newRC.RunDir = runDir
+	return &newRC
+}
+
+// WithAgent returns a new RunContext with the agent ID set.
+func (rc *RunContext) WithAgent(agentID string) *RunContext {
+	newRC := rc.copyBase()
+	newRC.Agent = agentID
+	return &newRC
+}
+
+// WithProvider returns a new RunContext with the provider set.
+func (rc *RunContext) WithProvider(p provider.Provider, name string) *RunContext {
+	newRC := rc.copyBase()
+	newRC.Provider = p
+	newRC.ProviderName = name
+	return &newRC
+}
+
+// WithModel returns a new RunContext with the model set.
+func (rc *RunContext) WithModel(model string) *RunContext {
+	newRC := rc.copyBase()
+	newRC.Model = model
+	return &newRC
+}
+
+// WithSessionID returns a new RunContext with the session ID set.
+func (rc *RunContext) WithSessionID(sessionID string) *RunContext {
+	newRC := rc.copyBase()
+	newRC.SessionID = sessionID
+	return &newRC
 }
