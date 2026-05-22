@@ -381,9 +381,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-	// Step 5: Create a run for observability and cancellation
+	// Step 5: Create a run with proper context for cancellation and timeout
+	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 60*time.Second)
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
-	cc.cancelReg.Register(sess.ID, run.Cancel)
+	run.Cancel = runCancel // Wire the actual cancel func
+	cc.cancelReg.Register(sess.ID, runCancel)
 	defer cc.cancelReg.Unregister(sess.ID)
 
 	cc.eventLog.Log("run.started", run.ID, result.AgentID, map[string]any{
@@ -420,7 +422,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	sender := &botMessageSender{bot: cc.bot}
 	stage := convstage.NewConversationStage(sender, llmProvider, agentCfg.Model, result.AgentID)
 
-	stageResult, err := stage.ExecuteStreaming(ctxcontext.Background(), prompt, msg.ChannelID)
+	stageResult, err := stage.ExecuteStreaming(runCtx, prompt, msg.ChannelID)
 	if err != nil {
 		log.Printf("[ERROR] LLM call failed (run %s): %v", run.ID, err)
 		cc.eventLog.Log("agent.llm.error", run.ID, result.AgentID, map[string]any{

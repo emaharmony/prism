@@ -52,7 +52,7 @@ type Result struct {
 	PromptTokens int
 	OutputTokens int
 	LatencyMS    int64
-	Streamed     bool // true if response was delivered via streaming
+	Streamed     bool   // true if response was delivered via streaming
 	MessageID    string // Discord message ID (for follow-up operations)
 }
 
@@ -86,13 +86,15 @@ func (s *ConversationStage) Execute(ctx context.Context, prompt string, channelI
 
 // ExecuteStreaming generates a response with streaming tokens to Discord.
 // Falls back to synchronous Execute if the provider doesn't support streaming.
+// IMPORTANT: The ctx parameter should carry the Run's cancel context so that
+// /cancel and timeout enforcement work correctly during streaming.
 //
 // Streaming strategy:
 //  1. Send a placeholder message to Discord ("✧ ...")
 //  2. Read tokens from the stream channel
 //  3. Accumulate tokens, flush to Discord every ~900ms (respects 5 edits/5s rate limit)
 //  4. On stream completion, do a final flush with the complete response
-//  5. On error, edit the placeholder with an error message
+//  5. On error, edit the placeholder with partial text + error message
 func (s *ConversationStage) ExecuteStreaming(ctx context.Context, prompt string, channelID string) (*Result, error) {
 	// Check if provider supports streaming
 	streamingProv, ok := s.provider.(provider.StreamingProvider)
@@ -116,10 +118,20 @@ func (s *ConversationStage) ExecuteStreaming(ctx context.Context, prompt string,
 		Model:  s.model,
 	})
 	if err != nil {
-		// Streaming setup failed — edit placeholder with error, fall back
-		s.sender.EditMessage(channelID, placeholderMsgID, "⚠️ I couldn't start thinking. Please try again.")
-		log.Printf("[STREAM] GenerateStream failed: %v", err)
-		return s.Execute(ctx, prompt, channelID)
+		// Streaming setup failed — fall back to sync
+		// Edit the placeholder to show the sync response instead of sending a new message
+		// to avoid ghost placeholder + new message
+		syncResult, syncErr := s.Execute(ctx, prompt, channelID)
+		if syncErr != nil {
+			// Both streaming and sync failed — edit placeholder with error
+			s.sender.EditMessage(channelID, placeholderMsgID, "⚠️ I couldn't start thinking. Please try again.")
+			return nil, fmt.Errorf("conversation stage: streaming and sync both failed: %w", err)
+		}
+		// Sync succeeded — update the placeholder with the response
+		s.sender.EditMessage(channelID, placeholderMsgID, syncResult.Text)
+		syncResult.Streamed = false
+		syncResult.MessageID = placeholderMsgID
+		return syncResult, nil
 	}
 
 	// Step 3: Read tokens, batch, and flush to Discord
@@ -183,12 +195,16 @@ func (s *ConversationStage) processStream(ctx context.Context, chunkCh <-chan pr
 			mu.Unlock()
 
 			if err != nil {
-				// Mid-stream error
-				errMsg := "⚠️ I started thinking but hit an error. Please try again."
-				s.sender.EditMessage(channelID, messageID, errMsg)
+				// Mid-stream error — show partial text if available
+				if len(finalText) > 0 {
+					errMsg := finalText + "\n\n⚠️ I started thinking but hit an error. Here's what I had so far."
+					s.sender.EditMessage(channelID, messageID, errMsg)
+				} else {
+					s.sender.EditMessage(channelID, messageID, "⚠️ I started thinking but hit an error. Please try again.")
+				}
 				return &Result{
-					Text:     finalText,
-					Streamed: true,
+					Text:      finalText,
+					Streamed:  true,
 					LatencyMS: time.Since(startTime).Milliseconds(),
 				}
 			}
@@ -217,6 +233,7 @@ func (s *ConversationStage) processStream(ctx context.Context, chunkCh <-chan pr
 			current := fullText.String()
 			mu.Unlock()
 
+			// Skip edit if nothing accumulated since last flush
 			if len(toFlush) > 0 {
 				s.editMessageSafe(channelID, messageID, current)
 				editCount++
@@ -229,13 +246,13 @@ func (s *ConversationStage) processStream(ctx context.Context, chunkCh <-chan pr
 			mu.Unlock()
 
 			if len(partialText) > 0 {
-				s.sender.EditMessage(channelID, messageID, partialText+"\n\n✧ Canceled.")
+				s.sender.EditMessage(channelID, messageID, partialText+"\n\n⚠️ Canceled.")
 			} else {
-				s.sender.EditMessage(channelID, messageID, "✧ Canceled.")
+				s.sender.EditMessage(channelID, messageID, "⚠️ Canceled.")
 			}
 			return &Result{
-				Text:     partialText,
-				Streamed: true,
+				Text:      partialText,
+				Streamed:  true,
 				LatencyMS: time.Since(startTime).Milliseconds(),
 			}
 		}
@@ -244,10 +261,17 @@ func (s *ConversationStage) processStream(ctx context.Context, chunkCh <-chan pr
 
 // editMessageSafe edits a Discord message, logging errors instead of propagating them.
 // A failed edit is not fatal — the next edit will include the accumulated text.
+// Uses rune-aware truncation to avoid corrupting multi-byte UTF-8 characters
+// while staying within Discord's 2000-byte limit.
 func (s *ConversationStage) editMessageSafe(channelID, messageID, content string) {
 	if len(content) > 2000 {
-		// Discord message limit — truncate for the edit, we'll send follow-ups if needed
-		content = content[:1997] + "..."
+		// Discord message limit — truncate safely.
+		// Walk backwards through runes until we fit in 1997 bytes + "..." (3 bytes).
+		runes := []rune(content)
+		for len(runes) > 1 && len(string(runes))+3 > 2000 {
+			runes = runes[:len(runes)-1]
+		}
+		content = string(runes) + "..."
 	}
 	if err := s.sender.EditMessage(channelID, messageID, content); err != nil {
 		log.Printf("[STREAM] edit failed: %v", err)
