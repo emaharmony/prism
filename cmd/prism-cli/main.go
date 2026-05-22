@@ -545,7 +545,7 @@ func main() {
 	case "status":
 		executeStatus(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.20.1")
+		fmt.Println("prism v0.21.0")
 	default:
 		printUsage()
 		os.Exit(1)

@@ -21,18 +21,20 @@
 package main
 
 import (
-	"context"
+	ctxcontext "context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/emaharmony/prism/internal/action"
+	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/bus"
@@ -61,6 +63,7 @@ type conversationContext struct {
 	debounce    *debounce.Tracker
 	eventLog    *runtrack.EventLogger
 	cancelReg   *runtrack.CancelRegistry
+	ctxBuilder  *context.Builder // V21: workspace context injection
 }
 
 func executeServe(args []string) {
@@ -179,7 +182,7 @@ func executeServe(args []string) {
 	cancelReg := runtrack.NewCancelRegistry()
 
 	// 9. Connect channel adapters (Discord, etc.)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := ctxcontext.WithCancel(ctxcontext.Background())
 	defer cancel()
 
 	var discordBots []*discordbot.BotAdapter
@@ -188,6 +191,15 @@ func executeServe(args []string) {
 		switch ch.Type {
 		case "discord":
 			bot := discordbot.NewBotAdapter(ch.Token)
+
+			// V21: Build workspace context injection
+			var ctxBuilder *context.Builder
+			if cfg.Prism.Workspace != "" {
+				ctxBuilder = context.NewBuilder(cfg.Prism.Workspace)
+			} else {
+				// Default: use home directory + .openclaw/workspace
+				ctxBuilder = context.NewBuilder(filepath.Join(os.Getenv("HOME"), ".openclaw", "workspace"))
+			}
 
 			// Build conversation context for this bot
 			convCtx := &conversationContext{
@@ -199,6 +211,7 @@ func executeServe(args []string) {
 				debounce:  msgDebounce,
 				eventLog:  eventLog,
 				cancelReg: cancelReg,
+				ctxBuilder: ctxBuilder,
 			}
 
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
@@ -332,7 +345,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"prompt_length": len(prompt),
 	})
 
-	resp, err := llmProvider.Generate(context.Background(), provider.GenerateRequest{
+	resp, err := llmProvider.Generate(ctxcontext.Background(), provider.GenerateRequest{
 		RunID:   run.ID,
 		Agent:   result.AgentID,
 		Task:    result.CleanedContent,
@@ -402,17 +415,37 @@ func (cc *conversationContext) findAgentConfig(agentID string) *orchestrator.Age
 	return nil
 }
 
-// buildPrompt constructs the LLM prompt from session history.
-// It formats the conversation as alternating user/agent messages.
-// V21 will add system prompts, soul injection, and context enrichment.
+// buildPrompt constructs the LLM prompt from session history and injected context.
+// V21: System prompt is built from:
+//   1. Agent identity (role + name)
+//   2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
+//   3. Conversation history
 func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
 	var sb strings.Builder
 
-	// V21: Add system prompt, soul file, context injection here.
-	// For V20, we use a minimal system message with the agent's role.
-	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant. Respond helpfully and concisely.\n\n", agentCfg.ID, agentCfg.Role))
+	// --- System prompt: Agent identity ---
+	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
 
-	// Add conversation history
+	// --- System prompt: Workspace context injection (V21) ---
+	// The agent's `context` field in prism.yaml controls which sources to inject.
+	// Example: context: [soul, agents, user] → inject SOUL.md, AGENTS.md, USER.md
+	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+			WithNamedContexts(agentCfg.Context).
+			WithTokenBudget(4000) // Conservative budget for context injection
+
+		injected, err := builder.Build()
+		if err == nil && injected.FormattedString != "" {
+			sb.WriteString("\n")
+			sb.WriteString(injected.FormattedString)
+			log.Printf("[CONTEXT] Injected %d tokens from %d sources (hash: %s)",
+				injected.TotalTokens, len(injected.Files), injected.ContentHash[:12])
+		}
+	}
+
+	sb.WriteString("\nRespond helpfully and with the personality and principles described above.\n\n")
+
+	// --- Conversation history ---
 	for _, msg := range sess.Messages {
 		switch msg.Role {
 		case "user":
