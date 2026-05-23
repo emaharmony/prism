@@ -427,11 +427,6 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	natsAdapter := &natsPublisherAdapter{conn: cc.natsConn}
 
 	pipeline := stage.NewPipeline(
-		&stage.RoutingStage{
-			Router:       cc.router,
-			Providers:    cc.providers,
-			AgentConfigs: cc.buildAgentConfigSnapshots(),
-		},
 		&stage.LLMStage{},
 		&stage.PersistenceStage{BusURL: cc.natsURL},
 		&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.natsURL},
@@ -458,9 +453,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	// Check pipeline results for stage failures
-	for stageName, result := range finalRC.Results {
-		if result != nil && !result.Success {
-			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, result.Error)
+	for stageName, stageResult := range finalRC.Results {
+		if stageResult != nil && !stageResult.Success {
+			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, stageResult.Error)
 			switch stageName {
 			case "routing":
 				cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
