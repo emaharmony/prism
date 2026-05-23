@@ -1,10 +1,9 @@
 // Package convstage provides a lightweight conversation stage for the Prism
-// Discord pipeline. It encapsulates LLM generation and response delivery,
-// supporting both synchronous and streaming modes.
+// Discord pipeline.
 //
-// V21-4: This is a stepping stone to the full stage pipeline (Option C).
-// The stage isolates the LLM-call + response-delivery logic from the
-// message handler, making it testable and providing a clean migration path.
+// DEPRECATED: This package is superseded by the stage.Pipeline (V21-5).
+// The LLMStage with StreamCallback now handles streaming directly.
+// This package is kept for reference and will be removed in a future version.
 package convstage
 
 import (
