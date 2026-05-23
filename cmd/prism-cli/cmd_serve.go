@@ -86,6 +86,7 @@ type conversationContext struct {
 	natsURL     string              // V21: NATS bus URL
 	actionReg   *action.Registry     // V21: action registry for event-triggered actions
 	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
+	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
 }
 
 func executeServe(args []string) {
@@ -259,6 +260,7 @@ func executeServe(args []string) {
 				natsURL:   natsURL,
 				actionReg: actionReg,
 				remClient: remClient,
+				remSem:    make(chan struct{}, 4), // Max 4 concurrent Remembrance goroutines
 			}
 
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
@@ -317,6 +319,12 @@ func executeServe(args []string) {
 // The StreamCallback bridges LLMStage streaming to Discord:
 // LLMStage calls callback(token) → callback sends to Discord via placeholder + edits.
 func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessage) {
+	// Step 0: Skip empty or whitespace-only messages
+	trimmed := strings.TrimSpace(msg.Content)
+	if trimmed == "" {
+		return
+	}
+
 	// Step 1: Debounce — drop rapid-fire messages from the same user
 	debounceKey := msg.UserID + ":" + msg.ChannelID
 	if !cc.debounce.Allow(debounceKey) {
@@ -373,7 +381,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
 	run.Cancel = runCancel
 	cc.cancelReg.Register(sess.ID, runCancel)
-	defer cc.cancelReg.Unregister(sess.ID)
+	defer func() {
+		runCancel() // Release context timer immediately, not after 60s
+		cc.cancelReg.Unregister(sess.ID)
+	}()
 
 	// Step 6: Send typing indicator (Discord-specific)
 	if err := cc.bot.Typing(msg.ChannelID); err != nil {
@@ -533,27 +544,36 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		captureText := responseText
 		captureCtx, captureCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 30*time.Second)
 
-		go func() {
-			defer captureCancel()
+		// Acquire semaphore slot (non-blocking — skip if at capacity)
+		select {
+		case cc.remSem <- struct{}{}:
+			go func() {
+				defer captureCancel()
+				defer func() { <-cc.remSem }() // Release semaphore slot
 
-			result, err := cc.remClient.Capture(
-				captureText,
-				captureAgentID,
-				"conversation",
-				"working",
-			)
-			if err != nil {
-				log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
-				return
-			}
-			if decision, ok := result["decision"]; ok {
-				log.Printf("[REMEMBRANCE] run %s: decision=%v, captured", captureRunID, decision)
-			} else {
-				log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
-			}
+				result, err := cc.remClient.Capture(
+					captureText,
+					captureAgentID,
+					"conversation",
+					"working",
+				)
+				if err != nil {
+					log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
+					return
+				}
+				if decision, ok := result["decision"]; ok {
+					log.Printf("[REMEMBRANCE] run %s: decision=%v, captured", captureRunID, decision)
+				} else {
+					log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
+				}
 
-			_ = captureCtx
-		}()
+				_ = captureCtx
+			}()
+		default:
+			// At capacity — skip this capture
+			captureCancel()
+			log.Printf("[REMEMBRANCE] skipped capture (run %s): concurrency limit reached", run.ID)
+		}
 	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
@@ -574,17 +594,18 @@ func (cc *conversationContext) sendError(channelID, message string) {
 // If NATS is not connected, the event is logged but not published.
 // All events include a schema version field for forward compatibility.
 func (cc *conversationContext) publishEvent(subject string, payload map[string]any) {
-	// Add schema version to all events
-	if payload == nil {
-		payload = map[string]any{}
+	// Add schema version to all events (don't mutate caller's map)
+	eventPayload := make(map[string]any, len(payload)+1)
+	for k, v := range payload {
+		eventPayload[k] = v
 	}
-	payload["v"] = 1
+	eventPayload["v"] = 1
 	if cc.natsConn == nil || !cc.natsConn.IsConnected() {
 		log.Printf("[EVENT] %s (NATS not connected, skipped)", subject)
 		return
 	}
 
-	data, err := json.Marshal(payload)
+	data, err := json.Marshal(eventPayload)
 	if err != nil {
 		log.Printf("[EVENT] marshal error for %s: %v", subject, err)
 		return

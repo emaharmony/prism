@@ -425,3 +425,44 @@ func TestPublishEvent_SchemaVersion(t *testing.T) {
 		t.Errorf("expected key=value, got %v", payload["key"])
 	}
 }
+func TestPublishEvent_DoesNotMutateCallerPayload(t *testing.T) {
+	// Verify that publishEvent doesn't mutate the caller's payload map
+	original := map[string]any{
+		"user_id":    "123",
+		"channel_id": "456",
+	}
+	originalLen := len(original)
+
+	// Create a conversationContext with no NATS (so publish logs and returns)
+	cc := &conversationContext{
+		natsConn: nil, // NATS not connected — event is logged and skipped
+	}
+
+	cc.publishEvent("test.subject", original)
+
+	// The original map should NOT have been mutated (no "v" key added)
+	if len(original) != originalLen {
+		t.Errorf("publishEvent mutated caller's payload: expected %d keys, got %d (keys: %v)", originalLen, len(original), mapKeys(original))
+	}
+	if _, ok := original["v"]; ok {
+		t.Error("publishEvent added 'v' key to caller's payload map — should create a copy instead")
+	}
+}
+
+func mapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func TestPublishEvent_NilPayload(t *testing.T) {
+	// Verify that nil payload doesn't panic
+	cc := &conversationContext{
+		natsConn: nil, // NATS not connected
+	}
+
+	// Should not panic
+	cc.publishEvent("test.subject", nil)
+}
