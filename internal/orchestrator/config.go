@@ -49,6 +49,14 @@ type PrismConfig struct {
 	// DataDir is where SQLite databases and run artifacts are stored.
 	DataDir string `yaml:"data_dir"`
 
+	// Workspace is the root directory for context injection (SOUL.md, AGENTS.md, etc.).
+	// Defaults to $HOME/.openclaw/workspace if empty.
+	Workspace string `yaml:"workspace"`
+
+	// ContextTokenBudget is the max tokens for workspace context injection.
+	// Default: 4000. Higher = more context but less room for conversation.
+	ContextTokenBudget int `yaml:"context_token_budget"`
+
 	// Port is the health check server port. Default 8321.
 	Port int `yaml:"port"`
 
@@ -143,6 +151,7 @@ func DefaultConfig() *Config {
 		Port:     8321,
 			DataDir:  filepath.Join(os.Getenv("HOME"), ".prism", "data"),
 			LogLevel: "info",
+		ContextTokenBudget: 4000,
 		},
 		Sessions: SessionConfig{
 			IdleTimeoutMinutes: 30,
