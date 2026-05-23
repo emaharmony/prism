@@ -206,6 +206,30 @@ func (b *BotAdapter) Typing(channelID string) error {
 	return b.session.ChannelTyping(channelID)
 }
 
+// SendPlaceholder sends an initial message that can be edited later.
+// Returns the message ID of the sent message for subsequent EditMessage calls.
+// Used for streaming: send placeholder → edit as tokens arrive.
+func (b *BotAdapter) SendPlaceholder(channelID, content string) (string, error) {
+	if b.session == nil {
+		return "", fmt.Errorf("discord-bot: not connected")
+	}
+	msg, err := b.session.ChannelMessageSend(channelID, content)
+	if err != nil {
+		return "", err
+	}
+	return msg.ID, nil
+}
+
+// EditMessage edits an existing Discord message with new content.
+// Used for streaming: update the placeholder message as tokens arrive.
+func (b *BotAdapter) EditMessage(channelID, messageID, content string) error {
+	if b.session == nil {
+		return fmt.Errorf("discord-bot: not connected")
+	}
+	_, err := b.session.ChannelMessageEdit(channelID, messageID, content)
+	return err
+}
+
 // IsReady returns whether the bot has connected to Discord.
 func (b *BotAdapter) IsReady() bool {
 	b.mu.RLock()

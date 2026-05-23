@@ -13,6 +13,9 @@ prism:
   nats_url: ""
   # Data directory for SQLite databases and run artifacts.
   data_dir: "~/.prism/data"
+  # Workspace root for context injection (SOUL.md, AGENTS.md, USER.md, etc.)
+  # Defaults to $HOME/.openclaw/workspace if empty.
+  workspace: ""
   # Log level: debug, info, warn, error
   log_level: "info"
 
