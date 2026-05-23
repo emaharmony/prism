@@ -36,16 +36,25 @@ func (s *PersistenceStage) Name() string {
 }
 
 // Validate checks that the run directory is set in the RunContext.
+// If RunDir is empty, the stage skips gracefully (conversation mode
+// doesn't need file artifacts).
 func (s *PersistenceStage) Validate(rc *RunContext) error {
-	if rc.RunDir == "" {
-		return fmt.Errorf("stage %s: run_dir is required (set by ConnectionStage)", s.Name())
-	}
-	return nil
+	return nil // RunDir is optional — Execute handles empty RunDir
 }
 
 // Execute writes all artifacts to disk.
+// If RunDir is empty (conversation mode), persistence is skipped gracefully.
 func (s *PersistenceStage) Execute(ctx context.Context, rc *RunContext) (*RunContext, *StageResult, error) {
 	runDir := rc.RunDir
+
+	if runDir == "" {
+		// Conversation mode — no file persistence needed
+		return rc, &StageResult{
+			StageName: s.Name(),
+			Success:   true,
+			Data:      map[string]any{"skipped": true, "reason": "no_run_dir"},
+		}, nil
+	}
 
 	// 1. Write events.jsonl — the canonical event log
 	eventsPath := filepath.Join(runDir, "events.jsonl")
