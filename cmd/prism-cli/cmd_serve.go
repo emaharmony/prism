@@ -311,7 +311,7 @@ func executeServe(args []string) {
 // concerns (debounce, typing, session management, Discord delivery) while
 // delegating the domain-agnostic core to the stage pipeline:
 //
-//  Pipeline: RoutingStage → LLMStage → PersistenceStage → EventPublishStage
+//  Pipeline: LLMStage → PersistenceStage → EventPublishStage
 //  Handler: debounce, session, typing, prompt build, StreamCallback, Remembrance
 //
 // The StreamCallback bridges LLMStage streaming to Discord:
@@ -448,7 +448,19 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	finalRC, err := pipeline.Run(runCtx, rc)
 	if err != nil {
 		log.Printf("[ERROR] pipeline failed (run %s): %v", run.ID, err)
-		cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+
+		// Flush any accumulated text to placeholder before sending error
+		if placeholderMsgID != "" {
+			streamMu.Lock()
+			if accumulatedText != "" {
+				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, accumulatedText+"\n\n⚠️ Canceled.")
+			} else {
+				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ Canceled.")
+			}
+			streamMu.Unlock()
+		} else {
+			cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+		}
 		return
 	}
 
@@ -781,21 +793,4 @@ func primaryName(cfg *orchestrator.Config) string {
 		return "(none)"
 	}
 	return p.ID
-}
-// buildAgentConfigSnapshots creates lightweight agent config snapshots
-// for the stage pipeline. These snapshots decouple the pipeline from
-// the full orchestrator.AgentConfig type.
-func (cc *conversationContext) buildAgentConfigSnapshots() map[string]*stage.AgentConfigSnapshot {
-	snapshots := make(map[string]*stage.AgentConfigSnapshot, len(cc.cfg.Agents))
-	for i := range cc.cfg.Agents {
-		a := &cc.cfg.Agents[i]
-		snapshots[a.ID] = &stage.AgentConfigSnapshot{
-			ID:       a.ID,
-			Model:    a.Model,
-			Provider: a.Provider,
-			Primary:  a.Primary,
-			Context:  a.Context,
-		}
-	}
-	return snapshots
 }
