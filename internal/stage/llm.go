@@ -6,6 +6,10 @@
 // If the provider supports StreamingProvider, the LLMStage will use
 // GenerateStream() to emit token events in real time. Otherwise it
 // falls back to the synchronous Generate() path.
+//
+// V21-5: If a StreamCallback is set on RunContext, tokens are delivered
+// in real-time via the callback (e.g., to Discord for streaming edits).
+// This decouples streaming delivery from any specific channel.
 package stage
 
 import (
@@ -62,9 +66,9 @@ func (s *LLMStage) Execute(ctx context.Context, rc *RunContext) (*RunContext, *S
 			StageName: s.Name(),
 			Success:   true,
 			Data: map[string]any{
-				"dry_run":     true,
-				"model":       rc.Model,
-				"provider":    rc.ProviderName,
+				"dry_run":      true,
+				"model":        rc.Model,
+				"provider":     rc.ProviderName,
 				"prompt_built": true,
 			},
 		}, nil
@@ -98,12 +102,12 @@ func (s *LLMStage) executeSync(ctx context.Context, rc *RunContext) (*RunContext
 	if err != nil {
 		// LLM call failed
 		failEvt := event.NewEvent(event.V1EventTypes.AgentFailed, rc.Agent, map[string]any{
-			"run_id":       rc.RunID,
-			"agent":        rc.Agent,
-			"model":        rc.Model,
-			"provider":     rc.ProviderName,
-			"error":        err.Error(),
-			"duration_ms":  duration,
+			"run_id":      rc.RunID,
+			"agent":       rc.Agent,
+			"model":       rc.Model,
+			"provider":    rc.ProviderName,
+			"error":       err.Error(),
+			"duration_ms": duration,
 		})
 		newRC := rc.WithEvent(failEvt)
 
@@ -143,8 +147,9 @@ func (s *LLMStage) executeSync(ctx context.Context, rc *RunContext) (*RunContext
 }
 
 // executeStreaming calls GenerateStream() and collects token chunks.
-// Token chunks are batched and emitted as events, but NOT persisted to
-// events.jsonl. Only the llm.completed event is persisted.
+// If a StreamCallback is set on RunContext, tokens are delivered
+// in real-time via the callback (e.g., to Discord for streaming edits).
+// Otherwise, tokens are accumulated silently for CLI/API use.
 func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp provider.StreamingProvider) (*RunContext, *StageResult, error) {
 	start := time.Now()
 
@@ -169,14 +174,15 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 	var fullResponse string
 	var totalTokens int
 	var tokenBatches int
+	var callbackErr error
 
 	for chunk := range ch {
 		if chunk.Error != nil {
 			// Stream error
 			failEvt := event.NewEvent(event.V1EventTypes.AgentFailed, rc.Agent, map[string]any{
-				"run_id":  rc.RunID,
-				"agent":   rc.Agent,
-				"error":   chunk.Error.Error(),
+				"run_id": rc.RunID,
+				"agent":  rc.Agent,
+				"error":  chunk.Error.Error(),
 			})
 			newRC := rc.WithEvent(failEvt)
 			return newRC, &StageResult{
@@ -188,9 +194,22 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 
 		for _, token := range chunk.Tokens {
 			fullResponse += token
+
+			// Deliver token to callback if set (e.g., Discord streaming)
+			if rc.StreamCallback != nil {
+				if err := rc.StreamCallback(token, totalTokens, chunk.Finished); err != nil {
+					// Callback error — stop streaming but preserve what we have
+					callbackErr = err
+					break
+				}
+			}
 		}
 		totalTokens += len(chunk.Tokens)
 		tokenBatches++
+
+		if callbackErr != nil {
+			break
+		}
 
 		if chunk.Finished {
 			break
@@ -200,6 +219,20 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 	duration := time.Since(start).Milliseconds()
 
 	// Emit completion event (this IS persisted to events.jsonl)
+	resultData := map[string]any{
+		"response":       fullResponse,
+		"model":          rc.Model,
+		"provider":       rc.ProviderName,
+		"duration_ms":    duration,
+		"output_tokens":  totalTokens,
+		"streamed":       true,
+		"token_batches":  tokenBatches,
+	}
+
+	if callbackErr != nil {
+		resultData["callback_error"] = callbackErr.Error()
+	}
+
 	completeEvt := event.NewEvent(event.V1EventTypes.AgentCompleted, rc.Agent, map[string]any{
 		"run_id":         rc.RunID,
 		"agent":          rc.Agent,
@@ -216,15 +249,7 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 	return newRC, &StageResult{
 		StageName: s.Name(),
 		Success:   true,
-		Data: map[string]any{
-			"response":       fullResponse,
-			"model":          rc.Model,
-			"provider":       rc.ProviderName,
-			"duration_ms":    duration,
-			"output_tokens":  totalTokens,
-			"streamed":       true,
-			"token_batches":  tokenBatches,
-		},
+		Data:      resultData,
 	}, nil
 }
 

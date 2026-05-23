@@ -31,11 +31,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/emaharmony/prism/internal/action"
-	"github.com/emaharmony/prism/internal/convstage"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
@@ -51,30 +51,21 @@ import (
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/stage"
 
 	"github.com/nats-io/nats.go"
 )
 
-// botMessageSender adapts discordbot.BotAdapter to implement convstage.MessageSender.
-// This allows the ConversationStage to send/edit Discord messages without
-// depending on the concrete BotAdapter type.
-type botMessageSender struct {
-	bot *discordbot.BotAdapter
+// natsPublisherAdapter wraps a nats.Conn to implement stage.NatsPublisher.
+type natsPublisherAdapter struct {
+	conn *nats.Conn
 }
 
-func (b *botMessageSender) Send(channelID, content string) error {
-	return b.bot.Send(&discordbot.OutboundMessage{
-		ChannelID: channelID,
-		Content:   content,
-	})
-}
-
-func (b *botMessageSender) SendPlaceholder(channelID, content string) (string, error) {
-	return b.bot.SendPlaceholder(channelID, content)
-}
-
-func (b *botMessageSender) EditMessage(channelID, messageID, content string) error {
-	return b.bot.EditMessage(channelID, messageID, content)
+func (n *natsPublisherAdapter) Publish(subject string, data []byte) error {
+	if n.conn == nil {
+		return fmt.Errorf("NATS not connected")
+	}
+	return n.conn.Publish(subject, data)
 }
 
 // conversationContext holds all the dependencies needed to process a
@@ -92,6 +83,7 @@ type conversationContext struct {
 	cancelReg   *runtrack.CancelRegistry
 	ctxBuilder  *context.Builder    // V21: workspace context injection
 	natsConn    *nats.Conn           // V21: NATS bus connection for event publishing
+	natsURL     string              // V21: NATS bus URL
 	actionReg   *action.Registry     // V21: action registry for event-triggered actions
 	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
 }
@@ -264,6 +256,7 @@ func executeServe(args []string) {
 				cancelReg: cancelReg,
 				ctxBuilder: ctxBuilder,
 				natsConn:  natsConn,
+				natsURL:   natsURL,
 				actionReg: actionReg,
 				remClient: remClient,
 			}
@@ -312,16 +305,17 @@ func executeServe(args []string) {
 }
 
 // handleDiscordMessage processes an incoming Discord message through the
-// full conversation pipeline:
-//  1. Debounce (drop rapid-fire messages)
-//  2. Route to the appropriate agent
-//  3. Find or create a session
-//  4. Send typing indicator
-//  5. Build prompt from session history
-//  6. Call the LLM provider
-//  7. Save agent response to session
-//  8. Send response to Discord
-//  9. Emit structured events for observability
+// full conversation pipeline.
+//
+// V21-5: The handler is now an adapter layer — it handles platform-specific
+// concerns (debounce, typing, session management, Discord delivery) while
+// delegating the domain-agnostic core to the stage pipeline:
+//
+//  Pipeline: RoutingStage → LLMStage → PersistenceStage → EventPublishStage
+//  Handler: debounce, session, typing, prompt build, StreamCallback, Remembrance
+//
+// The StreamCallback bridges LLMStage streaming to Discord:
+// LLMStage calls callback(token) → callback sends to Discord via placeholder + edits.
 func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessage) {
 	// Step 1: Debounce — drop rapid-fire messages from the same user
 	debounceKey := msg.UserID + ":" + msg.ChannelID
@@ -329,23 +323,16 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-	// Step 2: Route the message to the appropriate agent
-	result := cc.router.Route(msg.Content)
-
-	cc.eventLog.Log("message.routed", "", result.AgentID, map[string]any{
-		"user_id":    msg.UserID,
-		"channel_id": msg.ChannelID,
-		"method":     result.Method,
-		"clean_text": result.CleanedContent,
-	})
+	// Emit channel received event
 	cc.publishEvent("prism.channel.received", map[string]any{
 		"user_id":    msg.UserID,
 		"channel_id": msg.ChannelID,
-		"agent_id":  result.AgentID,
-		"method":     result.Method,
 	})
 
-	// Step 3: Find or create a session
+	// Step 2: Route the message to the appropriate agent (handler-level for now)
+	result := cc.router.Route(msg.Content)
+
+	// Step 3: Find or create a session (handler-level)
 	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
 	if err != nil {
 		log.Printf("[ERROR] find session: %v", err)
@@ -366,7 +353,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-	// Step 4: Look up the agent's provider and model
+	// Step 4: Look up the agent's provider and model (handler-level)
 	agentCfg := cc.findAgentConfig(result.AgentID)
 	if agentCfg == nil {
 		log.Printf("[ERROR] no config for agent %s", result.AgentID)
@@ -384,100 +371,159 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 5: Create a run with proper context for cancellation and timeout
 	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 60*time.Second)
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
-	run.Cancel = runCancel // Wire the actual cancel func
+	run.Cancel = runCancel
 	cc.cancelReg.Register(sess.ID, runCancel)
 	defer cc.cancelReg.Unregister(sess.ID)
 
-	cc.eventLog.Log("run.started", run.ID, result.AgentID, map[string]any{
-		"model":      agentCfg.Model,
-		"provider":   agentCfg.Provider,
-		"session_id": sess.ID,
-	})
-	cc.publishEvent(result.AgentID+".run.started", map[string]any{
-		"run_id":     run.ID,
-		"model":      agentCfg.Model,
-		"provider":   agentCfg.Provider,
-		"session_id": sess.ID,
-	})
-
-	// Step 6: Send typing indicator
+	// Step 6: Send typing indicator (Discord-specific)
 	if err := cc.bot.Typing(msg.ChannelID); err != nil {
 		log.Printf("[WARN] typing indicator failed: %v", err)
 	}
 
-	// Step 7: Build prompt and execute via ConversationStage
+	// Step 7: Build the full prompt (session history + workspace context)
 	prompt := cc.buildPrompt(sess, agentCfg)
 
-	cc.eventLog.Log("agent.llm.calling", run.ID, result.AgentID, map[string]any{
-		"model":        agentCfg.Model,
-		"prompt_length": len(prompt),
-	})
-	cc.publishEvent(result.AgentID+".llm.calling", map[string]any{
-		"run_id":        run.ID,
-		"model":          agentCfg.Model,
-		"prompt_length": len(prompt),
-	})
+	// Step 8: Set up streaming — create placeholder and StreamCallback
+	var placeholderMsgID string
+	var streamMu sync.Mutex
+	var accumulatedText string
+	var lastEditTime time.Time
 
-	// Use ConversationStage for LLM call + response delivery
-	sender := &botMessageSender{bot: cc.bot}
-	stage := convstage.NewConversationStage(sender, llmProvider, agentCfg.Model, result.AgentID)
+	placeholderMsgID, placeholderErr := cc.bot.SendPlaceholder(msg.ChannelID, "✧ ...")
+	if placeholderErr != nil {
+		log.Printf("[STREAM] placeholder failed: %v, will use sync delivery", placeholderErr)
+	}
 
-	stageResult, err := stage.ExecuteStreaming(runCtx, prompt, msg.ChannelID)
+	streamCallback := func(token string, index int, finished bool) error {
+		if placeholderMsgID == "" {
+			return nil // No placeholder — can't stream edits
+		}
+
+		streamMu.Lock()
+		defer streamMu.Unlock()
+
+		accumulatedText += token
+		now := time.Now()
+
+		// Batch edits: flush every 900ms to respect Discord rate limits (5 edits/5s)
+		if now.Sub(lastEditTime) < 900*time.Millisecond && !finished {
+			return nil // Defer this edit
+		}
+
+		lastEditTime = now
+		content := accumulatedText
+		if len(content) > 2000 {
+			runes := []rune(content)
+			for len(runes) > 1 && len(string(runes))+3 > 2000 {
+				runes = runes[:len(runes)-1]
+			}
+			content = string(runes) + "..."
+		}
+
+		return cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, content)
+	}
+
+	// Step 9: Construct and run the stage pipeline
+	natsAdapter := &natsPublisherAdapter{conn: cc.natsConn}
+
+	pipeline := stage.NewPipeline(
+		&stage.RoutingStage{
+			Router:       cc.router,
+			Providers:    cc.providers,
+			AgentConfigs: cc.buildAgentConfigSnapshots(),
+		},
+		&stage.LLMStage{},
+		&stage.PersistenceStage{BusURL: cc.natsURL},
+		&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.natsURL},
+	)
+
+	rc := &stage.RunContext{
+		RunID:          run.ID,
+		Task:           prompt, // Full formatted prompt (not raw user input)
+		Agent:          result.AgentID,
+		Provider:       llmProvider,
+		ProviderName:   agentCfg.Provider,
+		Model:          agentCfg.Model,
+		SessionID:      sess.ID,
+		CleanedContent: result.CleanedContent,
+		RouteMethod:    result.Method,
+		StreamCallback: streamCallback,
+	}
+
+	finalRC, err := pipeline.Run(runCtx, rc)
 	if err != nil {
-		log.Printf("[ERROR] LLM call failed (run %s): %v", run.ID, err)
-		cc.eventLog.Log("agent.llm.error", run.ID, result.AgentID, map[string]any{
-			"error": err.Error(),
-		})
+		log.Printf("[ERROR] pipeline failed (run %s): %v", run.ID, err)
 		cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
 		return
 	}
 
-	cc.eventLog.Log("agent.llm.completed", run.ID, result.AgentID, map[string]any{
-		"latency_ms":     stageResult.LatencyMS,
-		"output_tokens":  stageResult.OutputTokens,
-		"streamed":       stageResult.Streamed,
-	})
-	cc.publishEvent(result.AgentID+".llm.completed", map[string]any{
-		"run_id":          run.ID,
-		"latency_ms":      stageResult.LatencyMS,
-		"output_tokens":   stageResult.OutputTokens,
-		"streamed":        stageResult.Streamed,
-	})
-
-	// Step 8: Save agent response to session
-	_, err = cc.sessMgr.AddMessage(sess.ID, "agent", stageResult.Text, result.AgentID)
-	if err != nil {
-		log.Printf("[WARN] failed to save agent response to session %s: %v", sess.ID, err)
+	// Check pipeline results for stage failures
+	for stageName, result := range finalRC.Results {
+		if result != nil && !result.Success {
+			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, result.Error)
+			switch stageName {
+			case "routing":
+				cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+			case "llm":
+				cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+			default:
+				cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
+			}
+			return
+		}
 	}
 
-	// Step 9 is now handled by ConversationStage (streaming or sync delivery)
+	// Step 10: Post-pipeline — handle response delivery and session save
+	responseText := finalRC.LLMResponse
 
-	// Remembrance auto-save uses stageResult.Text
+	// If we got a response but no streaming placeholder, send it directly
+	if placeholderMsgID == "" && responseText != "" {
+		err := cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: msg.ChannelID,
+			Content:   responseText,
+		})
+		if err != nil {
+			log.Printf("[ERROR] failed to send Discord response: %v", err)
+		}
+	}
 
-	cc.eventLog.Log("run.completed", run.ID, result.AgentID, map[string]any{
+	// Save agent response to session
+	if responseText != "" {
+		_, err := cc.sessMgr.AddMessage(sess.ID, "agent", responseText, result.AgentID)
+		if err != nil {
+			log.Printf("[WARN] failed to save agent response to session %s: %v", sess.ID, err)
+		}
+	}
+
+	// Log and publish completion events
+	llmResult := finalRC.Results["llm"]
+	streamed := false
+	if llmResult != nil && llmResult.Data != nil {
+		if s, ok := llmResult.Data["streamed"].(bool); ok {
+			streamed = s
+		}
+	}
+
+	cc.eventLog.Log("run.completed", run.ID, finalRC.Agent, map[string]any{
 		"latency_ms": run.Elapsed().Milliseconds(),
 	})
-
-	cc.publishEvent(result.AgentID+".run.completed", map[string]any{
-		"run_id":       run.ID,
-		"latency_ms":   run.Elapsed().Milliseconds(),
-		"output_length": len(stageResult.Text),
-		"output_tokens": stageResult.OutputTokens,
+	cc.publishEvent(finalRC.Agent+".run.completed", map[string]any{
+		"run_id":        run.ID,
+		"latency_ms":    run.Elapsed().Milliseconds(),
+		"output_length": len(responseText),
+		"streamed":      streamed,
 	})
-	cc.publishEvent(result.AgentID+".channel.sent", map[string]any{
+	cc.publishEvent(finalRC.Agent+".channel.sent", map[string]any{
 		"run_id":     run.ID,
 		"channel_id": msg.ChannelID,
 		"user_id":    msg.UserID,
 	})
 
-	// Step 10: Auto-save to Remembrance (V21)
-	// Asynchronously capture the agent output for long-term memory.
-	// Uses a 30s timeout context to bound the goroutine lifetime.
-	// Fire-and-forget: memory save failure never blocks the response.
-	if cc.remClient != nil {
-		captureAgentID := result.AgentID
+	// Step 11: Auto-save to Remembrance (async fire-and-forget)
+	if cc.remClient != nil && responseText != "" {
+		captureAgentID := finalRC.Agent
 		captureRunID := run.ID
-		captureText := stageResult.Text
+		captureText := responseText
 		captureCtx, captureCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 30*time.Second)
 
 		go func() {
@@ -493,21 +539,18 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
 				return
 			}
-			// Log capture metadata for observability
 			if decision, ok := result["decision"]; ok {
 				log.Printf("[REMEMBRANCE] run %s: decision=%v, captured", captureRunID, decision)
 			} else {
 				log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
 			}
 
-			_ = captureCtx // Use context for timeout bounding
+			_ = captureCtx
 		}()
 	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
-}
-
-// sendError sends a user-friendly error message to a Discord channel.
+}// sendError sends a user-friendly error message to a Discord channel.
 func (cc *conversationContext) sendError(channelID, message string) {
 	err := cc.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
@@ -743,4 +786,21 @@ func primaryName(cfg *orchestrator.Config) string {
 		return "(none)"
 	}
 	return p.ID
+}
+// buildAgentConfigSnapshots creates lightweight agent config snapshots
+// for the stage pipeline. These snapshots decouple the pipeline from
+// the full orchestrator.AgentConfig type.
+func (cc *conversationContext) buildAgentConfigSnapshots() map[string]*stage.AgentConfigSnapshot {
+	snapshots := make(map[string]*stage.AgentConfigSnapshot, len(cc.cfg.Agents))
+	for i := range cc.cfg.Agents {
+		a := &cc.cfg.Agents[i]
+		snapshots[a.ID] = &stage.AgentConfigSnapshot{
+			ID:       a.ID,
+			Model:    a.Model,
+			Provider: a.Provider,
+			Primary:  a.Primary,
+			Context:  a.Context,
+		}
+	}
+	return snapshots
 }
