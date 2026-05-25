@@ -352,6 +352,18 @@ func (m *Manager) loadMessages(sessionID string) ([]Message, error) {
 	return msgs, nil
 }
 
+// ListActive returns all sessions that are currently in memory.
+func (m *Manager) ListActive() ([]*Session, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var active []*Session
+	for _, s := range m.sessions {
+		active = append(active, s)
+	}
+	return active, nil
+}
+
 // List returns all active session IDs.
 func (m *Manager) List() []string {
 	m.mu.RLock()
