@@ -34,6 +34,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emaharmony/prism/internal/delegation"
@@ -56,6 +57,8 @@ type Server struct {
 	tracker   *delegation.Tracker
 	nc        *nats.Conn
 	mux       *http.ServeMux
+	editorMu  sync.RWMutex
+	editorWS  *editor.EditorState
 }
 
 // Config holds API server configuration.
@@ -114,7 +117,7 @@ func (s *Server) routes() {
 func (s *Server) Start() error {
 	log.Printf("[API] starting on %s", s.addr)
 
-	handler := panicRecovery(s.mux)
+	handler := corsMiddleware(panicRecovery(s.mux))
 
 	srv := &http.Server{
 		Addr:         s.addr,
@@ -137,6 +140,22 @@ func panicRecovery(next http.Handler) http.Handler {
 				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 			}
 		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// corsMiddleware adds CORS headers for browser-based editors.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -602,7 +621,7 @@ func (s *Server) getEditorState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putEditorState(w http.ResponseWriter, r *http.Request) {
 	var state editor.EditorState
-	if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&state); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -642,18 +661,18 @@ func (s *Server) handleEditorNodes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 	var node editor.EditorNode
-	if err := json.NewDecoder(r.Body).Decode(&node); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&node); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Get current state
 	state := s.getCurrentState()
 	if err := state.AddNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	s.setCurrentState(state)
 	writeJSON(w, state)
 }
 
@@ -676,8 +695,8 @@ func (s *Server) handleEditorNodeCRUD(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateNode(w http.ResponseWriter, r *http.Request, id string) {
-	var updates editor.EditorNode
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	var updates editor.NodeUpdate
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&updates); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -688,6 +707,7 @@ func (s *Server) updateNode(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
+	s.setCurrentState(state)
 	writeJSON(w, state)
 }
 
@@ -698,6 +718,7 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
+	s.setCurrentState(state)
 	writeJSON(w, state)
 }
 
@@ -715,7 +736,7 @@ func (s *Server) handleEditorEdges(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addEdge(w http.ResponseWriter, r *http.Request) {
 	var edge editor.EditorEdge
-	if err := json.NewDecoder(r.Body).Decode(&edge); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&edge); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -726,6 +747,7 @@ func (s *Server) addEdge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.setCurrentState(state)
 	writeJSON(w, state)
 }
 
@@ -751,6 +773,7 @@ func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
+	s.setCurrentState(state)
 	writeJSON(w, state)
 }
 
@@ -768,7 +791,7 @@ func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 		Confirm bool   `json:"confirm"`
 		Path    string `json:"path"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -813,14 +836,63 @@ func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getCurrentState loads the current config as an EditorState.
+// getCurrentState returns the editor working state.
+// If no working state exists, it initializes one from the orchestrator config.
 func (s *Server) getCurrentState() *editor.EditorState {
+	s.editorMu.RLock()
+	ws := s.editorWS
+	s.editorMu.RUnlock()
+
+	if ws != nil {
+		// Return a deep copy so mutations don't affect the stored state
+		return deepCopyState(ws)
+	}
+
+	// Initialize from config
 	var agents []orchestrator.AgentConfig
 	if s.orch != nil {
 		agents = s.orch.Config.Agents
 	}
 	config := &orchestrator.Config{Agents: agents}
-	return editor.ConfigToEditorState(config)
+	state := editor.ConfigToEditorState(config)
+
+	s.editorMu.Lock()
+	s.editorWS = state
+	s.editorMu.Unlock()
+
+	return deepCopyState(state)
+}
+
+// setCurrentState updates the working state and returns it.
+func (s *Server) setCurrentState(state *editor.EditorState) {
+	s.editorMu.Lock()
+	s.editorWS = state
+	s.editorMu.Unlock()
+}
+
+// deepCopyState creates a deep copy of an EditorState.
+func deepCopyState(src *editor.EditorState) *editor.EditorState {
+	dst := &editor.EditorState{
+		Nodes: make([]editor.EditorNode, len(src.Nodes)),
+		Edges: make([]editor.EditorEdge, len(src.Edges)),
+	}
+	copy(dst.Nodes, src.Nodes)
+	copy(dst.Edges, src.Edges)
+	for i := range src.Nodes {
+		if src.Nodes[i].Capabilities != nil {
+			dst.Nodes[i].Capabilities = make([]string, len(src.Nodes[i].Capabilities))
+			copy(dst.Nodes[i].Capabilities, src.Nodes[i].Capabilities)
+		}
+		if src.Nodes[i].Subscriptions != nil {
+			dst.Nodes[i].Subscriptions = make([]string, len(src.Nodes[i].Subscriptions))
+			copy(dst.Nodes[i].Subscriptions, src.Nodes[i].Subscriptions)
+		}
+		if src.Nodes[i].Context != nil {
+			dst.Nodes[i].Context = make([]string, len(src.Nodes[i].Context))
+			copy(dst.Nodes[i].Context, src.Nodes[i].Context)
+		}
+	}
+	return dst
 }
 
 // --- Helpers ---

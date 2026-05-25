@@ -385,11 +385,13 @@ func TestRemoveEdge(t *testing.T) {
 func TestUpdateNode(t *testing.T) {
 	state := &EditorState{
 		Nodes: []EditorNode{
-			{ID: "lumi", Role: "lead", Model: "gpt-4o"},
+			{ID: "lumi", Role: "lead", Model: "gpt-4o", Primary: true, Position: Position{X: 100, Y: 200}},
 		},
 	}
 
-	err := state.UpdateNode("lumi", EditorNode{Model: "glm-5.1:cloud", Position: Position{X: 200, Y: 300}})
+	primary := false
+	pos := Position{X: 200, Y: 300}
+	err := state.UpdateNode("lumi", NodeUpdate{Model: strPtr("glm-5.1:cloud"), Primary: &primary, Position: &pos})
 	if err != nil {
 		t.Fatalf("UpdateNode error: %v", err)
 	}
@@ -400,17 +402,22 @@ func TestUpdateNode(t *testing.T) {
 	if state.Nodes[0].Position.X != 200 {
 		t.Errorf("expected position update X=200, got %d", state.Nodes[0].Position.X)
 	}
-	// Role should not change (empty string is not applied)
+	if state.Nodes[0].Primary != false {
+		t.Errorf("expected primary=false, got %v", state.Nodes[0].Primary)
+	}
+	// Role should not change (nil pointer means don't update)
 	if state.Nodes[0].Role != "lead" {
 		t.Errorf("expected role unchanged, got %s", state.Nodes[0].Role)
 	}
 
 	// Non-existent node
-	err = state.UpdateNode("ghost", EditorNode{})
+	err = state.UpdateNode("ghost", NodeUpdate{})
 	if err == nil {
 		t.Error("expected error for non-existent node")
 	}
 }
+
+func strPtr(s string) *string { return &s }
 
 func TestIsValidAgentID(t *testing.T) {
 	tests := []struct {
@@ -508,5 +515,31 @@ func TestWriteConfigToFile_InvalidState(t *testing.T) {
 	err := WriteConfigToFile(state, path)
 	if err == nil {
 		t.Error("expected error for invalid state")
+	}
+}
+
+func TestValidateWritePath(t *testing.T) {
+	tests := []struct {
+		path string
+		ok   bool
+	}{
+		{"/tmp/prism.yaml", true},
+		{"config.yaml", true},
+		{"/etc/prism/config.yml", true},
+		{"../../../etc/passwd", false},   // traversal
+		{"/tmp/config.json", false},       // wrong extension
+		{"/tmp/../../../etc/hosts", false}, // traversal
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			err := validateWritePath(tt.path)
+			if tt.ok && err != nil {
+				t.Errorf("expected %s to be valid, got error: %v", tt.path, err)
+			}
+			if !tt.ok && err == nil {
+				t.Errorf("expected %s to be invalid", tt.path)
+			}
+		})
 	}
 }

@@ -286,11 +286,18 @@ function updatePropList(id, prop, value) {
 function updateNodeList() {
   const list = document.getElementById('nodeList');
   list.innerHTML = state.nodes.map(n =>
-    `<div style="padding:4px 8px;cursor:pointer;border-radius:4px;margin-bottom:2px;${n.id===selectedNodeId?'background:#1e1e2e;':''}" onclick="selectNode('${n.id}')">
+    `<div style="padding:4px 8px;cursor:pointer;border-radius:4px;margin-bottom:2px;${n.id===selectedNodeId?'background:#1e1e2e;':''}" class="node-list-item" data-node-id="${escapeHtml(n.id)}">
       <span style="color:#a78bfa;font-size:12px">${escapeHtml(n.label||n.id)}</span>
-      <span style="color:#666;font-size:11px;margin-left:4px">${n.role||''}</span>
+      <span style="color:#666;font-size:11px;margin-left:4px">${escapeHtml(n.role||'')}</span>
     </div>`
   ).join('');
+
+  // Event delegation for node list items
+  list.querySelectorAll('.node-list-item').forEach(el => {
+    el.addEventListener('click', () => {
+      selectNode(el.dataset.nodeId);
+    });
+  });
 }
 
 function updateStatusBar() {

@@ -10,6 +10,7 @@ package editor
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -417,21 +418,39 @@ func (s *EditorState) RemoveEdge(id string) error {
 	return nil
 }
 
+// NodeUpdate represents partial updates to a node.
+// Only non-nil fields will be applied.
+type NodeUpdate struct {
+	Label         *string  `json:"label"`
+	Role          *string  `json:"role"`
+	Model         *string  `json:"model"`
+	Provider      *string  `json:"provider"`
+	Primary       *bool    `json:"primary"`
+	Capabilities  []string `json:"capabilities"`
+	Subscriptions []string `json:"subscriptions"`
+	Context       []string `json:"context"`
+	Position      *Position `json:"position"`
+}
+
 // UpdateNode updates a node's properties by ID.
-func (s *EditorState) UpdateNode(id string, updates EditorNode) error {
+// Only non-nil/non-empty fields are applied.
+func (s *EditorState) UpdateNode(id string, updates NodeUpdate) error {
 	for i, n := range s.Nodes {
 		if n.ID == id {
-			if updates.Label != "" {
-				s.Nodes[i].Label = updates.Label
+			if updates.Label != nil {
+				s.Nodes[i].Label = *updates.Label
 			}
-			if updates.Role != "" {
-				s.Nodes[i].Role = updates.Role
+			if updates.Role != nil {
+				s.Nodes[i].Role = *updates.Role
 			}
-			if updates.Model != "" {
-				s.Nodes[i].Model = updates.Model
+			if updates.Model != nil {
+				s.Nodes[i].Model = *updates.Model
 			}
-			if updates.Provider != "" {
-				s.Nodes[i].Provider = updates.Provider
+			if updates.Provider != nil {
+				s.Nodes[i].Provider = *updates.Provider
+			}
+			if updates.Primary != nil {
+				s.Nodes[i].Primary = *updates.Primary
 			}
 			if updates.Capabilities != nil {
 				s.Nodes[i].Capabilities = updates.Capabilities
@@ -442,8 +461,9 @@ func (s *EditorState) UpdateNode(id string, updates EditorNode) error {
 			if updates.Context != nil {
 				s.Nodes[i].Context = updates.Context
 			}
-			s.Nodes[i].Primary = updates.Primary
-			s.Nodes[i].Position = updates.Position
+			if updates.Position != nil {
+				s.Nodes[i].Position = *updates.Position
+			}
 			return nil
 		}
 	}
@@ -452,6 +472,7 @@ func (s *EditorState) UpdateNode(id string, updates EditorNode) error {
 
 // WriteConfigToFile writes the editor state as YAML to a file on disk.
 // This requires explicit path and should only be called with user confirmation.
+// The path must be a .yaml or .yml file within an allowed directory.
 func WriteConfigToFile(state *EditorState, path string) error {
 	// Validate first
 	errors := ValidateEditorState(state)
@@ -459,20 +480,62 @@ func WriteConfigToFile(state *EditorState, path string) error {
 		return fmt.Errorf("validation errors: %v", errors)
 	}
 
+	// Security: validate path is a YAML file with no traversal
+	if err := validateWritePath(path); err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
 	yaml, err := WriteConfigYAML(state)
 	if err != nil {
 		return fmt.Errorf("yaml generation error: %w", err)
 	}
 
-	// Write atomically: write to temp file then rename
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(yaml), 0644); err != nil {
+	// Write atomically using os.CreateTemp in the target directory
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, "prism-editor-*.yaml.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp file error: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+
+	if _, err := tmpFile.WriteString(yaml); err != nil {
+		os.Remove(tmpPath)
+		tmpFile.Close()
 		return fmt.Errorf("write temp file error: %w", err)
 	}
+	tmpFile.Close()
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath) // cleanup
+		os.Remove(tmpPath)
 		return fmt.Errorf("rename error: %w", err)
+	}
+
+	return nil
+}
+
+// validateWritePath ensures the path is safe for writing config files.
+func validateWritePath(path string) error {
+	// Must be absolute or relative with no traversal
+	clean := filepath.Clean(path)
+
+	// Reject paths with .. (traversal)
+	if strings.Contains(clean, "..") {
+		return fmt.Errorf("path must not contain '..'")
+	}
+
+	// Must end in .yaml or .yml
+	ext := strings.ToLower(filepath.Ext(clean))
+	if ext != ".yaml" && ext != ".yml" {
+		return fmt.Errorf("path must end in .yaml or .yml")
+	}
+
+	// Resolve symlinks and verify the path doesn't escape
+	evaluated, err := filepath.EvalSymlinks(clean)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("eval symlinks error: %w", err)
+	}
+	if evaluated != "" {
+		clean = evaluated
 	}
 
 	return nil
