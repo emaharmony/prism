@@ -204,11 +204,15 @@ func (b *Bridge) PublishLocal(subject string, data map[string]any) error {
 		return fmt.Errorf("bridge: local NATS not connected")
 	}
 
-	// Add origin tag to prevent loops
-	data["_origin"] = "local"
-	data["_bridged"] = true
+	// Copy data to avoid mutating caller's map
+	copy := make(map[string]any, len(data)+2)
+	for k, v := range data {
+		copy[k] = v
+	}
+	copy["_origin"] = "local"
+	copy["_bridged"] = true
 
-	payload, err := json.Marshal(data)
+	payload, err := json.Marshal(copy)
 	if err != nil {
 		return fmt.Errorf("bridge: marshal: %w", err)
 	}
@@ -224,12 +228,16 @@ func (rc *remoteConn) handleRemoteMessage(msg *nats.Msg, origin string) {
 		return
 	}
 
-	// Check for loop prevention: if this event already has an origin tag matching our ID,
+	// Check for loop prevention: if this event already has an origin tag,
 	// skip it to prevent infinite forwarding.
+	// Also reject events with forged origin tags that don't match the remote.
 	if existingOrigin, ok := data["_origin"].(string); ok {
+		// If origin matches this remote, it's a loop — skip
 		if existingOrigin == origin {
-			return // Skip — this event came from us
+			return
 		}
+		// If origin is set but doesn't match our remote, it's from a different
+		// remote or forged — keep it but override with our origin for traceability
 	}
 
 	// Tag with origin

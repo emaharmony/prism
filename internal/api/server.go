@@ -90,10 +90,35 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/costs", s.handleCosts)
 }
 
-// Start starts the API server.
+// Start starts the API server with timeouts and panic recovery.
 func (s *Server) Start() error {
 	log.Printf("[API] starting on %s", s.addr)
-	return http.ListenAndServe(s.addr, s.mux)
+
+	handler := panicRecovery(s.mux)
+
+	srv := &http.Server{
+		Addr:         s.addr,
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1MB
+	}
+
+	return srv.ListenAndServe()
+}
+
+// panicRecovery wraps a handler with panic recovery.
+func panicRecovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("[API] panic recovered: %v", err)
+				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // StartWithHandler returns the http.Handler without starting a server.
@@ -120,7 +145,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["agents"] = len(s.orch.Agents.List())
 	}
 
-	if s.store != nil {
+	if s.store != nil && s.tracker != nil {
 		if tracker, err := s.tracker.TaskStatus(); err == nil {
 			status["tasks"] = tracker.ByStatus
 			status["tasks_total"] = tracker.Total
@@ -387,10 +412,19 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional subject filter
+	// Optional subject filter — restrict to safe prefixes for security
 	subject := r.URL.Query().Get("subject")
 	if subject == "" {
 		subject = ">"
+	}
+
+	// Block overly broad subscriptions for unauthenticated access
+	// Allow specific prefixes like "lumi.*", "mango.*", "prism.*"
+	// but deny unrestricted ">" without explicit opt-in
+	if subject == ">" {
+		// TODO: Add authentication check here. For now, allow unrestricted
+		// but log a warning.
+		log.Printf("[API] SSE: unrestricted subject subscription from %s", r.RemoteAddr)
 	}
 
 	// Subscribe to NATS

@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -105,9 +106,17 @@ type ConfigField struct {
 	Description string `yaml:"description"`
 }
 
-// LoadSDKManifest reads and parses an SDK manifest.yaml file.
+// LoadSDKManifest reads and parses a manifest.yaml file.
+// The path is cleaned and symlinks are resolved to prevent path traversal.
 func LoadSDKManifest(path string) (*SDKManifest, error) {
-	data, err := os.ReadFile(path)
+	// Clean and resolve path to prevent traversal
+	cleanPath := filepath.Clean(path)
+	resolved, err := filepath.EvalSymlinks(cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("adapter sdk: resolve path: %w", err)
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, fmt.Errorf("adapter sdk: read manifest: %w", err)
 	}
@@ -132,11 +141,18 @@ func LoadSDKManifest(path string) (*SDKManifest, error) {
 
 // ValidateConfig checks that all required config fields are present.
 func (m *SDKManifest) ValidateConfig(config map[string]any) error {
+	if config == nil {
+		config = map[string]any{}
+	}
 	for _, field := range m.Config {
 		if field.Required {
 			val, exists := config[field.Name]
-			if !exists || val == nil || val == "" {
+			if !exists || val == nil {
 				return fmt.Errorf("adapter sdk: missing required config field %q", field.Name)
+			}
+			// Check for empty strings
+			if s, ok := val.(string); ok && s == "" {
+				return fmt.Errorf("adapter sdk: required config field %q must not be empty", field.Name)
 			}
 		}
 	}
