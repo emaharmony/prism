@@ -104,9 +104,9 @@ Manual layout: nodes store position, edges route automatically.
 
 | ID | Description | Status |
 |----|-------------|--------|
-| M6.1 | EditorState model + ConfigWriter | ⬜ |
-| M6.2 | API endpoints for editor CRUD | ⬜ |
-| M6.3 | Dashboard interactive editor | ⬜ |
-| M6.4 | Config round-trip test (yaml → editor → yaml) | ⬜ |
-| M6.5 | Edge drawing + deletion | ⬜ |
+| M6.1 | EditorState model + ConfigWriter | ✅ |
+| M6.2 | API endpoints for editor CRUD | ✅ |
+| M6.3 | Dashboard interactive editor | ✅ |
+| M6.4 | Config round-trip test | ✅ |
+| M6.5 | Edge drawing + deletion | ✅ |
 | M6.6 | Save/write-back to prism.yaml | ⬜ |
