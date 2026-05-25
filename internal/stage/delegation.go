@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emaharmony/prism/internal/delegation"
+	"github.com/emaharmony/prism/internal/orchestrator"
 )
 
 // delegationPattern matches delegation intent markers in LLM output.
@@ -31,6 +32,11 @@ var delegationPattern = regexp.MustCompile(`\[DELEGATE:\s*([a-z0-9][a-z0-9-]*[a-
 type DelegationStage struct {
 	// Engine is the delegation engine for creating tasks.
 	Engine *delegation.Engine
+
+	// AgentConfigs maps agent IDs to their configurations.
+	// Used to check delegation capabilities (can the delegator delegate?
+	// can the target handle the task type?).
+	AgentConfigs map[string]*orchestrator.AgentConfig
 
 	// StripMarkers controls whether delegation markers are removed from
 	// the LLM response before passing to the next stage.
@@ -89,6 +95,24 @@ func (s *DelegationStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 		}
 		taskType = strings.TrimSpace(taskType)
 		agentID = strings.TrimSpace(agentID)
+
+		// Check delegation capabilities
+		if s.AgentConfigs != nil {
+			delegator, ok := s.AgentConfigs[rc.Agent]
+			if !ok {
+				log.Printf("[DELEGATION] unknown delegator %q, skipping delegation", rc.Agent)
+				continue
+			}
+			target, ok := s.AgentConfigs[agentID]
+			if !ok {
+				log.Printf("[DELEGATION] unknown target agent %q, skipping delegation", agentID)
+				continue
+			}
+			if err := delegation.CanDelegate(delegator, target, taskType); err != nil {
+				log.Printf("[DELEGATION] capability check failed: %v", err)
+				continue
+			}
+		}
 
 		// Extract description using match position (not full-text search)
 		description := extractDelegationDescriptionAt(rc.LLMResponse, matchIndices[i])
