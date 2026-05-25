@@ -229,3 +229,58 @@ func TestValidAgentIDs(t *testing.T) {
 		}
 	}
 }
+func TestAgentSubscriptions(t *testing.T) {
+	cfg := &Config{
+		Prism: PrismConfig{DataDir: "/tmp/prism"},
+		Sessions: SessionConfig{MaxContextMessages: 100, IdleTimeoutMinutes: 30, CompactionStrategy: "truncate"},
+		Agents: []AgentConfig{
+			{
+				ID:            "lumi",
+				Role:          "lead",
+				Provider:      "ollama",
+				Model:         "glm-5.1:cloud",
+				Primary:       true,
+				Subscriptions: []string{"mango.task.completed"},
+			},
+			{
+				ID:            "mango",
+				Role:          "coder",
+				Provider:      "ollama",
+				Model:         "deepseek-v4-pro:cloud",
+				Subscriptions: []string{"mango.task.created"},
+			},
+		},
+	}
+
+	if err := cfg.ResolveAndValidate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	if len(cfg.Agents[0].Subscriptions) != 1 {
+		t.Errorf("expected 1 subscription for lumi, got %d", len(cfg.Agents[0].Subscriptions))
+	}
+	if cfg.Agents[0].Subscriptions[0] != "mango.task.completed" {
+		t.Errorf("expected mango.task.completed, got %s", cfg.Agents[0].Subscriptions[0])
+	}
+	if len(cfg.Agents[1].Subscriptions) != 1 {
+		t.Errorf("expected 1 subscription for mango, got %d", len(cfg.Agents[1].Subscriptions))
+	}
+}
+
+func TestAgentSubscriptions_Empty(t *testing.T) {
+	cfg := &Config{
+		Prism: PrismConfig{DataDir: "/tmp/prism"},
+		Sessions: SessionConfig{MaxContextMessages: 100, IdleTimeoutMinutes: 30, CompactionStrategy: "truncate"},
+		Agents: []AgentConfig{
+			{ID: "lumi", Role: "lead", Provider: "ollama", Model: "glm-5.1:cloud", Primary: true},
+		},
+	}
+
+	if err := cfg.ResolveAndValidate(); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+
+	if len(cfg.Agents[0].Subscriptions) != 0 {
+		t.Errorf("expected 0 subscriptions, got %d", len(cfg.Agents[0].Subscriptions))
+	}
+}

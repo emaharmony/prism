@@ -34,6 +34,9 @@ agents:
       - route
       - review
       - report
+    # V22: Subscribe to other agents' task events
+    # subscriptions:
+    #   - "mango.task.completed"  # Receive Mango's results
 
   - id: mango
     role: coder
@@ -45,6 +48,9 @@ agents:
       - code
       - test
       - report
+    # V22: Subscribe to delegated tasks
+    # subscriptions:
+    #   - "mango.task.created"  # Receive tasks from Lumi
 
 channels:
   - type: discord
