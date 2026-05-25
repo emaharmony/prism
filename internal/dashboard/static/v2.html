@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prism Dashboard v2</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e0e0e8}
+.header{background:#12121a;border-bottom:1px solid #2a2a3a;padding:16px 24px;display:flex;align-items:center;gap:16px}
+.header h1{font-size:20px;color:#a78bfa}
+.header .version{font-size:12px;color:#666}
+.header .status{margin-left:auto;display:flex;gap:8px;align-items:center}
+.header .status .dot{width:8px;height:8px;border-radius:50%;background:#4ade80}
+.header .status .dot.offline{background:#f87171}
+.container{max-width:1400px;margin:0 auto;padding:24px}
+.tabs{display:flex;gap:4px;margin-bottom:24px;background:#12121a;border-radius:8px;padding:4px}
+.tab{padding:8px 16px;border-radius:6px;cursor:pointer;font-size:14px;color:#888;transition:all .2s}
+.tab:hover{color:#ccc}
+.tab.active{background:#1e1e2e;color:#a78bfa;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.card{background:#16161f;border:1px solid #2a2a3a;border-radius:8px;padding:16px;transition:border-color .2s}
+.card:hover{border-color:#a78bfa}
+.card .title{font-size:14px;color:#a78bfa;margin-bottom:8px;font-weight:600}
+.card .meta{font-size:12px;color:#888;line-height:1.6}
+.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.badge.running{background:#1e3a5f;color:#93c5fd}
+.badge.completed{background:#064e3b;color:#6ee7b7}
+.badge.failed{background:#4c0519;color:#fca5a5}
+.badge.pending{background:#3b0764;color:#c4b5fd}
+.badge.assigned{background:#1e3a5f;color:#93c5fd}
+.badge.in_progress{background:#1e3a5f;color:#93c5fd}
+.badge.created{background:#3b0764;color:#c4b5fd}
+.badge.cancelled{background:#1c1917;color:#a8a29e}
+.events{background:#0d0d12;border:1px solid #2a2a3a;border-radius:8px;padding:16px;font-family:'SF Mono',Monaco,monospace;font-size:12px;max-height:400px;overflow-y:auto;line-height:1.8}
+.events .event{padding:2px 0;border-bottom:1px solid #1a1a24}
+.events .event .subject{color:#a78bfa}
+.events .event .time{color:#555;margin-left:8px}
+.empty{text-align:center;padding:48px;color:#555;font-size:14px}
+.btn{padding:6px 12px;border-radius:6px;border:1px solid #2a2a3a;background:#1e1e2e;color:#e0e0e8;cursor:pointer;font-size:12px;transition:all .2s}
+.btn:hover{border-color:#a78bfa}
+.btn.approve{background:#064e3b;border-color:#4ade80;color:#4ade80}
+.btn.approve:hover{background:#4ade80;color:#000}
+.btn.deny{background:#4c0519;border-color:#f87171;color:#f87171}
+.btn.deny:hover{background:#f87171;color:#000}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.stat{background:#16161f;border:1px solid #2a2a3a;border-radius:8px;padding:16px;text-align:center}
+.stat .number{font-size:28px;font-weight:700;color:#a78bfa}
+.stat .label{font-size:12px;color:#888;margin-top:4px}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🔮 Prism</h1>
+  <span class="version">v0.23.0</span>
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Connecting...</span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="stats" id="stats"></div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="agents">Agents</div>
+    <div class="tab" data-tab="tasks">Tasks</div>
+    <div class="tab" data-tab="approvals">Approvals</div>
+    <div class="tab" data-tab="events">Events</div>
+  </div>
+
+  <div id="content"></div>
+</div>
+
+<script>
+const API = window.location.origin.replace(/:\d+/, '') + ':8322';
+let eventSource = null;
+let currentTab = 'overview';
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentTab = tab.dataset.tab;
+    render();
+  });
+});
+
+async function fetchJSON(path) {
+  try {
+    const resp = await fetch(API + path);
+    if (!resp.ok) throw new Error(resp.statusText);
+    return await resp.json();
+  } catch (e) {
+    console.error('API error:', e);
+    return null;
+  }
+}
+
+async function postJSON(path) {
+  try {
+    const resp = await fetch(API + path, { method: 'POST' });
+    if (!resp.ok) throw new Error(resp.statusText);
+    return await resp.json();
+  } catch (e) {
+    console.error('API error:', e);
+    return null;
+  }
+}
+
+function formatTime(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts);
+  return d.toLocaleTimeString();
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+async function render() {
+  const content = document.getElementById('content');
+  switch (currentTab) {
+    case 'overview': await renderOverview(content); break;
+    case 'agents': await renderAgents(content); break;
+    case 'tasks': await renderTasks(content); break;
+    case 'approvals': await renderApprovals(content); break;
+    case 'events': renderEvents(content); break;
+  }
+}
+
+async function renderOverview(el) {
+  const [status, tasks, approvals] = await Promise.all([
+    fetchJSON('/api/v1/status'),
+    fetchJSON('/api/v1/tasks'),
+    fetchJSON('/api/v1/approvals')
+  ]);
+
+  const taskCounts = tasks ? (Array.isArray(tasks) ? {total: tasks.length, completed: tasks.filter(t => t.status === 'completed').length, active: tasks.filter(t => ['created','assigned','in_progress'].includes(t.status)).length, failed: tasks.filter(t => t.status === 'failed').length} : {total: 0}) : {total: 0};
+  const approvalCount = approvals ? (Array.isArray(approvals) ? approvals.length : 0) : 0;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="number">${status?.agents ?? 0}</div><div class="label">Agents</div></div>
+    <div class="stat"><div class="number">${taskCounts.active}</div><div class="label">Active Tasks</div></div>
+    <div class="stat"><div class="number">${taskCounts.completed}</div><div class="label">Completed</div></div>
+    <div class="stat"><div class="number">${approvalCount}</div><div class="label">Pending Approvals</div></div>
+  `;
+
+  el.innerHTML = `
+    <div class="grid">
+      <div class="card">
+        <div class="title">System Status</div>
+        <div class="meta">
+          Status: <span class="badge ${status?.status === 'running' ? 'completed' : 'failed'}">${status?.status ?? 'unknown'}</span><br>
+          Version: ${status?.version ?? '-'}<br>
+          Uptime: ${status?.uptime ?? '-'}<br>
+          Agents: ${status?.agents ?? 0}
+        </div>
+      </div>
+      <div class="card">
+        <div class="title">Recent Tasks</div>
+        <div class="meta" id="recentTasks">Loading...</div>
+      </div>
+      <div class="card">
+        <div class="title">Pending Approvals</div>
+        <div class="meta" id="recentApprovals">Loading...</div>
+      </div>
+    </div>
+  `;
+
+  if (tasks && Array.isArray(tasks)) {
+    const recent = tasks.slice(0, 5);
+    document.getElementById('recentTasks').innerHTML = recent.map(t =>
+      `<span class="badge ${t.status}">${t.status}</span> ${escapeHtml(t.type || t.id)}<br>`
+    ).join('') || 'No tasks';
+  } else {
+    document.getElementById('recentTasks').textContent = 'No tasks';
+  }
+
+  if (approvals && Array.isArray(approvals)) {
+    document.getElementById('recentApprovals').innerHTML = approvals.slice(0, 5).map(a =>
+      `<span class="badge pending">${a.type}</span> ${escapeHtml(a.description || a.task_id)}<br>`
+    ).join('') || 'No pending approvals';
+  } else {
+    document.getElementById('recentApprovals').textContent = 'No pending approvals';
+  }
+}
+
+async function renderAgents(el) {
+  const status = await fetchJSON('/api/v1/status');
+  if (!status) { el.innerHTML = '<div class="empty">Failed to load agents</div>'; return; }
+  el.innerHTML = `
+    <div class="card">
+      <div class="title">Agents</div>
+      <div class="meta" style="font-size:13px;line-height:2">
+        ${(status.agents || []).map(a => `<span class="badge running">${escapeHtml(typeof a === 'string' ? a : a.id || a)}</span>`).join(' ')}
+      </div>
+    </div>
+  `;
+}
+
+async function renderTasks(el) {
+  const tasks = await fetchJSON('/api/v1/tasks');
+  if (!tasks || !Array.isArray(tasks)) { el.innerHTML = '<div class="empty">No tasks</div>'; return; }
+  el.innerHTML = `<div class="grid">${tasks.map(t => `
+    <div class="card">
+      <div class="title">${escapeHtml(t.id)}</div>
+      <div class="meta">
+        <span class="badge ${t.status}">${t.status}</span> ${escapeHtml(t.type || '')}<br>
+        Agent: ${escapeHtml(t.delegated_to || t.delegated_by || '-')}<br>
+        Created: ${formatTime(t.created_at)}<br>
+        ${t.description ? 'Desc: ' + escapeHtml(t.description).substring(0, 80) : ''}
+      </div>
+    </div>
+  `).join('')}</div>`;
+}
+
+async function renderApprovals(el) {
+  const approvals = await fetchJSON('/api/v1/approvals');
+  if (!approvals || !Array.isArray(approvals) || approvals.length === 0) {
+    el.innerHTML = '<div class="empty">No pending approvals</div>';
+    return;
+  }
+  el.innerHTML = `<div class="grid">${approvals.map(a => `
+    <div class="card">
+      <div class="title">${escapeHtml(a.type || 'Approval')}</div>
+      <div class="meta">
+        Task: ${escapeHtml(a.task_id)}<br>
+        Agent: ${escapeHtml(a.agent_id || '-')}<br>
+        <span class="badge pending">pending</span><br>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn approve" onclick="grantApproval('${a.task_id}')">✓ Grant</button>
+          <button class="btn deny" onclick="denyApproval('${a.task_id}')">✗ Deny</button>
+        </div>
+      </div>
+    </div>
+  `).join('')}</div>`;
+}
+
+async function grantApproval(taskId) {
+  const result = await postJSON(`/api/v1/approvals/${taskId}/grant?by=dashboard`);
+  if (result) { alert('Approved!'); render(); }
+}
+
+async function denyApproval(taskId) {
+  const result = await postJSON(`/api/v1/approvals/${taskId}/deny?by=dashboard&reason=denied+from+dashboard`);
+  if (result) { alert('Denied!'); render(); }
+}
+
+let eventLog = [];
+function renderEvents(el) {
+  if (!eventSource) {
+    connectEventStream();
+  }
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      <div class="title">Event Stream</div>
+      <div style="font-size:12px;color:#888" id="streamStatus">Connecting to SSE...</div>
+    </div>
+    <div class="events" id="eventLog">${eventLog.length === 0 ? 'Waiting for events...' : eventLog.slice(-100).map(e =>
+      `<div class="event"><span class="subject">${escapeHtml(e.subject)}</span> <span class="time">${formatTime(e.time)}</span></div>`
+    ).join('')}</div>
+  `;
+  const log = document.getElementById('eventLog');
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function connectEventStream() {
+  try {
+    eventSource = new EventSource(API + '/api/v1/events/stream');
+    eventSource.onopen = () => {
+      document.getElementById('statusDot')?.classList.remove('offline');
+      document.getElementById('statusText') && (document.getElementById('statusText').textContent = 'Connected');
+    };
+    eventSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        eventLog.push({ subject: e.type || 'event', time: new Date().toISOString(), data });
+        if (eventLog.length > 500) eventLog = eventLog.slice(-200);
+        if (currentTab === 'events') renderEvents(document.getElementById('content'));
+      } catch (err) {}
+    };
+    eventSource.addEventListener('connected', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        document.getElementById('streamStatus') && (document.getElementById('streamStatus').textContent = `Connected to: ${data.subject || '>'}`);
+      } catch (err) {}
+    });
+    eventSource.addEventListener('heartbeat', () => {});
+    eventSource.onerror = () => {
+      document.getElementById('statusDot')?.classList.add('offline');
+      document.getElementById('statusText') && (document.getElementById('statusText').textContent = 'Reconnecting...');
+    };
+  } catch (e) {
+    console.error('SSE connection failed:', e);
+  }
+}
+
+// Initial render
+render();
+// Auto-refresh overview every 10s
+setInterval(() => { if (currentTab === 'overview') render(); }, 10000);
+</script>
+</body>
+</html>
