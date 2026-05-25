@@ -1,7 +1,7 @@
 # Prism — Task Tracker
 
-**Last Updated:** 2026-05-21
-**Status:** Phase 1 (V20) starts next
+**Last Updated:** 2026-05-25
+**Status:** V23 (Platform) complete. V24 next.
 
 ---
 
@@ -134,15 +134,15 @@
 
 ---
 
-## Phase 4: Platform (V23+) — 🟢 P2
+## Phase 4: Platform (V23) — ✅ Complete
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Multi-Prism communication | ⬜ | Two Prism environments send tasks |
-| Dashboard v2 | ⬜ | Real-time event stream, costs, agents |
-| HTTP API (REST/SSE) | ⬜ | External integrations |
-| Adapter SDK | ⬜ | Third-party adapter development kit |
-| IoT adapter | ⬜ | Smart home control through events |
+| HTTP API (REST/SSE) | ✅ | 13 endpoints, wired into prism serve:8322 |
+| Dashboard v2 | ✅ | 5-tab dashboard with SSE, approval actions |
+| Multi-Prism Communication (Bridge) | ✅ | NATS-based, origin tagging, loop prevention |
+| Adapter SDK | ✅ | LifecycleAdapter, EventBus, SDKManifest |
+| IoT adapter | ⬜ | Smart home control (V25+)
 | License evaluation | ⬜ | Open restrictive license when ready |
 
 ---
