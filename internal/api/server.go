@@ -29,6 +29,7 @@ import (
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/task"
+	"github.com/emaharmony/prism/internal/workflow"
 	"github.com/nats-io/nats.go"
 )
 
@@ -87,6 +88,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/approvals/", s.handleApprovalAction)
 	s.mux.HandleFunc("/api/v1/events/stream", s.handleEventStream)
 	s.mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
+	s.mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowSVG)
 	s.mux.HandleFunc("/api/v1/costs", s.handleCosts)
 }
 
@@ -510,6 +512,47 @@ func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
 		"note":      "cost tracking endpoint — integrate with internal/cost",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// --- Workflow SVG ---
+
+func (s *Server) handleWorkflowSVG(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Path: /api/v1/workflows/{type}
+	diagramType := strings.TrimPrefix(r.URL.Path, "/api/v1/workflows/")
+	if diagramType == "" || diagramType == "list" {
+		// List available diagram types
+		writeJSON(w, map[string]any{
+			"types": []string{"topology", "agents", "feedback", "delegation", "approval", "events"},
+		})
+		return
+	}
+
+	// Get agents from orchestrator
+	var agents []orchestrator.AgentConfig
+	if s.orch != nil {
+		agents = s.orch.Config.Agents
+	}
+
+	cfg := workflow.DefaultConfig()
+
+	// Query params for customization
+	if r.URL.Query().Get("theme") == "light" {
+		cfg.DarkTheme = false
+	}
+	if r.URL.Query().Get("capabilities") == "true" {
+		cfg.ShowCapabilities = true
+	}
+
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-cache")
+
+	workflow.GenerateWorkflow(w, diagramType, agents, cfg)
 }
 
 // --- Helpers ---
