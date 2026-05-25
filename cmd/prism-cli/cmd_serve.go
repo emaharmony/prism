@@ -37,6 +37,8 @@ import (
 
 	"github.com/emaharmony/prism/internal/action"
 	"github.com/emaharmony/prism/internal/context"
+	"github.com/emaharmony/prism/internal/delegation"
+	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/bus"
@@ -87,6 +89,7 @@ type conversationContext struct {
 	actionReg   *action.Registry     // V21: action registry for event-triggered actions
 	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
 	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
+	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
 }
 
 func executeServe(args []string) {
@@ -245,24 +248,52 @@ func executeServe(args []string) {
 				}
 			}
 
-			// Build conversation context for this bot
-			convCtx := &conversationContext{
-				router:    rtr,
-				sessMgr:   sessMgr,
-				cfg:       cfg,
-				providers: provReg,
-				bot:       bot,
-				debounce:  msgDebounce,
-				eventLog:  eventLog,
-				cancelReg: cancelReg,
-				ctxBuilder: ctxBuilder,
-				natsConn:  natsConn,
-				natsURL:   natsURL,
-				actionReg: actionReg,
-				remClient: remClient,
-				remSem:    make(chan struct{}, 4), // Max 4 concurrent Remembrance goroutines
+			// V22: Initialize task store and delegation engine
+			var delegEngine *delegation.Engine
+			taskStore, taskErr := task.NewStore(filepath.Join(cfg.Prism.DataDir, "tasks.db"))
+			if taskErr != nil {
+				fmt.Printf("  Warning: task store failed: %v\n", taskErr)
+			} else {
+				delegEngine = delegation.NewEngine(taskStore, natsConn)
+
+				// Register agent subscriptions
+				for i := range cfg.Agents {
+					a := &cfg.Agents[i]
+					for _, sub := range a.Subscriptions {
+						agentID := a.ID
+						// Subscribe this agent to its configured NATS subjects
+						// The handler runs the agent's pipeline when a task.created event arrives
+						handler := func(agentID string, sub string) func(ctxcontext.Context, *task.Task) error {
+							return func(ctx ctxcontext.Context, t *task.Task) error {
+								log.Printf("[DELEGATION] agent %s received task %s via %s (type: %s)", agentID, t.ID, sub, t.Type)
+								// Task processing will be wired in M3.1d (DelegationStage)
+								return nil
+							}
+						}(agentID, sub)
+						if err := delegEngine.Subscribe(agentID, handler); err != nil {
+							log.Printf("[WARN] failed to subscribe agent %s to %s: %v", agentID, sub, err)
+						}
+					}
+				}
 			}
 
+			convCtx := &conversationContext{
+				router:      rtr,
+				sessMgr:     sessMgr,
+				cfg:         cfg,
+				providers:   provReg,
+				bot:         bot,
+				debounce:    msgDebounce,
+				eventLog:    eventLog,
+				cancelReg:   cancelReg,
+				ctxBuilder:  ctxBuilder,
+				natsConn:    natsConn,
+				natsURL:     natsURL,
+				actionReg:   actionReg,
+				remClient:   remClient,
+				remSem:      make(chan struct{}, 4),
+				delegEngine: delegEngine,
+			}
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
 				convCtx.handleDiscordMessage(msg)
 			})

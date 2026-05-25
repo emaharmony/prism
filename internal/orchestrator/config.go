@@ -90,6 +90,11 @@ type AgentConfig struct {
 
 	// Capabilities lists what this agent can do.
 	Capabilities []string `yaml:"capabilities"`
+
+	// Subscriptions lists NATS subjects this agent subscribes to
+	// for receiving delegated tasks and results.
+	// e.g., "mango.task.created" — Mango receives tasks from Lumi.
+	Subscriptions []string `yaml:"subscriptions"`
 }
 
 // ChannelConfig defines a messaging channel connection.
