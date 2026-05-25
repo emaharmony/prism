@@ -754,37 +754,62 @@ func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request, id string) {
 	writeJSON(w, state)
 }
 
-// handleEditorSave validates and returns YAML for saving.
+// handleEditorSave validates and optionally writes config to disk.
+// POST with {"confirm": true, "path": "/path/to/prism.yaml"} to write.
+// POST with just the state to validate and preview YAML.
 func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var state editor.EditorState
-	if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
+	var req struct {
+		editor.EditorState
+		Confirm bool   `json:"confirm"`
+		Path    string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	errors := editor.ValidateEditorState(&state)
+	errors := editor.ValidateEditorState(&req.EditorState)
 	if len(errors) > 0 {
 		writeJSON(w, map[string]any{"valid": false, "errors": errors})
 		return
 	}
 
-	yaml, err := editor.WriteConfigYAML(&state)
+	yaml, err := editor.WriteConfigYAML(&req.EditorState)
 	if err != nil {
 		http.Error(w, "yaml generation error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	if req.Confirm && req.Path != "" {
+		// Write to disk — requires explicit confirmation and path
+		if err := editor.WriteConfigToFile(&req.EditorState, req.Path); err != nil {
+			http.Error(w, "write error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{
+			"valid":   true,
+			"yaml":     yaml,
+			"agents":  len(req.Nodes),
+			"edges":   len(req.Edges),
+			"written": true,
+			"path":    req.Path,
+			"message": "Config written to " + req.Path,
+		})
+		return
+	}
+
+	// Preview only
 	writeJSON(w, map[string]any{
 		"valid":  true,
 		"yaml":    yaml,
-		"agents":  len(state.Nodes),
-		"edges":   len(state.Edges),
-		"message": "Ready to save to prism.yaml",
+		"agents":  len(req.Nodes),
+		"edges":   len(req.Edges),
+		"message": "Preview only — set confirm=true and path to write to disk",
 	})
 }
 
