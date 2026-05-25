@@ -216,8 +216,9 @@ func TestDelegationStage_EmptyResponse(t *testing.T) {
 	}
 }
 
-// TestDelegationStage_EventsAdded verifies that delegation events are added to RunContext.
-func TestDelegationStage_EventsAdded(t *testing.T) {
+// TestDelegationStage_EventsNoLongerInRunContext verifies that delegation
+// events are NOT added to RunContext.Events (the engine publishes to NATS directly).
+func TestDelegationStage_EventsNoLongerInRunContext(t *testing.T) {
 	store, err := task.NewStore(filepath.Join(t.TempDir(), "tasks.db"))
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
@@ -243,20 +244,14 @@ func TestDelegationStage_EventsAdded(t *testing.T) {
 		t.Errorf("expected success, got error: %s", result.Error)
 	}
 
-	// Verify events were added
-	if len(finalRC.Events) == 0 {
-		t.Error("expected delegation event to be added to RunContext")
+	// Verify that events were NOT added to RunContext
+	// (the engine publishes to NATS directly, not through RunContext.Events)
+	if len(finalRC.Events) != 0 {
+		t.Errorf("expected 0 events in RunContext (engine publishes directly), got %d", len(finalRC.Events))
 	}
 
-	// Verify event type uses per-agent namespace
-	found := false
-	for _, evt := range finalRC.Events {
-		if evt.Type == "mango.task.created" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected mango.task.created event in RunContext.Events")
+	// Verify that the delegation was tracked in the result
+	if result.Data["delegations"] != 1 {
+		t.Errorf("expected 1 delegation in result, got %v", result.Data["delegations"])
 	}
 }

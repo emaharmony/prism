@@ -12,6 +12,8 @@ package delegation
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -230,6 +232,13 @@ func (e *Engine) handleTaskCreated(msg *nats.Msg, agentID string) {
 		return
 	}
 
+	// Idempotency guard: skip if task is already in a terminal or active state
+	if t.Status == task.StatusInProgress || t.Status == task.StatusCompleted ||
+		t.Status == task.StatusFailed || t.Status == task.StatusCancelled {
+		log.Printf("[DELEGATION] task %s already in status %s, skipping", taskID, t.Status)
+		return
+	}
+
 	// Transition to in_progress
 	if err := e.store.UpdateStatus(taskID, task.StatusInProgress, nil); err != nil {
 		log.Printf("[DELEGATION] failed to mark task %s in_progress: %v", taskID, err)
@@ -251,7 +260,8 @@ func (e *Engine) handleTaskCreated(msg *nats.Msg, agentID string) {
 
 	if err := handler(ctx, t); err != nil {
 		log.Printf("[DELEGATION] handler for task %s failed: %v", taskID, err)
-		_ = e.Fail(ctx, taskID, err.Error())
+		// Use background context for Fail() to avoid cancelled context propagation
+		_ = e.Fail(context.Background(), taskID, err.Error())
 		return
 	}
 
@@ -277,7 +287,9 @@ func (e *Engine) publishEvent(subject string, payload map[string]any) error {
 	return nil
 }
 
-// generateTaskID creates a unique task identifier.
+// generateTaskID creates a unique task identifier using crypto/rand.
 func generateTaskID() string {
-	return fmt.Sprintf("task-%d", time.Now().UnixNano())
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "task-" + hex.EncodeToString(b)
 }

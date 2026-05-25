@@ -2,19 +2,17 @@ package stage
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/emaharmony/prism/internal/delegation"
-	"github.com/emaharmony/prism/internal/event"
 )
 
 // delegationPattern matches delegation intent markers in LLM output.
 // Matches patterns like: [DELEGATE: mango] or [DELEGATE: mango | code_implementation]
-var delegationPattern = regexp.MustCompile(`\[DELEGATE:\s*(\w+)\s*(?:\|([^]]+))?\]`)
+// Agent IDs must match config validation: [a-z0-9]([a-z0-9-]*[a-z0-9])?
+var delegationPattern = regexp.MustCompile(`\[DELEGATE:\s*([a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9])\s*(?:\|([^]]+))?\]`)
 
 // DelegationStage detects delegation intent in LLM output and delegates
 // tasks to other agents via the delegation engine.
@@ -79,10 +77,10 @@ func (s *DelegationStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 
 	// Process each delegation marker
 	delegatedTasks := make([]string, 0, len(matches))
+	matchIndices := delegationPattern.FindAllStringSubmatchIndex(rc.LLMResponse, -1)
 	cleanedResponse := rc.LLMResponse
 
-	for _, match := range matches {
-		fullMatch := match[0]    // e.g., "[DELEGATE: mango | code_implementation]"
+	for i, match := range matches {
 		agentID := match[1]     // e.g., "mango"
 		taskType := match[2]    // e.g., "code_implementation" (optional)
 
@@ -92,8 +90,8 @@ func (s *DelegationStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 		taskType = strings.TrimSpace(taskType)
 		agentID = strings.TrimSpace(agentID)
 
-		// Extract description from remaining context
-		description := extractDelegationDescription(rc.LLMResponse, fullMatch)
+		// Extract description using match position (not full-text search)
+		description := extractDelegationDescriptionAt(rc.LLMResponse, matchIndices[i])
 
 		// Delegate the task
 		contextData := map[string]any{
@@ -110,20 +108,9 @@ func (s *DelegationStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 
 		delegatedTasks = append(delegatedTasks, delegateTask.ID)
 
-		// Add event to RunContext
-		rc.Events = append(rc.Events, event.Event{
-			ID:        fmt.Sprintf("delegation-%s", delegateTask.ID),
-			Type:      agentID + ".task.created",
-			Source:    rc.Agent,
-			Timestamp: time.Now().Format(time.RFC3339),
-			Payload: map[string]any{
-				"task_id":       delegateTask.ID,
-				"delegated_by":  rc.Agent,
-				"delegated_to":  agentID,
-				"task_type":     taskType,
-				"description":   description,
-			},
-		})
+		// Event publishing is handled by the delegation engine via NATS.
+		// No need to add to RunContext.Events — the engine publishes
+		// <agent>.task.created directly.
 
 		log.Printf("[DELEGATION] %s delegated task %s to %s (type: %s)", rc.Agent, delegateTask.ID, agentID, taskType)
 	}
@@ -144,23 +131,19 @@ func (s *DelegationStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 	}, nil
 }
 
-// extractDelegationDescription tries to extract a task description from
-// the text following the delegation marker.
-func extractDelegationDescription(text, marker string) string {
-	// Find the marker position
-	markerEnd := -1
-	for i := 0; i <= len(text)-len(marker); i++ {
-		if text[i:i+len(marker)] == marker {
-			markerEnd = i + len(marker)
-			break
-		}
-	}
-
-	if markerEnd == -1 || markerEnd >= len(text) {
+// extractDelegationDescriptionAt extracts the task description from
+// the text following the delegation marker at the given match position.
+// It uses the match indices from FindAllStringSubmatchIndex to avoid
+// re-searching the full text, which could produce wrong descriptions
+// when multiple markers are present.
+func extractDelegationDescriptionAt(text string, matchIdx []int) string {
+	// matchIdx[1] is the end position of the full match
+	markerEnd := matchIdx[1]
+	if markerEnd >= len(text) {
 		return "Delegated task"
 	}
 
-	// Get remaining text on the same line
+	// Get remaining text until end of line
 	remaining := text[markerEnd:]
 	end := len(remaining)
 	for i, c := range remaining {
