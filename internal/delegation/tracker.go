@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/emaharmony/prism/internal/task"
@@ -20,6 +21,7 @@ type Tracker struct {
 	timeout  time.Duration // Max time a task can be in_progress before alerting
 	interval time.Duration // How often to check for stuck tasks
 	stopCh   chan struct{}
+	stopOnce sync.Once // Guard against double-close panic
 }
 
 // TrackerConfig holds configuration for the task tracker.
@@ -75,9 +77,11 @@ func (t *Tracker) Start(ctx context.Context) {
 	}
 }
 
-// Stop stops the stuck-task monitor.
+// Stop stops the stuck-task monitor. Safe to call multiple times.
 func (t *Tracker) Stop() {
-	close(t.stopCh)
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+	})
 }
 
 // checkStuckTasks finds tasks that have been in_progress for too long
@@ -169,18 +173,21 @@ func (t *Tracker) ActiveTasks() ([]*task.Task, error) {
 	return active, nil
 }
 
-// StuckTasks returns tasks that have been in_progress longer than the timeout.
+// StuckTasks returns tasks that have been in_progress or assigned longer than the timeout.
 func (t *Tracker) StuckTasks() ([]*task.Task, error) {
-	inProgress, err := t.store.ListByStatus(task.StatusInProgress)
-	if err != nil {
-		return nil, fmt.Errorf("tracker: list in_progress: %w", err)
-	}
-
-	now := time.Now()
 	var stuck []*task.Task
-	for _, tsk := range inProgress {
-		if now.Sub(tsk.UpdatedAt) > t.timeout {
-			stuck = append(stuck, tsk)
+
+	for _, status := range []task.Status{task.StatusInProgress, task.StatusAssigned} {
+		tasks, err := t.store.ListByStatus(status)
+		if err != nil {
+			return nil, fmt.Errorf("tracker: list %s: %w", status, err)
+		}
+
+		now := time.Now()
+		for _, tsk := range tasks {
+			if now.Sub(tsk.UpdatedAt) > t.timeout {
+				stuck = append(stuck, tsk)
+			}
 		}
 	}
 
