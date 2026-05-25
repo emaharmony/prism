@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -464,5 +465,48 @@ func TestEdgeStyles(t *testing.T) {
 		if edge.Style != want {
 			t.Errorf("edge type %s: expected style %s, got %s", edge.Type, want, edge.Style)
 		}
+	}
+}
+
+func TestWriteConfigToFile(t *testing.T) {
+	state := &EditorState{
+		Nodes: []EditorNode{
+			{ID: "lumi", Type: "agent", Role: "lead", Model: "glm-5.1:cloud", Primary: true},
+			{ID: "mango", Type: "agent", Role: "coder", Model: "deepseek-v4-pro:cloud"},
+		},
+		Edges: []EditorEdge{},
+	}
+
+	path := t.TempDir() + "/prism.yaml"
+	if err := WriteConfigToFile(state, path); err != nil {
+		t.Fatalf("WriteConfigToFile error: %v", err)
+	}
+
+	// Verify file was written
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile error: %v", err)
+	}
+
+	if !strings.Contains(string(data), "lumi") {
+		t.Error("expected yaml to contain lumi")
+	}
+	if !strings.Contains(string(data), "mango") {
+		t.Error("expected yaml to contain mango")
+	}
+}
+
+func TestWriteConfigToFile_InvalidState(t *testing.T) {
+	state := &EditorState{
+		Nodes: []EditorNode{
+			{ID: "dup", Type: "agent"},
+			{ID: "dup", Type: "agent"},
+		},
+	}
+
+	path := t.TempDir() + "/prism.yaml"
+	err := WriteConfigToFile(state, path)
+	if err == nil {
+		t.Error("expected error for invalid state")
 	}
 }

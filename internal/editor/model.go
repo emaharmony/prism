@@ -9,6 +9,7 @@ package editor
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -447,4 +448,32 @@ func (s *EditorState) UpdateNode(id string, updates EditorNode) error {
 		}
 	}
 	return fmt.Errorf("node %q not found", id)
+}
+
+// WriteConfigToFile writes the editor state as YAML to a file on disk.
+// This requires explicit path and should only be called with user confirmation.
+func WriteConfigToFile(state *EditorState, path string) error {
+	// Validate first
+	errors := ValidateEditorState(state)
+	if len(errors) > 0 {
+		return fmt.Errorf("validation errors: %v", errors)
+	}
+
+	yaml, err := WriteConfigYAML(state)
+	if err != nil {
+		return fmt.Errorf("yaml generation error: %w", err)
+	}
+
+	// Write atomically: write to temp file then rename
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(yaml), 0644); err != nil {
+		return fmt.Errorf("write temp file error: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath) // cleanup
+		return fmt.Errorf("rename error: %w", err)
+	}
+
+	return nil
 }
