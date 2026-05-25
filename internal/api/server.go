@@ -140,7 +140,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := map[string]any{
 		"status":    "running",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"version":   "0.23.0",
+		"version":   "0.24.0",
 	}
 
 	if s.orch != nil {

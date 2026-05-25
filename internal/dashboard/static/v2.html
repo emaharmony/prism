@@ -52,7 +52,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <body>
 <div class="header">
   <h1>🔮 Prism</h1>
-  <span class="version">v0.23.0</span>
+  <span class="version">v0.24.0</span>
   <div class="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">Connecting...</span>
@@ -68,6 +68,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
     <div class="tab" data-tab="tasks">Tasks</div>
     <div class="tab" data-tab="approvals">Approvals</div>
     <div class="tab" data-tab="events">Events</div>
+    <div class="tab" data-tab="workflows">Workflows</div>
   </div>
 
   <div id="content"></div>
@@ -130,6 +131,7 @@ async function render() {
     case 'tasks': await renderTasks(content); break;
     case 'approvals': await renderApprovals(content); break;
     case 'events': renderEvents(content); break;
+    case 'workflows': await renderWorkflows(content); break;
   }
 }
 
@@ -297,6 +299,87 @@ function connectEventStream() {
     };
   } catch (e) {
     console.error('SSE connection failed:', e);
+  }
+}
+
+async function renderWorkflows(el) {
+  const diagramTypes = ['topology', 'feedback', 'delegation', 'approval', 'events'];
+  const labels = {
+    topology: 'Agent Topology',
+    feedback: 'Feedback Loops',
+    delegation: 'Delegation Flow',
+    approval: 'Approval Gate',
+    events: 'Event Flow'
+  };
+  const descriptions = {
+    topology: 'All configured agents, their roles, capabilities, and delegation paths',
+    feedback: 'The Three Feedback Loops between Lumi and Mango',
+    delegation: 'Task delegation pipeline: LLM → Delegation → Persistence → Events',
+    approval: 'Approval request → grant/deny flow with event names',
+    events: 'Per-agent event namespaces and NATS bus topology'
+  };
+
+  let currentDiagram = 'topology';
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      ${diagramTypes.map(t =>
+        `<button class="btn ${t === currentDiagram ? 'approve' : ''}" id="wf-btn-${t}" onclick="loadDiagram('${t}')">${labels[t]}</button>`
+      ).join('')}
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="wf-svg" style="width:100%;text-align:center">
+        <div class="empty">Loading diagram...</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="title" id="wf-label">${labels[currentDiagram]}</div>
+      <div class="meta" id="wf-desc">${descriptions[currentDiagram]}</div>
+    </div>
+  `;
+
+  loadDiagram(currentDiagram);
+}
+
+async function loadDiagram(type) {
+  // Update button styles
+  document.querySelectorAll('[id^=wf-btn-]').forEach(btn => {
+    btn.classList.remove('approve');
+  });
+  const activeBtn = document.getElementById('wf-btn-' + type);
+  if (activeBtn) activeBtn.classList.add('approve');
+
+  const labels = { topology: 'Agent Topology', feedback: 'Feedback Loops', delegation: 'Delegation Flow', approval: 'Approval Gate', events: 'Event Flow' };
+  const descriptions = { topology: 'All configured agents, their roles, capabilities, and delegation paths', feedback: 'The Three Feedback Loops between Lumi and Mango', delegation: 'Task delegation pipeline: LLM → Delegation → Persistence → Events', approval: 'Approval request → grant/deny flow with event names', events: 'Per-agent event namespaces and NATS bus topology' };
+
+  const labelEl = document.getElementById('wf-label');
+  const descEl = document.getElementById('wf-desc');
+  if (labelEl) labelEl.textContent = labels[type] || type;
+  if (descEl) descEl.textContent = descriptions[type] || '';
+
+  try {
+    const resp = await fetch(API + '/api/v1/workflows/' + type);
+    if (!resp.ok) throw new Error(resp.statusText);
+    const svg = await resp.text();
+    const container = document.getElementById('wf-svg');
+    if (container) {
+      container.innerHTML = svg;
+      // Make SVG responsive
+      const svgEl = container.querySelector('svg');
+      if (svgEl) {
+        svgEl.removeAttribute('width');
+        svgEl.removeAttribute('height');
+        svgEl.setAttribute('viewBox', `0 0 ${svgEl.getAttribute('width') || 800} ${svgEl.getAttribute('height') || 600}`);
+        svgEl.style.width = '100%';
+        svgEl.style.maxWidth = '800px';
+        svgEl.style.height = 'auto';
+      }
+    }
+  } catch (e) {
+    const container = document.getElementById('wf-svg');
+    if (container) {
+      container.innerHTML = '<div class="empty">Failed to load diagram — is Prism running?</div>';
+    }
   }
 }
 

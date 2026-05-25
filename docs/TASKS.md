@@ -1,7 +1,7 @@
 # Prism — Task Tracker
 
 **Last Updated:** 2026-05-25
-**Status:** V23 (Platform) complete. V24 next.
+**Status:** V24 (Visual Representations) complete. V25 next.
 
 ---
 
@@ -131,6 +131,20 @@
 | Task tracking end-to-end | ⬜ | No task dropped |
 | Approval gates in Discord | ⬜ | "Approve?" → "yes" → approved |
 | E2E test: Lumi delegates to Mango | ⬜ | Full delegation flow |
+
+---
+
+## Phase 5: Visual Representations (V24) — ✅ Complete
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Agent Topology diagram | ✅ | SVG generator with roles, capabilities, primary marker |
+| Feedback Loops diagram | ✅ | Three Feedback Loops with solid/dashed/dotted arrows |
+| Delegation Flow diagram | ✅ | Pipeline stages, task lifecycle, approval gate diamond |
+| Approval Gate diagram | ✅ | Request → diamond → grant/deny with event names |
+| Event Flow diagram | ✅ | Per-agent namespaces, NATS bus, system events |
+| Dashboard Workflow tab | ✅ | 6-tab dashboard with SVG rendering, diagram type selector |
+| API endpoint | ✅ | GET /api/v1/workflows/{type} and /api/v1/workflows/list |
 
 ---
 
