@@ -1,7 +1,7 @@
 # Prism — Task Tracker
 
 **Last Updated:** 2026-05-25
-**Status:** V24 (Visual Representations) complete. V25 next.
+**Status:** V25 (Visual Workflow Editor) in progress. M6.1-M6.3 complete.
 
 ---
 
@@ -145,6 +145,17 @@
 | Event Flow diagram | ✅ | Per-agent namespaces, NATS bus, system events |
 | Dashboard Workflow tab | ✅ | 6-tab dashboard with SVG rendering, diagram type selector |
 | API endpoint | ✅ | GET /api/v1/workflows/{type} and /api/v1/workflows/list |
+
+## Phase 6: Visual Workflow Editor (V25) — 🟡 In Progress
+
+| Task | Status | Notes |
+|------|--------|-------|
+| EditorState model + ConfigWriter | ✅ | Node/Edge model, ConfigToEditorState, WriteConfigYAML, validation |
+| API endpoints for editor CRUD | ✅ | 10 endpoints: GET/PUT editor, CRUD nodes/edges, save |
+| Dashboard interactive editor | ✅ | SVG drag-and-drop, edge drawing, properties panel |
+| Config round-trip test | ✅ | yaml → editor → yaml round-trip verified |
+| Edge drawing + deletion | ✅ | Click-to-connect edges, keyboard delete |
+| Save/write-back to prism.yaml | ⬜ | Write YAML to disk (needs approval gate) |
 
 ---
 

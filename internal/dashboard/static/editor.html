@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prism Workflow Editor</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0f;color:#e0e0e8;overflow:hidden}
+.toolbar{background:#12121a;border-bottom:1px solid #2a2a3a;padding:12px 24px;display:flex;align-items:center;gap:12px}
+.toolbar h1{font-size:18px;color:#a78bfa;margin-right:24px}
+.toolbar .sep{width:1px;height:24px;background:#2a2a3a}
+.btn{padding:8px 16px;border-radius:6px;border:1px solid #2a2a3a;background:#1e1e2e;color:#e0e0e8;cursor:pointer;font-size:13px;transition:all .2s;display:flex;align-items:center;gap:6px}
+.btn:hover{border-color:#a78bfa;background:#2a2a3a}
+.btn.active{border-color:#a78bfa;background:#2a2a3a;color:#a78bfa}
+.btn.danger{border-color:#f87171;color:#f87171}
+.btn.danger:hover{background:#4c0519}
+.btn.save{border-color:#4ade80;color:#4ade80}
+.btn.save:hover{background:#064e3b}
+.canvas-area{display:flex;height:calc(100vh - 56px)}
+.sidebar{width:280px;background:#12121a;border-right:1px solid #2a2a3a;overflow-y:auto;padding:16px}
+.sidebar .section{margin-bottom:20px}
+.sidebar .section h3{font-size:12px;text-transform:uppercase;color:#888;margin-bottom:8px;letter-spacing:1px}
+.sidebar .field{margin-bottom:8px}
+.sidebar .field label{display:block;font-size:11px;color:#888;margin-bottom:2px}
+.sidebar .field input,.sidebar .field select{width:100%;padding:6px 8px;background:#1e1e2e;border:1px solid #2a2a3a;border-radius:4px;color:#e0e0e8;font-size:13px}
+.sidebar .field input:focus,.sidebar .field select:focus{border-color:#a78bfa;outline:none}
+.canvas{flex:1;position:relative;overflow:hidden;background:#0a0a0f;background-image:radial-gradient(circle,#1a1a24 1px,transparent 1px);background-size:24px 24px}
+.node{position:absolute;min-width:180px;background:#16161f;border:2px solid #2a2a3a;border-radius:8px;cursor:move;user-select:none;transition:box-shadow .2s}
+.node:hover{box-shadow:0 0 20px rgba(167,139,250,0.2)}
+.node.selected{border-color:#a78bfa;box-shadow:0 0 20px rgba(167,139,250,0.3)}
+.node .header{padding:10px 14px;border-bottom:1px solid #2a2a3a;display:flex;align-items:center;justify-content:space-between}
+.node .header .title{font-size:14px;font-weight:700;color:#e0e0e8}
+.node .header .primary{font-size:16px;color:#3b82f6}
+.node .body{padding:10px 14px}
+.node .role{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-right:4px}
+.node .model{font-size:11px;color:#888;margin-top:4px}
+.node .caps{font-size:10px;color:#666;margin-top:4px}
+.role-lead{background:#1e3a5f;color:#93c5fd}
+.role-coder{background:#064e3b;color:#6ee7b7}
+.role-researcher{background:#431407;color:#fdba74}
+.role-orchestrator{background:#3b0764;color:#c4b5fd}
+.edge{position:absolute;pointer-events:none}
+.edge-label{position:absolute;font-size:10px;color:#888;pointer-events:none;background:#0a0a0f;padding:1px 4px;border-radius:2px}
+.status-bar{position:absolute;bottom:0;left:280px;right:0;height:28px;background:#12121a;border-top:1px solid #2a2a3a;display:flex;align-items:center;padding:0 16px;font-size:11px;color:#888;gap:16px}
+.status-bar .dot{width:6px;height:6px;border-radius:50%;background:#4ade80}
+.empty-state{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#555}
+.empty-state h2{font-size:20px;margin-bottom:8px;color:#888}
+.empty-state p{font-size:14px}
+.toast{position:fixed;top:20px;right:20px;background:#16161f;border:1px solid #2a2a3a;border-radius:8px;padding:12px 20px;font-size:13px;z-index:1000;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast.success{border-color:#4ade80;color:#4ade80}
+.toast.error{border-color:#f87171;color:#f87171}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>🔮 Workflow Editor</h1>
+  <div class="sep"></div>
+  <button class="btn" onclick="addNode()" title="Add Agent">+ Agent</button>
+  <button class="btn" onclick="addEdgeMode()" id="edgeBtn" title="Connect two nodes">↗ Edge</button>
+  <button class="btn danger" onclick="deleteSelected()" id="deleteBtn" title="Delete selected">✕ Delete</button>
+  <div class="sep"></div>
+  <button class="btn" onclick="autoLayout()">⬒ Layout</button>
+  <button class="btn save" onclick="saveConfig()">💾 Save YAML</button>
+  <button class="btn" onclick="loadConfig()">↻ Reload</button>
+  <div style="flex:1"></div>
+  <span id="statusText" style="font-size:12px;color:#888"></span>
+</div>
+
+<div class="canvas-area">
+  <div class="sidebar" id="sidebar">
+    <div class="section">
+      <h3>Properties</h3>
+      <div id="properties">
+        <p style="color:#555;font-size:13px">Select a node to edit</p>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Nodes</h3>
+      <div id="nodeList"></div>
+    </div>
+  </div>
+
+  <div class="canvas" id="canvas">
+    <div class="empty-state" id="emptyState">
+      <h2>No Agents</h2>
+      <p>Click "+ Agent" to add your first agent</p>
+    </div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <span class="dot"></span>
+  <span id="nodeCount">0 nodes</span>
+  <span id="edgeCount">0 edges</span>
+  <span id="modeStatus">Select mode</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = window.location.origin.replace(/:\d+/, '') + ':8322';
+let state = { nodes: [], edges: [] };
+let selectedNodeId = null;
+let edgeMode = false;
+let edgeFrom = null;
+let dragging = null;
+let dragOffset = { x: 0, y: 0 };
+
+async function loadConfig() {
+  try {
+    const resp = await fetch(API + '/api/v1/editor');
+    if (!resp.ok) throw new Error(resp.statusText);
+    state = await resp.json();
+    render();
+    setStatus('Loaded from config');
+  } catch (e) {
+    showToast('Failed to load: ' + e.message, 'error');
+  }
+}
+
+function render() {
+  const canvas = document.getElementById('canvas');
+  const emptyState = document.getElementById('emptyState');
+
+  // Clear existing nodes and edges
+  canvas.querySelectorAll('.node, .edge, .edge-label').forEach(el => el.remove());
+
+  if (state.nodes.length === 0) {
+    emptyState.style.display = '';
+  } else {
+    emptyState.style.display = 'none';
+  }
+
+  // Render edges (SVG lines)
+  const svg = canvas.querySelector('svg') || createSVG(canvas);
+  svg.innerHTML = '';
+
+  state.edges.forEach(edge => {
+    const from = state.nodes.find(n => n.id === edge.from);
+    const to = state.nodes.find(n => n.id === edge.to);
+    if (!from || !to) return;
+
+    const x1 = from.position.x + 90;
+    const y1 = from.position.y + 40;
+    const x2 = to.position.x + 90;
+    const y2 = to.position.y + 40;
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+
+    const colors = { delegation: '#a78bfa', review: '#6366f1', approval: '#f59e0b', event: '#818cf8' };
+    const dashes = { delegation: '', review: '8,4', approval: '', event: '3,3' };
+
+    line.setAttribute('stroke', colors[edge.type] || '#a78bfa');
+    line.setAttribute('stroke-width', edge.type === 'approval' ? '3' : '2');
+    if (dashes[edge.type]) line.setAttribute('stroke-dasharray', dashes[edge.type]);
+    svg.appendChild(line);
+
+    if (edge.label) {
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', (x1 + x2) / 2);
+      text.setAttribute('y', (y1 + y2) / 2 - 6);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('fill', '#888');
+      text.setAttribute('font-size', '10');
+      text.setAttribute('font-family', 'monospace');
+      text.textContent = edge.label;
+      svg.appendChild(text);
+    }
+  });
+
+  // Render nodes
+  state.nodes.forEach(node => {
+    const el = document.createElement('div');
+    el.className = 'node' + (node.id === selectedNodeId ? ' selected' : '');
+    el.dataset.id = node.id;
+    el.style.left = node.position.x + 'px';
+    el.style.top = node.position.y + 'px';
+
+    const roleClass = 'role-' + (node.role || 'agent');
+    const borderColor = { lead: '#3b82f6', coder: '#10b981', researcher: '#f97316', orchestrator: '#8b5cf6' }[node.role] || '#2a2a3a';
+    el.style.borderColor = node.id === selectedNodeId ? '#a78bfa' : borderColor;
+
+    el.innerHTML = `
+      <div class="header">
+        <span class="title">${escapeHtml(node.label || node.id.toUpperCase())}</span>
+        ${node.primary ? '<span class="primary">★</span>' : ''}
+      </div>
+      <div class="body">
+        <span class="role ${roleClass}">${node.role || 'agent'}</span>
+        <div class="model">${escapeHtml(node.model || '')}</div>
+        ${node.capabilities && node.capabilities.length ? '<div class="caps">' + node.capabilities.join(', ') + '</div>' : ''}
+      </div>
+    `;
+
+    el.addEventListener('mousedown', (e) => startDrag(e, node.id));
+    el.addEventListener('click', (e) => { e.stopPropagation(); selectNode(node.id); });
+
+    canvas.appendChild(el);
+  });
+
+  // Update sidebar node list
+  updateNodeList();
+  updateStatusBar();
+
+  if (selectedNodeId) {
+    renderProperties(selectedNodeId);
+  }
+}
+
+function createSVG(canvas) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.style.position = 'absolute';
+  svg.style.top = '0';
+  svg.style.left = '0';
+  svg.style.width = '100%';
+  svg.style.height = '100%';
+  svg.style.pointerEvents = 'none';
+  canvas.appendChild(svg);
+  return svg;
+}
+
+function selectNode(id) {
+  if (edgeMode && edgeFrom) {
+    // Complete edge
+    if (edgeFrom !== id) {
+      const edgeType = prompt('Edge type: delegation, review, approval, event', 'delegation');
+      if (edgeType) {
+        addEdgeToState(edgeFrom, id, edgeType);
+      }
+    }
+    edgeMode = false;
+    edgeFrom = null;
+    document.getElementById('edgeBtn').classList.remove('active');
+    setStatus('Select mode');
+  } else {
+    selectedNodeId = id;
+    renderProperties(id);
+    render();
+  }
+}
+
+function renderProperties(id) {
+  const node = state.nodes.find(n => n.id === id);
+  if (!node) return;
+
+  const props = document.getElementById('properties');
+  props.innerHTML = `
+    <div class="field"><label>ID</label><input value="${escapeHtml(node.id)}" readonly style="opacity:0.5"></div>
+    <div class="field"><label>Role</label>
+      <select onchange="updateProp('${id}','role',this.value)">
+        <option value="lead" ${node.role==='lead'?'selected':''}>lead</option>
+        <option value="coder" ${node.role==='coder'?'selected':''}>coder</option>
+        <option value="researcher" ${node.role==='researcher'?'selected':''}>researcher</option>
+        <option value="orchestrator" ${node.role==='orchestrator'?'selected':''}>orchestrator</option>
+      </select>
+    </div>
+    <div class="field"><label>Model</label><input value="${escapeHtml(node.model||'')}" onchange="updateProp('${id}','model',this.value)"></div>
+    <div class="field"><label>Provider</label><input value="${escapeHtml(node.provider||'')}" onchange="updateProp('${id}','provider',this.value)"></div>
+    <div class="field"><label>Primary</label><input type="checkbox" ${node.primary?'checked':''} onchange="updatePropBool('${id}','primary',this.checked)"></div>
+    <div class="field"><label>Capabilities (comma)</label><input value="${(node.capabilities||[]).join(', ')}" onchange="updatePropList('${id}','capabilities',this.value)"></div>
+  `;
+}
+
+function updateProp(id, prop, value) {
+  const node = state.nodes.find(n => n.id === id);
+  if (node) { node[prop] = value; saveLocal(); }
+}
+
+function updatePropBool(id, prop, value) {
+  const node = state.nodes.find(n => n.id === id);
+  if (node) { node[prop] = value; saveLocal(); }
+}
+
+function updatePropList(id, prop, value) {
+  const node = state.nodes.find(n => n.id === id);
+  if (node) { node[prop] = value.split(',').map(s => s.trim()).filter(Boolean); saveLocal(); }
+}
+
+function updateNodeList() {
+  const list = document.getElementById('nodeList');
+  list.innerHTML = state.nodes.map(n =>
+    `<div style="padding:4px 8px;cursor:pointer;border-radius:4px;margin-bottom:2px;${n.id===selectedNodeId?'background:#1e1e2e;':''}" onclick="selectNode('${n.id}')">
+      <span style="color:#a78bfa;font-size:12px">${escapeHtml(n.label||n.id)}</span>
+      <span style="color:#666;font-size:11px;margin-left:4px">${n.role||''}</span>
+    </div>`
+  ).join('');
+}
+
+function updateStatusBar() {
+  document.getElementById('nodeCount').textContent = state.nodes.length + ' nodes';
+  document.getElementById('edgeCount').textContent = state.edges.length + ' edges';
+}
+
+async function addNode() {
+  const id = prompt('Agent ID (lowercase, no spaces):', 'agent' + (state.nodes.length + 1));
+  if (!id) return;
+
+  const role = prompt('Role (lead/coder/researcher/orchestrator):', 'coder');
+  const model = prompt('Model:', 'gpt-4o');
+
+  try {
+    const resp = await fetch(API + '/api/v1/editor/nodes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, type: 'agent', role: role || 'coder', model: model || 'gpt-4o', position: { x: 100 + Math.random() * 400, y: 100 + Math.random() * 200 } })
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    state = await resp.json();
+    selectedNodeId = id;
+    render();
+    showToast('Agent added: ' + id, 'success');
+  } catch (e) {
+    showToast('Failed to add node: ' + e.message, 'error');
+  }
+}
+
+function addEdgeMode() {
+  edgeMode = true;
+  edgeFrom = null;
+  document.getElementById('edgeBtn').classList.add('active');
+  setStatus('Click source node...');
+  showToast('Click the source node, then the target node', 'success');
+}
+
+function addEdgeToState(from, to, type) {
+  const id = from + '-' + to + '-' + type;
+  fetch(API + '/api/v1/editor/edges', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, from, to, type })
+  }).then(r => r.json()).then(s => {
+    state = s;
+    render();
+    showToast('Edge added', 'success');
+  }).catch(e => showToast('Failed: ' + e.message, 'error'));
+}
+
+async function deleteSelected() {
+  if (!selectedNodeId) { showToast('Select a node first', 'error'); return; }
+
+  if (!confirm('Delete ' + selectedNodeId + '?')) return;
+
+  try {
+    const resp = await fetch(API + '/api/v1/editor/nodes/' + selectedNodeId, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(await resp.text());
+    state = await resp.json();
+    selectedNodeId = null;
+    document.getElementById('properties').innerHTML = '<p style="color:#555;font-size:13px">Select a node to edit</p>';
+    render();
+    showToast('Deleted', 'success');
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+function autoLayout() {
+  const cols = Math.min(state.nodes.length, 3);
+  const gapX = 280;
+  const gapY = 200;
+
+  state.nodes.forEach((node, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    node.position = { x: 100 + col * gapX, y: 80 + row * gapY };
+  });
+
+  render();
+  saveLocal();
+  showToast('Auto-layout applied', 'success');
+}
+
+async function saveConfig() {
+  try {
+    const resp = await fetch(API + '/api/v1/editor/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state)
+    });
+    const result = await resp.json();
+    if (result.valid) {
+      showToast('Config valid! ' + result.agents + ' agents, ' + result.edges + ' edges', 'success');
+      // Show YAML in a new window
+      if (result.yaml) {
+        const w = window.open('', '_blank');
+        w.document.write('<pre>' + escapeHtml(result.yaml) + '</pre>');
+      }
+    } else {
+      showToast('Validation errors: ' + result.errors.join(', '), 'error');
+    }
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'error');
+  }
+}
+
+function saveLocal() {
+  // Persist to localStorage for now
+  localStorage.setItem('prism-editor-state', JSON.stringify(state));
+}
+
+function loadLocal() {
+  const saved = localStorage.getItem('prism-editor-state');
+  if (saved) {
+    try {
+      state = JSON.parse(saved);
+      render();
+      return true;
+    } catch (e) {}
+  }
+  return false;
+}
+
+function setStatus(text) {
+  document.getElementById('statusText').textContent = text;
+  document.getElementById('modeStatus').textContent = text;
+}
+
+function showToast(message, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.className = 'toast ' + type + ' show';
+  setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s || '';
+  return div.innerHTML;
+}
+
+// Drag support
+function startDrag(e, id) {
+  if (edgeMode) {
+    if (!edgeFrom) {
+      edgeFrom = id;
+      setStatus('Now click target node...');
+    }
+    return;
+  }
+  dragging = id;
+  const node = state.nodes.find(n => n.id === id);
+  dragOffset = { x: e.clientX - node.position.x, y: e.clientY - node.position.y };
+  e.preventDefault();
+}
+
+document.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const node = state.nodes.find(n => n.id === dragging);
+  if (!node) return;
+  node.position = { x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y };
+  render();
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragging) {
+    saveLocal();
+    dragging = null;
+  }
+});
+
+// Canvas click deselects
+document.getElementById('canvas').addEventListener('click', (e) => {
+  if (e.target.id === 'canvas' || e.target.tagName === 'svg') {
+    selectedNodeId = null;
+    document.getElementById('properties').innerHTML = '<p style="color:#555;font-size:13px">Select a node to edit</p>';
+    render();
+  }
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (selectedNodeId && document.activeElement.tagName !== 'INPUT') {
+      deleteSelected();
+    }
+  }
+  if (e.key === 'Escape') {
+    edgeMode = false;
+    edgeFrom = null;
+    document.getElementById('edgeBtn').classList.remove('active');
+    setStatus('Select mode');
+  }
+});
+
+// Initialize
+if (!loadLocal()) {
+  loadConfig();
+} else {
+  render();
+}
+</script>
+</body>
+</html>
