@@ -12,7 +12,18 @@
 //   POST /api/v1/approvals/{id}/grant — Grant approval
 //   POST /api/v1/approvals/{id}/deny   — Deny approval
 //   GET /api/v1/events/stream    — SSE event stream
-//   GET /api/v1/workflows        — List workflows
+//   GET /api/v1/workflows        — List workflow types
+//   GET /api/v1/workflows/{type} — SVG diagram
+//   GET /api/v1/editor          — Get editor state (current config as graph)
+//   PUT /api/v1/editor          — Validate + preview YAML from editor state
+//   GET /api/v1/editor/nodes    — List nodes
+//   POST /api/v1/editor/nodes    — Add a node
+//   PUT /api/v1/editor/nodes/{id} — Update a node
+//   DELETE /api/v1/editor/nodes/{id} — Delete a node
+//   GET /api/v1/editor/edges    — List edges
+//   POST /api/v1/editor/edges    — Add an edge
+//   DELETE /api/v1/editor/edges/{id} — Delete an edge
+//   POST /api/v1/editor/save     — Validate + generate YAML
 //   GET /api/v1/costs             — Cost summary
 package api
 
@@ -26,6 +37,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/delegation"
+	"github.com/emaharmony/prism/internal/editor"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/task"
@@ -89,6 +101,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/events/stream", s.handleEventStream)
 	s.mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowSVG)
+	s.mux.HandleFunc("/api/v1/editor", s.handleEditorState)
+	s.mux.HandleFunc("/api/v1/editor/nodes", s.handleEditorNodes)
+	s.mux.HandleFunc("/api/v1/editor/nodes/", s.handleEditorNodeCRUD)
+	s.mux.HandleFunc("/api/v1/editor/edges", s.handleEditorEdges)
+	s.mux.HandleFunc("/api/v1/editor/edges/", s.handleEditorEdgeCRUD)
+	s.mux.HandleFunc("/api/v1/editor/save", s.handleEditorSave)
 	s.mux.HandleFunc("/api/v1/costs", s.handleCosts)
 }
 
@@ -553,6 +571,231 @@ func (s *Server) handleWorkflowSVG(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 
 	workflow.GenerateWorkflow(w, diagramType, agents, cfg)
+}
+
+// --- Editor API ---
+
+// handleEditorState returns the current config as an EditorState.
+func (s *Server) handleEditorState(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.getEditorState(w, r)
+		return
+	}
+	if r.Method == http.MethodPut {
+		s.putEditorState(w, r)
+		return
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (s *Server) getEditorState(w http.ResponseWriter, r *http.Request) {
+	var agents []orchestrator.AgentConfig
+	if s.orch != nil {
+		agents = s.orch.Config.Agents
+	}
+
+	config := &orchestrator.Config{Agents: agents}
+	state := editor.ConfigToEditorState(config)
+
+	writeJSON(w, state)
+}
+
+func (s *Server) putEditorState(w http.ResponseWriter, r *http.Request) {
+	var state editor.EditorState
+	if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	errors := editor.ValidateEditorState(&state)
+	if len(errors) > 0 {
+		writeJSON(w, map[string]any{"valid": false, "errors": errors})
+		return
+	}
+
+	// Return the YAML preview
+	yaml, err := editor.WriteConfigYAML(&state)
+	if err != nil {
+		http.Error(w, "yaml generation error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"valid": true,
+		"yaml":   yaml,
+		"agents": len(state.Nodes),
+		"edges":  len(state.Edges),
+	})
+}
+
+// handleEditorNodes handles GET (list) and POST (add) for nodes.
+func (s *Server) handleEditorNodes(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.getEditorState(w, r) // nodes are part of state
+	case http.MethodPost:
+		s.addNode(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
+	var node editor.EditorNode
+	if err := json.NewDecoder(r.Body).Decode(&node); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Get current state
+	state := s.getCurrentState()
+	if err := state.AddNode(node); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, state)
+}
+
+// handleEditorNodeCRUD handles PUT (update) and DELETE for individual nodes.
+func (s *Server) handleEditorNodeCRUD(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/editor/nodes/")
+	if id == "" {
+		http.Error(w, "node ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		s.updateNode(w, r, id)
+	case http.MethodDelete:
+		s.deleteNode(w, r, id)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) updateNode(w http.ResponseWriter, r *http.Request, id string) {
+	var updates editor.EditorNode
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	state := s.getCurrentState()
+	if err := state.UpdateNode(id, updates); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, state)
+}
+
+func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request, id string) {
+	state := s.getCurrentState()
+	if err := state.RemoveNode(id); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, state)
+}
+
+// handleEditorEdges handles GET (list) and POST (add) for edges.
+func (s *Server) handleEditorEdges(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.getEditorState(w, r) // edges are part of state
+	case http.MethodPost:
+		s.addEdge(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) addEdge(w http.ResponseWriter, r *http.Request) {
+	var edge editor.EditorEdge
+	if err := json.NewDecoder(r.Body).Decode(&edge); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	state := s.getCurrentState()
+	if err := state.AddEdge(edge); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, state)
+}
+
+// handleEditorEdgeCRUD handles DELETE for individual edges.
+func (s *Server) handleEditorEdgeCRUD(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/v1/editor/edges/")
+	if id == "" {
+		http.Error(w, "edge ID required", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		s.deleteEdge(w, r, id)
+		return
+	}
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request, id string) {
+	state := s.getCurrentState()
+	if err := state.RemoveEdge(id); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	writeJSON(w, state)
+}
+
+// handleEditorSave validates and returns YAML for saving.
+func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var state editor.EditorState
+	if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	errors := editor.ValidateEditorState(&state)
+	if len(errors) > 0 {
+		writeJSON(w, map[string]any{"valid": false, "errors": errors})
+		return
+	}
+
+	yaml, err := editor.WriteConfigYAML(&state)
+	if err != nil {
+		http.Error(w, "yaml generation error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"valid":  true,
+		"yaml":    yaml,
+		"agents":  len(state.Nodes),
+		"edges":   len(state.Edges),
+		"message": "Ready to save to prism.yaml",
+	})
+}
+
+// getCurrentState loads the current config as an EditorState.
+func (s *Server) getCurrentState() *editor.EditorState {
+	var agents []orchestrator.AgentConfig
+	if s.orch != nil {
+		agents = s.orch.Config.Agents
+	}
+	config := &orchestrator.Config{Agents: agents}
+	return editor.ConfigToEditorState(config)
 }
 
 // --- Helpers ---
