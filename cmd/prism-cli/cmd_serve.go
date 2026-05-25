@@ -470,7 +470,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	pipeline := stage.NewPipeline(
 		&stage.LLMStage{},
-		&stage.DelegationStage{Engine: cc.delegEngine, StripMarkers: true},
+		&stage.DelegationStage{Engine: cc.delegEngine, StripMarkers: true, AgentConfigs: cc.buildAgentConfigMap()},
 		&stage.PersistenceStage{BusURL: cc.natsURL},
 		&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.natsURL},
 	)
@@ -623,6 +623,17 @@ func (cc *conversationContext) sendError(channelID, message string) {
 // publishEvent publishes an event to the NATS bus.
 // V21: Events use per-agent namespace prefixes (<agent-id>.*).
 // System events use the prism.* namespace.
+// buildAgentConfigMap creates a map of agent ID → AgentConfig for the
+// DelegationStage capability checks.
+func (cc *conversationContext) buildAgentConfigMap() map[string]*orchestrator.AgentConfig {
+	configs := make(map[string]*orchestrator.AgentConfig, len(cc.cfg.Agents))
+	for i := range cc.cfg.Agents {
+		a := &cc.cfg.Agents[i]
+		configs[a.ID] = a
+	}
+	return configs
+}
+
 // If NATS is not connected, the event is logged but not published.
 // All events include a schema version field for forward compatibility.
 func (cc *conversationContext) publishEvent(subject string, payload map[string]any) {
