@@ -214,7 +214,7 @@ func (am *ApprovalManager) GetApproval(taskID string) (*ApprovalRequest, error) 
 	if approvalType != ApprovalPush && approvalType != ApprovalDeploy &&
 		approvalType != ApprovalDelete && approvalType != ApprovalMerge &&
 		approvalType != ApprovalGeneric {
-		approvalType = ApprovalGeneric
+		return nil, fmt.Errorf("approval: task %s is not an approval task (type: %s)", taskID, tsk.Type)
 	}
 
 	req := &ApprovalRequest{
@@ -250,34 +250,38 @@ func (am *ApprovalManager) GetApproval(taskID string) (*ApprovalRequest, error) 
 }
 
 // ListPendingApprovals returns all approval requests in pending status.
+// Approvals may be in "assigned" or "in_progress" status.
 func (am *ApprovalManager) ListPendingApprovals() ([]*ApprovalRequest, error) {
-	// Look for tasks with approval-related types
 	var pending []*ApprovalRequest
 
-	for _, approvalType := range []string{
-		string(ApprovalPush),
-		string(ApprovalDeploy),
-		string(ApprovalDelete),
-		string(ApprovalMerge),
-		string(ApprovalGeneric),
-	} {
-		tasks, err := am.store.ListByStatus(task.StatusAssigned)
+	approvalTypes := map[string]bool{
+		string(ApprovalPush):    true,
+		string(ApprovalDeploy):  true,
+		string(ApprovalDelete):  true,
+		string(ApprovalMerge):   true,
+		string(ApprovalGeneric): true,
+	}
+
+	// Check both assigned and in_progress statuses
+	for _, status := range []task.Status{task.StatusAssigned, task.StatusInProgress} {
+		tasks, err := am.store.ListByStatus(status)
 		if err != nil {
-			return nil, fmt.Errorf("approval: list assigned: %w", err)
+			return nil, fmt.Errorf("approval: list %s: %w", status, err)
 		}
 
 		for _, tsk := range tasks {
-			if tsk.Type == approvalType {
-				req := &ApprovalRequest{
-					TaskID:      tsk.ID,
-					AgentID:     tsk.DelegatedBy,
-					Type:        ApprovalType(tsk.Type),
-					Description: tsk.Description,
-					Status:      ApprovalPending,
-					CreatedAt:   tsk.CreatedAt,
-				}
-				pending = append(pending, req)
+			if !approvalTypes[tsk.Type] {
+				continue
 			}
+			req := &ApprovalRequest{
+				TaskID:      tsk.ID,
+				AgentID:     tsk.DelegatedBy,
+				Type:        ApprovalType(tsk.Type),
+				Description: tsk.Description,
+				Status:      ApprovalPending,
+				CreatedAt:   tsk.CreatedAt,
+			}
+			pending = append(pending, req)
 		}
 	}
 

@@ -174,3 +174,67 @@ func TestTracker_CancelUnassignedTasks(t *testing.T) {
 		t.Errorf("expected unassigned task to be cancelled, got %s", got.Status)
 	}
 }
+
+func TestTracker_Stop_DoubleClose(t *testing.T) {
+	store := newTestStore(t)
+	engine := NewEngine(store, nil)
+
+	tracker := NewTracker(store, engine, TrackerConfig{
+		TaskTimeout:   10 * time.Minute,
+		CheckInterval: 1 * time.Minute,
+	})
+
+	// Stop should be safe to call multiple times
+	tracker.Stop()
+	tracker.Stop() // should not panic
+	tracker.Stop() // really should not panic
+}
+
+func TestTracker_StuckTasks_Assigned(t *testing.T) {
+	// StuckTasks should include both stuck in_progress AND stuck assigned tasks
+	store := newTestStore(t)
+	engine := NewEngine(store, nil)
+
+	tracker := NewTracker(store, engine, TrackerConfig{
+		TaskTimeout:   100 * time.Millisecond,
+		CheckInterval:  50 * time.Millisecond,
+	})
+
+	ctx := context.Background()
+	// Create a task that stays in "assigned"
+	assigned, err := engine.Delegate(ctx, "lumi", "mango", "code", "Stuck assigned", nil)
+	if err != nil {
+		t.Fatalf("failed to delegate: %v", err)
+	}
+
+	// Create a task in "in_progress"
+	inProgress, err := engine.Delegate(ctx, "lumi", "mango", "code", "Stuck in progress", nil)
+	if err != nil {
+		t.Fatalf("failed to delegate: %v", err)
+	}
+	store.UpdateStatus(inProgress.ID, task.StatusInProgress, nil)
+
+	// Wait for timeout
+	time.Sleep(150 * time.Millisecond)
+
+	stuck, err := tracker.StuckTasks()
+	if err != nil {
+		t.Fatalf("failed to get stuck tasks: %v", err)
+	}
+
+	// Should find both tasks
+	if len(stuck) != 2 {
+		t.Errorf("expected 2 stuck tasks (assigned + in_progress), got %d", len(stuck))
+	}
+
+	ids := map[string]bool{}
+	for _, tsk := range stuck {
+		ids[tsk.ID] = true
+	}
+	if !ids[assigned.ID] {
+		t.Error("expected stuck assigned task to be included")
+	}
+	if !ids[inProgress.ID] {
+		t.Error("expected stuck in_progress task to be included")
+	}
+}

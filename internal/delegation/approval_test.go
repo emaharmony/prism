@@ -212,6 +212,27 @@ func TestApprovalManager_NonExistentTask(t *testing.T) {
 	}
 }
 
+func TestApprovalManager_NonApprovalTask(t *testing.T) {
+	// GetApproval on a regular (non-approval) task should return error
+	store := newTestStore(t)
+	engine := NewEngine(store, nil)
+	am := NewApprovalManager(store, engine)
+
+	ctx := context.Background()
+
+	// Create a regular delegation task (not an approval)
+	regularTask, err := engine.Delegate(ctx, "lumi", "mango", "code", "Regular coding task", nil)
+	if err != nil {
+		t.Fatalf("failed to delegate: %v", err)
+	}
+
+	// GetApproval should reject it
+	_, err = am.GetApproval(regularTask.ID)
+	if err == nil {
+		t.Error("expected error for non-approval task")
+	}
+}
+
 func TestApprovalManager_TrackerIntegration(t *testing.T) {
 	// Test that approvals are tracked by the task tracker
 	store := newTestStore(t)
