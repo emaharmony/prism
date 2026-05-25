@@ -21,6 +21,7 @@
 package main
 
 import (
+	stdctx "context"
 	ctxcontext "context"
 	"encoding/json"
 	"flag"
@@ -36,6 +37,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/action"
+	"github.com/emaharmony/prism/internal/api"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/task"
@@ -90,6 +92,7 @@ type conversationContext struct {
 	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
 	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
 	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
+	taskStore   *task.Store           // V22: Task store for delegation tracking
 }
 
 func executeServe(args []string) {
@@ -104,6 +107,13 @@ func executeServe(args []string) {
 
 	// 1. Load configuration
 	cfg, err := orchestrator.LoadConfig(*configPath)
+
+	// V22: Task store and delegation engine (hoisted for API server)
+	var (
+		taskStore   *task.Store
+		delegEngine *delegation.Engine
+		orch        *orchestrator.Orchestrator
+	)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Error: config file %q not found. Create one with 'prism init' or specify --config\n", *configPath)
@@ -249,7 +259,6 @@ func executeServe(args []string) {
 			}
 
 			// V22: Initialize task store and delegation engine
-			var delegEngine *delegation.Engine
 			taskStore, taskErr := task.NewStore(filepath.Join(cfg.Prism.DataDir, "tasks.db"))
 			if taskErr != nil {
 				fmt.Printf("  Warning: task store failed: %v\n", taskErr)
@@ -293,6 +302,7 @@ func executeServe(args []string) {
 				remClient:   remClient,
 				remSem:      make(chan struct{}, 4),
 				delegEngine: delegEngine,
+				taskStore:   taskStore,
 			}
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
 				convCtx.handleDiscordMessage(msg)
@@ -312,7 +322,37 @@ func executeServe(args []string) {
 		}
 	}
 
-	// 10. Start health check server
+	// 10. Start API server
+	var approvalMgr *delegation.ApprovalManager
+	var delegTracker *delegation.Tracker
+	if taskStore != nil && delegEngine != nil {
+		approvalMgr = delegation.NewApprovalManager(taskStore, delegEngine)
+		delegTracker = delegation.NewTracker(taskStore, delegEngine, delegation.TrackerConfig{
+			TaskTimeout:   10 * time.Minute,
+			CheckInterval: 1 * time.Minute,
+		})
+		go delegTracker.Start(stdctx.Background())
+	}
+
+	apiPort := *portFlag + 1 // API on port+1 (default 8322)
+	apiServer := api.NewServer(api.Config{
+		Addr:     fmt.Sprintf(":%d", apiPort),
+		Orch:     orch,
+		Store:    taskStore,
+		Sessions: sessMgr,
+		Engine:   delegEngine,
+		Approval: approvalMgr,
+		Tracker:  delegTracker,
+		NATS:     natsConn,
+	})
+	go func() {
+		if err := apiServer.Start(); err != nil {
+			log.Printf("[WARN] API server failed: %v", err)
+		}
+	}()
+	fmt.Printf("  API:    http://localhost:%d/api/v1/status\n", apiPort)
+
+	// 11. Start health check server
 	go startHealthServer(*portFlag, cfg, agentReg, sessMgr, discordBots)
 	fmt.Printf("  Health: http://localhost:%d/health\n", *portFlag)
 

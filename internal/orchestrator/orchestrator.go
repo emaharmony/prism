@@ -139,3 +139,22 @@ type Status struct {
 	Agents    []string       `json:"agents"`
 	NATSURL   string         `json:"nats_url"`
 }
+
+// GetAgent returns the config for a specific agent by ID.
+func (o *Orchestrator) GetAgent(id string) (*AgentConfig, error) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	for _, agent := range o.Config.Agents {
+		if agent.ID == id {
+			return &agent, nil
+		}
+	}
+	return nil, fmt.Errorf("agent %q not found", id)
+}
+
+// Workflows returns the list of workflow names.
+// Currently returns empty until workflow configs are added.
+func (o *Orchestrator) Workflows() []string {
+	return []string{}
+}
