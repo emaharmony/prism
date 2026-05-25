@@ -92,10 +92,12 @@ V17 ██ Performance (HNSW, pooling, indexes)   ✅ Shipped
 V18 ██ OpenClaw config transfer                ✅ Shipped
 V19 ██ Smart context injection                 ✅ Shipped
      ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  Phase 1 starts here
-V20 ██ Orchestrator + Discord + Sessions       🔴 P0 — In Progress (M1 core complete, 742 tests)
-V21 ░░ Memory + Streaming + Migration          🟡 P1
-V22 ░░ Multi-agent orchestration               🟡 P1
-V23 ░░ Platform (multi-Prism, SDK, IoT)        🟢 P2
+V20 ██ Orchestrator + Discord + Sessions       ✅ Shipped
+V21 ██ Memory + Streaming + Migration          ✅ Shipped
+V22 ██ Multi-agent orchestration               ✅ Shipped
+V23 ██ Platform (API, Bridge, SDK)             ✅ Shipped
+V24 ██ Visual Workflow Representations          ✅ Shipped
+V25 ░░ Visual Workflow Editor                   🟢 P2
 ```
 
 ---
