@@ -470,6 +470,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	pipeline := stage.NewPipeline(
 		&stage.LLMStage{},
+		&stage.DelegationStage{Engine: cc.delegEngine, StripMarkers: true},
 		&stage.PersistenceStage{BusURL: cc.natsURL},
 		&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.natsURL},
 	)
