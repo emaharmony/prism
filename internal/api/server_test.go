@@ -334,3 +334,61 @@ func TestAPI_ApprovalAction_Invalid(t *testing.T) {
 		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
+
+func TestAPI_Status_NilTracker(t *testing.T) {
+	// Test with nil tracker to verify no panic
+	dir := t.TempDir()
+	store, err := task.NewStore(filepath.Join(dir, "tasks.db"))
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer store.Close()
+
+	sessions, err := session.NewManager(filepath.Join(dir, "sessions.db"), 50, 30*time.Minute, 4, "truncate")
+	if err != nil {
+		t.Fatalf("failed to create session manager: %v", err)
+	}
+	defer sessions.Close()
+
+	// Create server with nil tracker
+	server := NewServer(Config{
+		Addr:     ":0",
+		Orch:     nil,
+		Store:    store,
+		Sessions: sessions,
+		Engine:   nil,
+		Approval: nil,
+		Tracker:  nil, // nil tracker
+		NATS:     nil,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAPI_Status_NilOrchestrator(t *testing.T) {
+	// Test with nil orchestrator to verify graceful handling
+	server := NewServer(Config{
+		Addr:     ":0",
+		Orch:     nil,
+		Store:    nil,
+		Sessions: nil,
+		Engine:   nil,
+		Approval: nil,
+		Tracker:  nil,
+		NATS:     nil,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
+	w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}

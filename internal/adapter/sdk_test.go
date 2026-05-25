@@ -233,3 +233,54 @@ func TestHealthStatus(t *testing.T) {
 		t.Error("expected healthy=true")
 	}
 }
+
+func TestSDKManifest_ValidateConfig_NilMap(t *testing.T) {
+	m := &SDKManifest{
+		Name:    "test",
+		Version: "1.0.0",
+		Type:    "chat",
+		Config: []ConfigField{
+			{Name: "token", Type: "string", Required: true, Description: "Bot token"},
+		},
+	}
+
+	// nil map should not panic
+	err := m.ValidateConfig(nil)
+	if err == nil {
+		t.Error("expected error for nil config with required field")
+	}
+}
+
+func TestSDKManifest_ValidateConfig_EmptyString(t *testing.T) {
+	m := &SDKManifest{
+		Name:    "test",
+		Version: "1.0.0",
+		Type:    "chat",
+		Config: []ConfigField{
+			{Name: "token", Type: "string", Required: true, Description: "Bot token"},
+		},
+	}
+
+	// empty string for required field should fail
+	err := m.ValidateConfig(map[string]any{"token": ""})
+	if err == nil {
+		t.Error("expected error for empty string on required field")
+	}
+}
+
+func TestSDKManifest_ValidateConfig_ZeroValues(t *testing.T) {
+	m := &SDKManifest{
+		Name:    "test",
+		Version: "1.0.0",
+		Type:    "chat",
+		Config: []ConfigField{
+			{Name: "count", Type: "int", Required: true, Description: "Count"},
+		},
+	}
+
+	// zero int value for required field should pass (it's present, just zero)
+	err := m.ValidateConfig(map[string]any{"count": 0})
+	if err != nil {
+		t.Errorf("unexpected error for zero int value: %v", err)
+	}
+}
