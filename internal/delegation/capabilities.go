@@ -72,17 +72,23 @@ var RoleDefaults = map[string][]string{
 //    - Task type "research" requires "search" capability.
 //    - Task type "general" is always allowed (any agent can handle it).
 func CanDelegate(delegator *orchestrator.AgentConfig, target *orchestrator.AgentConfig, taskType string) error {
-	// Rule 1: Primary agents can always delegate (they're the orchestrator)
-	if delegator.Primary {
-		return nil
+	// Nil guards
+	if delegator == nil {
+		return fmt.Errorf("delegation: delegator agent config is nil")
+	}
+	if target == nil {
+		return fmt.Errorf("delegation: target agent config is nil")
+	}
+	// Rule 1: Check if delegator has the "delegate" capability
+	// Primary agents bypass this check (they're the orchestrator)
+	if !delegator.Primary {
+		if !hasCapability(delegator, CapDelegate) {
+			return fmt.Errorf("delegation: agent %q cannot delegate (missing %q capability)", delegator.ID, CapDelegate)
+		}
 	}
 
-	// Rule 1b: Check if delegator has the "delegate" capability
-	if !hasCapability(delegator, CapDelegate) {
-		return fmt.Errorf("delegation: agent %q cannot delegate (missing %q capability)", delegator.ID, CapDelegate)
-	}
-
-	// Rule 2: Check if target can handle the task type
+	// Rule 2: ALWAYS check if the target can handle the task type.
+	// Primary bypasses delegator check only, NOT target capability check.
 	if !canHandleTaskType(target, taskType) {
 		return fmt.Errorf("delegation: agent %q cannot handle task type %q (missing capability)", target.ID, taskType)
 	}
@@ -92,16 +98,17 @@ func CanDelegate(delegator *orchestrator.AgentConfig, target *orchestrator.Agent
 
 // canHandleTaskType checks whether an agent's capabilities cover the given task type.
 func canHandleTaskType(agent *orchestrator.AgentConfig, taskType string) bool {
-	// "general" tasks can be handled by any agent
+	// "general" tasks require at least one capability or role default
 	if taskType == "general" {
-		return true
+		return len(agent.Capabilities) > 0 || len(RoleDefaults[agent.Role]) > 0
 	}
 
 	// Map task types to required capabilities
 	requiredCap := taskTypeToCapability(taskType)
 	if requiredCap == "" {
-		// Unknown task type — allow it (permissive default)
-		return true
+		// Unknown task type — DENIED by default.
+		// Require explicit capability mapping for security.
+		return false
 	}
 
 	return hasCapability(agent, requiredCap)
@@ -120,8 +127,10 @@ func taskTypeToCapability(taskType string) string {
 		return CapPlan
 	case "approve", "approve_push", "approve_deploy":
 		return CapApprove
-	case "report", "summary", "summarize":
+	case "report", "summary":
 		return CapReport
+	case "summarize":
+		return CapSummarize
 	case "search", "research", "research_search":
 		return CapSearch
 	default:
@@ -132,6 +141,9 @@ func taskTypeToCapability(taskType string) string {
 // hasCapability checks whether an agent has a specific capability.
 // If the agent has no explicit capabilities, role defaults are used.
 func hasCapability(agent *orchestrator.AgentConfig, cap string) bool {
+	if agent == nil {
+		return false
+	}
 	// Check explicit capabilities
 	for _, c := range agent.Capabilities {
 		if c == cap {
@@ -149,4 +161,32 @@ func hasCapability(agent *orchestrator.AgentConfig, cap string) bool {
 	}
 
 	return false
+}
+// ValidateCapabilities checks that all capability strings in an agent config
+// are known capabilities. Returns an error for unknown capabilities.
+func ValidateCapabilities(agent *orchestrator.AgentConfig) error {
+	if agent == nil {
+		return fmt.Errorf("delegation: agent config is nil")
+	}
+	for _, cap := range agent.Capabilities {
+		if !AllCapabilities[cap] {
+			return fmt.Errorf("delegation: agent %q has unknown capability %q", agent.ID, cap)
+		}
+	}
+	return nil
+}
+
+// ValidateRole checks that a role name is a known role. Returns an error
+// for unknown roles.
+func ValidateRole(agent *orchestrator.AgentConfig) error {
+	if agent == nil {
+		return fmt.Errorf("delegation: agent config is nil")
+	}
+	if agent.Role == "" {
+		return fmt.Errorf("delegation: agent %q has empty role", agent.ID)
+	}
+	if _, ok := RoleDefaults[agent.Role]; !ok {
+		return fmt.Errorf("delegation: agent %q has unknown role %q (known roles: orchestrator, lead, developer, coder, researcher)", agent.ID, agent.Role)
+	}
+	return nil
 }
