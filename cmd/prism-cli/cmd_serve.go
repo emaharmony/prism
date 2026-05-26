@@ -57,6 +57,7 @@ import (
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
+	"github.com/emaharmony/prism/internal/safety"
 	"github.com/emaharmony/prism/internal/tool"
 
 	"github.com/nats-io/nats.go"
@@ -98,6 +99,7 @@ type conversationContext struct {
 	taskStore   *task.Store           // V22: Task store for delegation tracking
 	toolExec    *tool.Executor        // V27: Tool executor for file system access
 	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
+	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
 }
 
 func executeServe(args []string) {
@@ -324,6 +326,12 @@ func executeServe(args []string) {
 				taskStore:   taskStore,
 				toolExec:    toolExec,
 				toolPolicy:  toolPolicy,
+				rateLimiter: safety.NewUserRateLimiter(
+					10,   // max 10 messages per burst per user
+					1,    // refill 1 token/sec per user
+					60,   // global max 60 concurrent requests
+					10,   // global refill 10 tokens/sec
+				),
 			}
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
 				convCtx.handleDiscordMessage(msg)
@@ -428,14 +436,45 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
+	// Step 1b: Rate limiting — prevent abuse from rapid-fire users
+	if cc.rateLimiter != nil {
+		if !cc.rateLimiter.Allow(msg.UserID) {
+			log.Printf("[RATE] user %s rate limited in channel %s", msg.UserID, msg.ChannelID)
+			cc.bot.Send(&discordbot.OutboundMessage{
+				ChannelID: msg.ChannelID,
+				Content:   "⚠️ Slow down! You're sending messages too fast. Please wait a moment.",
+			})
+			return
+		}
+	}
+
+	// Step 1c: Prompt injection defense — scan and sanitize user input
+	injectionCheck := safety.CheckPromptInjection(msg.Content)
+	if injectionCheck.Severity == "critical" {
+		log.Printf("[SECURITY] blocked critical injection attempt from user %s: flags=%v", msg.UserID, injectionCheck.Flags)
+		cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: msg.ChannelID,
+			Content:   "⚠️ That message contains potentially dangerous content and was blocked for safety.",
+		})
+		return
+	}
+	sanitizedContent := msg.Content
+	if injectionCheck.Severity == "high" {
+		sanitizedContent = safety.SanitizeInput(msg.Content)
+		log.Printf("[SECURITY] sanitized high-severity input from user %s: flags=%v", msg.UserID, injectionCheck.Flags)
+	}
+	if injectionCheck.Severity == "medium" {
+		log.Printf("[SECURITY] medium-severity flags in input from user %s: flags=%v", msg.UserID, injectionCheck.Flags)
+	}
+
 	// Emit channel received event
 	cc.publishEvent("prism.channel.received", map[string]any{
 		"user_id":    msg.UserID,
 		"channel_id": msg.ChannelID,
 	})
 
-	// Step 2: Route the message to the appropriate agent (handler-level for now)
-	result := cc.router.Route(msg.Content)
+	// Step 2: Route the sanitized message to the appropriate agent
+	result := cc.router.Route(sanitizedContent)
 
 	// Step 3: Find or create a session (handler-level)
 	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
@@ -451,8 +490,8 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
-	// Add the user message to the session
-	_, err = cc.sessMgr.AddMessage(sess.ID, "user", msg.Content, "")
+	// Add the sanitized user message to the session
+	_, err = cc.sessMgr.AddMessage(sess.ID, "user", sanitizedContent, "")
 	if err != nil {
 		log.Printf("[ERROR] add user message: %v", err)
 		return
