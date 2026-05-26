@@ -57,6 +57,7 @@ import (
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
+	"github.com/emaharmony/prism/internal/tool"
 
 	"github.com/nats-io/nats.go"
 )
@@ -95,6 +96,8 @@ type conversationContext struct {
 	remCache    *remembranceCache     // V26: TTL cache for BuildContext results
 	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
 	taskStore   *task.Store           // V22: Task store for delegation tracking
+	toolExec    *tool.Executor        // V27: Tool executor for file system access
+	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
 }
 
 func executeServe(args []string) {
@@ -288,7 +291,17 @@ func executeServe(args []string) {
 				}
 			}
 
-			convCtx := &conversationContext{
+			// V27: Set up tool executor for file system access
+		toolReg := tool.NewRegistry()
+		toolReg.Register(&tool.EchoTool{})
+		toolReg.Register(&tool.ListDirTool{WorkspaceRoot: "."})
+		toolReg.Register(&tool.ReadFileTool{WorkspaceRoot: "."})
+		toolPolicy := tool.DefaultPolicyConfig()
+		// Write operations require approval
+		toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
+		toolExec := tool.NewExecutor(toolReg, toolPolicy)
+
+		convCtx := &conversationContext{
 				router:      rtr,
 				sessMgr:     sessMgr,
 				cfg:         cfg,
@@ -306,6 +319,8 @@ func executeServe(args []string) {
 				remCache:    newRemembranceCache(60 * time.Second),
 				delegEngine: delegEngine,
 				taskStore:   taskStore,
+				toolExec:    toolExec,
+				toolPolicy:  toolPolicy,
 			}
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
 				convCtx.handleDiscordMessage(msg)
@@ -592,6 +607,47 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
 		}
 		return
+	}
+
+	// Step 9b: Tool execution loop — if LLM requested a tool, execute it and loop
+	if cc.toolExec != nil {
+		parsed := agent.ParseAgentOutput(finalRC.LLMResponse)
+		if parsed.Type == agent.ResponseToolRequest {
+			log.Printf("[TOOL] LLM requested tool %q, entering tool loop", parsed.ToolName)
+
+			// Run the tool loop (multi-turn)
+			finalResponse, toolSummaries, toolErr := cc.runToolLoop(
+				runCtx,
+				prompt,
+				agentCfg,
+				msg.ChannelID,
+				placeholderMsgID,
+			)
+			if toolErr != nil {
+				log.Printf("[TOOL] tool loop failed: %v", toolErr)
+				// Show a user-facing error instead of raw tool_request JSON
+				finalRC.LLMResponse = "I tried to use a tool to help with that, but something went wrong. Could you rephrase your request?"
+			}
+
+			// Log tool call summaries
+			for _, ts := range toolSummaries {
+				log.Printf("[TOOL] %s: %s (%s)", ts.Tool, ts.Status, truncateStr(ts.Result, 100))
+			}
+
+			// Use the final response from the tool loop
+			if finalResponse != "" {
+				finalRC.LLMResponse = finalResponse
+			}
+
+			// Save tool interactions to session
+			for _, ts := range toolSummaries {
+				toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
+				if ts.Error != "" {
+				toolMsg += " — " + ts.Error
+				}
+				cc.sessMgr.AddMessage(sess.ID, "tool", toolMsg, ts.Tool)
+			}
+		}
 	}
 
 	// Check pipeline results for stage failures
