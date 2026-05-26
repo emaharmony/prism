@@ -23,9 +23,14 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"time"
 
 	remcli "github.com/emaharmony/prism/internal/remembrance"
 )
+
+// healthCheckTTL is how long a cached availability check is considered valid.
+const healthCheckTTL = 30 * time.Second
 
 // RemembranceStage integrates with the Remembrance memory layer.
 //
@@ -40,8 +45,8 @@ type RemembranceStage struct {
 	MemoryEnabled bool
 
 	// RequireMemory controls whether missing memory is a failure.
-	// If true, the stage fails when memory is unavailable.
-	// If false (default), missing memory is a warning, not an error.
+	// If true, the stage fails when memory is unavailable or context
+	// building fails. If false (default), missing memory is a warning.
 	RequireMemory bool
 
 	// MemoryURL is the Remembrance service URL.
@@ -55,8 +60,14 @@ type RemembranceStage struct {
 	// Default: true. Set false to skip context (capture-only mode).
 	Context bool
 
-	// client is the lazy-initialized Remembrance HTTP client.
+	// client is initialized once in NewRemembranceStage (no lazy init,
+	// avoiding data races from concurrent Execute calls).
 	client *remcli.Client
+
+	// Cached availability state (avoids health check on every Execute).
+	available    bool
+	lastChecked  time.Time
+	availMu      sync.RWMutex
 }
 
 // RemembranceStageOption configures a RemembranceStage.
@@ -73,6 +84,8 @@ func WithContext(context bool) RemembranceStageOption {
 }
 
 // NewRemembranceStage creates a RemembranceStage with the given configuration.
+// The Remembrance client is initialized here (not lazily) to avoid data races
+// from concurrent Execute calls.
 func NewRemembranceStage(memoryEnabled bool, requireMemory bool, memoryURL string, opts ...RemembranceStageOption) *RemembranceStage {
 	s := &RemembranceStage{
 		MemoryEnabled: memoryEnabled,
@@ -80,6 +93,10 @@ func NewRemembranceStage(memoryEnabled bool, requireMemory bool, memoryURL strin
 		MemoryURL:     memoryURL,
 		Capture:       true,
 		Context:        true,
+	}
+	// Initialize client eagerly to avoid data races in getClient()
+	if memoryEnabled && memoryURL != "" {
+		s.client = remcli.NewClient(memoryURL)
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -98,12 +115,26 @@ func (s *RemembranceStage) Validate(rc *RunContext) error {
 	return nil
 }
 
-// getClient returns the lazy-initialized Remembrance client.
-func (s *RemembranceStage) getClient() *remcli.Client {
-	if s.client == nil {
-		s.client = remcli.NewClient(s.MemoryURL)
+// isAvailable checks if Remembrance is reachable, with a 30-second cache
+// to avoid health-checking on every pipeline execution.
+func (s *RemembranceStage) isAvailable() bool {
+	s.availMu.RLock()
+	if time.Since(s.lastChecked) < healthCheckTTL {
+		available := s.available
+		s.availMu.RUnlock()
+		return available
 	}
-	return s.client
+	s.availMu.RUnlock()
+
+	// Cache expired — check availability
+	avail := s.client.IsAvailable()
+
+	s.availMu.Lock()
+	s.available = avail
+	s.lastChecked = time.Now()
+	s.availMu.Unlock()
+
+	return avail
 }
 
 // Execute runs the Remembrance stage.
@@ -123,10 +154,8 @@ func (s *RemembranceStage) Execute(ctx context.Context, rc *RunContext) (*RunCon
 		}, nil
 	}
 
-	client := s.getClient()
-
-	// Check availability first
-	if !client.IsAvailable() {
+	// Check availability (cached for 30s)
+	if !s.isAvailable() {
 		log.Printf("prism: remembrance service unavailable at %s", s.MemoryURL)
 		if s.RequireMemory {
 			return rc, &StageResult{
@@ -147,17 +176,26 @@ func (s *RemembranceStage) Execute(ctx context.Context, rc *RunContext) (*RunCon
 
 	// ── 1. Capture: send agent output to Remembrance ──────────────────
 	if s.Capture && rc.LLMResponse != "" {
-		captureResult := s.captureOutput(client, rc)
+		captureResult := s.captureOutput(rc)
 		result["capture"] = captureResult
 	}
 
 	// ── 2. Context: fetch relevant memories ────────────────────────────
 	if s.Context {
-		contextStr, contextSource, memories, entities := s.buildContext(client, rc)
+		contextStr, contextSource, memories, entities, ctxErr := s.buildContext(rc)
 		result["context"] = contextStr
 		result["source"] = contextSource
 		result["memories_count"] = len(memories)
 		result["entities_count"] = len(entities)
+
+		// If context building failed and memory is required, fail the stage
+		if ctxErr != nil && s.RequireMemory {
+			return rc, &StageResult{
+				StageName: s.Name(),
+				Success:   false,
+				Error:     fmt.Sprintf("remembrance context required but failed: %v", ctxErr),
+			}, nil
+		}
 	}
 
 	return rc, &StageResult{
@@ -170,7 +208,7 @@ func (s *RemembranceStage) Execute(ctx context.Context, rc *RunContext) (*RunCon
 // captureOutput sends the LLM response to Remembrance for processing.
 // Uses (agent + session + turn) as an idempotency key to avoid duplicates
 // when both the NATS subscriber and this stage process the same output.
-func (s *RemembranceStage) captureOutput(client *remcli.Client, rc *RunContext) map[string]any {
+func (s *RemembranceStage) captureOutput(rc *RunContext) map[string]any {
 	content := rc.LLMResponse
 	if content == "" {
 		return map[string]any{"decision": "skip", "reason": "empty output"}
@@ -185,7 +223,7 @@ func (s *RemembranceStage) captureOutput(client *remcli.Client, rc *RunContext) 
 	// Category from project name
 	category := rc.Project
 
-	resp, err := client.Capture(content, source, category, "")
+	resp, err := s.client.Capture(content, source, category, "")
 	if err != nil {
 		log.Printf("prism: remembrance capture failed: %v", err)
 		return map[string]any{"decision": "error", "error": err.Error()}
@@ -199,25 +237,23 @@ func (s *RemembranceStage) captureOutput(client *remcli.Client, rc *RunContext) 
 }
 
 // buildContext fetches relevant memories from Remembrance and formats
-// them for injection into the LLM prompt.
-func (s *RemembranceStage) buildContext(client *remcli.Client, rc *RunContext) (string, string, []map[string]any, []map[string]any) {
+// them for injection into the LLM prompt. Returns an error if context
+// building failed (used by RequireMemory to decide stage outcome).
+func (s *RemembranceStage) buildContext(rc *RunContext) (contextStr string, source string, memories []map[string]any, entities []map[string]any, err error) {
 	// Use the task as the search query
 	query := rc.Task
 	if query == "" {
-		return "", "no_task", nil, nil
+		return "", "no_task", nil, nil, nil
 	}
 
-	ctxResp, err := client.BuildContext(query, rc.Project, rc.Agent, 10)
-	if err != nil {
-		log.Printf("prism: remembrance context failed: %v", err)
-		if s.RequireMemory {
-			return "", "failed", nil, nil
-		}
-		return "", "failed", nil, nil
+	ctxResp, ctxErr := s.client.BuildContext(query, rc.Project, rc.Agent, 10)
+	if ctxErr != nil {
+		log.Printf("prism: remembrance context failed: %v", ctxErr)
+		return "", "failed", nil, nil, ctxErr
 	}
 
 	if ctxResp == nil || len(ctxResp.Memories) == 0 {
-		return "", "empty", nil, nil
+		return "", "empty", nil, nil, nil
 	}
 
 	// Format context string from memories and entities
@@ -225,8 +261,8 @@ func (s *RemembranceStage) buildContext(client *remcli.Client, rc *RunContext) (
 	for _, mem := range ctxResp.Memories {
 		if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
 			contextParts = append(contextParts, ct)
-		} else if s, ok := mem["summary"].(string); ok && s != "" {
-			contextParts = append(contextParts, s)
+		} else if smry, ok := mem["summary"].(string); ok && smry != "" {
+			contextParts = append(contextParts, smry)
 		}
 	}
 	for _, ent := range ctxResp.Entities {
@@ -236,10 +272,10 @@ func (s *RemembranceStage) buildContext(client *remcli.Client, rc *RunContext) (
 		}
 	}
 
-	contextStr := strings.Join(contextParts, "\n\n")
+	contextStr = strings.Join(contextParts, "\n\n")
 	log.Printf("prism: remembrance context built (%d memories, %d entities)", len(ctxResp.Memories), len(ctxResp.Entities))
 
-	return contextStr, "injected", ctxResp.Memories, ctxResp.Entities
+	return contextStr, "injected", ctxResp.Memories, ctxResp.Entities, nil
 }
 
 // Rollback is a no-op — memory operations have no side effects to undo.

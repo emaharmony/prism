@@ -237,10 +237,153 @@ func TestRemembranceStage_EmptyOutput(t *testing.T) {
 	}
 }
 
+func TestRemembranceStage_ContextBuildFails_Required(t *testing.T) {
+	// Server returns 500 on /context/build — memory is required
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+		case "/context/build":
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error": "internal server error"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := NewRemembranceStage(true, true, server.URL, WithCapture(false), WithContext(true))
+
+	rc := &RunContext{Task: "test task", Agent: "lumi", Project: "prism"}
+	_, result, err := s.Execute(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Error("expected failure when RequireMemory=true and context build fails")
+	}
+	if result.Error == "" {
+		t.Error("expected error message in result")
+	}
+}
+
+func TestRemembranceStage_ContextBuildFails_Graceful(t *testing.T) {
+	// Server returns 500 on /context/build — memory is NOT required (graceful)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+		case "/context/build":
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error": "internal server error"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := NewRemembranceStage(true, false, server.URL, WithCapture(false), WithContext(true))
+
+	rc := &RunContext{Task: "test task", Agent: "lumi", Project: "prism"}
+	_, result, err := s.Execute(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected graceful degradation, got failure: %s", result.Error)
+	}
+	if result.Data["source"] != "failed" {
+		t.Errorf("expected source=failed, got %v", result.Data["source"])
+	}
+}
+
+func TestRemembranceStage_HealthCheckCache(t *testing.T) {
+	healthChecks := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			healthChecks++
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+		case "/context/build":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"query":"test","memories":[],"entities":[],"total_results":0}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	s := NewRemembranceStage(true, false, server.URL, WithCapture(false), WithContext(true))
+
+	rc := &RunContext{Task: "test", Agent: "lumi"}
+
+	// First call — health check should fire
+	_, result, err := s.Execute(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected success: %s", result.Error)
+	}
+	firstChecks := healthChecks
+
+	// Second call within 30s — health check should be cached
+	_, result, err = s.Execute(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected success: %s", result.Error)
+	}
+
+	// Health check should NOT have been called again (cached)
+	if healthChecks > firstChecks {
+		t.Errorf("expected cached health check, got %d total checks (was %d)", healthChecks, firstChecks)
+	}
+}
+
 func TestRemembranceStage_Rollback(t *testing.T) {
 	s := NewRemembranceStage(true, false, "http://localhost:8788")
 	err := s.Rollback(context.Background(), &RunContext{})
 	if err != nil {
 		t.Errorf("rollback should be no-op, got: %v", err)
+	}
+}
+
+func TestRemembranceStage_ClientInitializedEagerly(t *testing.T) {
+	// Verify that the client is created in the constructor, not lazily
+	s := NewRemembranceStage(true, false, "http://localhost:8788")
+	if s.client == nil {
+		t.Error("expected client to be initialized in constructor, got nil")
+	}
+}
+
+func TestRemembranceStage_ContextBuildNoTask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /context/build should NOT be called when task is empty
+		if r.URL.Path == "/context/build" {
+			t.Error("context/build should not be called for empty task")
+		}
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ok"}`))
+		}
+	}))
+	defer server.Close()
+
+	s := NewRemembranceStage(true, false, server.URL, WithCapture(false), WithContext(true))
+	rc := &RunContext{Task: ""}
+	_, result, err := s.Execute(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("expected success: %s", result.Error)
+	}
+	if result.Data["source"] != "no_task" {
+		t.Errorf("expected source=no_task, got %v", result.Data["source"])
 	}
 }
