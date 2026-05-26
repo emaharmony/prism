@@ -1,7 +1,7 @@
 # Prism — Task Tracker
 
-**Last Updated:** 2026-05-25
-**Status:** V25 (Visual Workflow Editor) in progress. M6.1-M6.3 complete.
+**Last Updated:** 2026-05-26
+**Status:** V26 (Remembrance Integration) in progress. M6.6 complete, V25 merged.
 
 ---
 
@@ -111,8 +111,8 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Remembrance as Prism service | ⬜ | Subscribe to `*.agent.output`, gate/extract/persist |
-| Context auto-save after every run | ⬜ | Registered action: agent output → Remembrance |
+| Remembrance as Prism service | ✅ | V26: NATS subscriber auto-captures *.agent.output |
+| Context auto-save after every run | ✅ | V26: RemembranceStage captures + builds context |
 | Streaming responses | ⬜ | Token-by-token delivery to Discord |
 | Cron scheduler | ⬜ | `prism.cron.triggered` events |
 | `prism migrate --from-openclaw` | ⬜ | Import channels, agents, cron jobs, sessions |
@@ -146,7 +146,7 @@
 | Dashboard Workflow tab | ✅ | 6-tab dashboard with SVG rendering, diagram type selector |
 | API endpoint | ✅ | GET /api/v1/workflows/{type} and /api/v1/workflows/list |
 
-## Phase 6: Visual Workflow Editor (V25) — 🟡 In Progress
+## Phase 6: Visual Workflow Editor (V25) — ✅ Complete
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -156,6 +156,19 @@
 | Config round-trip test | ✅ | yaml → editor → yaml round-trip verified |
 | Edge drawing + deletion | ✅ | Click-to-connect edges, keyboard delete |
 | Save/write-back to prism.yaml | ⬜ | Write YAML to disk (needs approval gate) |
+
+## Phase 7: Remembrance Integration (V26) — 🟡 In Progress
+
+| Task | Status | Notes |
+|------|--------|-------|
+| NATS subscriber in Remembrance Python | ✅ | nats_sub.py: *.agent.output → auto-capture |
+| Serve command (REST + NATS) | ✅ | serve.py: starts both REST API and NATS subscriber |
+| RemembranceStage: capture + context | ✅ | Enhanced stage with Capture() and BuildContext() |
+| RemembranceStage: unit tests | ✅ | 9 tests covering disabled, graceful, capture, context |
+| Full test suite pass | ✅ | All 54+ packages, 0 failures |
+| E2E test: agent output → memory → context | ⬜ | Integration test with mock Remembrance |
+| Dream cycle trigger (cron + event) | ⬜ | Nightly cron + after-N-PERSIST event |
+| Context caching (60s TTL) | ⬜ | Cache BuildContext results per session |
 
 ---
 
