@@ -126,9 +126,9 @@ func (cc *conversationContext) runToolLoop(
 // callLLMForToolLoop makes an LLM call within the tool loop context.
 func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt string, agentCfg *orchestrator.AgentConfig) (string, error) {
 	// Add tool instructions to the prompt
-	availableTools := cc.toolExec.Registry.List()
-	if len(availableTools) > 0 {
-		prompt += agent.BuildToolPromptSuffix(availableTools)
+	toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+	if len(toolInfos) > 0 {
+		prompt += agent.BuildToolPromptSuffix(toolInfos)
 	}
 
 	// Use the provider from the registry

@@ -2,6 +2,8 @@ package agent
 
 import (
 	"testing"
+
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 func TestParseFinalResponse(t *testing.T) {
@@ -102,7 +104,11 @@ func TestParseToolRequestWithMarkdownFence(t *testing.T) {
 }
 
 func TestBuildToolPromptSuffix(t *testing.T) {
-	suffix := BuildToolPromptSuffix([]string{"echo", "read_file", "list_dir", "write_file_dry_run"})
+	toolInfos := []tool.ToolInfo{
+		{Name: "echo", Description: "Returns the input text unchanged.", Schema: ToolSchemaForTest("echo")},
+		{Name: "read_file", Description: "Reads a text file.", Schema: ToolSchemaForTest("read_file")},
+	}
+	suffix := BuildToolPromptSuffix(toolInfos)
 
 	if suffix == "" {
 		t.Error("tool prompt suffix should not be empty")
@@ -110,11 +116,29 @@ func TestBuildToolPromptSuffix(t *testing.T) {
 	if !containsStr(suffix, "echo") {
 		t.Error("tool prompt suffix should list available tools including echo")
 	}
+	if !containsStr(suffix, "read_file") {
+		t.Error("tool prompt suffix should list available tools including read_file")
+	}
 	if !containsStr(suffix, "tool_request") {
 		t.Error("tool prompt suffix should explain tool_request format")
 	}
 	if !containsStr(suffix, "final") {
 		t.Error("tool prompt suffix should explain final format")
+	}
+}
+
+func ToolSchemaForTest(name string) tool.ToolSchema {
+	switch name {
+	case "echo":
+		return tool.ToolSchema{
+			Input: map[string]tool.ParamSpec{"text": {Type: "string", Description: "The text to echo", Required: true}},
+		}
+	case "read_file":
+		return tool.ToolSchema{
+			Input: map[string]tool.ParamSpec{"path": {Type: "string", Description: "File path", Required: true}},
+		}
+	default:
+		return tool.ToolSchema{}
 	}
 }
 

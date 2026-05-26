@@ -122,7 +122,7 @@ type Client struct {
 
 // NewClient creates a new Remembrance client with default timeout.
 func NewClient(baseURL string) *Client {
-	return NewClientWithTimeout(baseURL, 10*time.Second)
+	return NewClientWithTimeout(baseURL, 30*time.Second)
 }
 
 // NewClientWithTimeout creates a new Remembrance client with custom timeout.

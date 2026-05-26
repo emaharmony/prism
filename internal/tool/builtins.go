@@ -4,6 +4,8 @@
 // Built-in tools (V1): echo, list_dir, read_file — read-only, always allowed.
 // Built-in tools (V4): write_file_dry_run (preview a write), write_file_proposal
 // (propose a file change for human approval). Direct write_file is denied by policy.
+// Built-in tools (V28): read_project — recursively read a project directory.
+// (propose a file change for human approval). Direct write_file is denied by policy.
 //
 // Path safety (V12 — centralized):
 // All path containment checks now use safety.IsWithinRoot from internal/safety.
@@ -486,6 +488,195 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 	}, nil
 }
 
+// ReadProjectTool recursively reads a project directory, returning the contents of
+// all text files within it. It respects .gitignore patterns and skips binary files,
+// large files, and common non-code directories (node_modules, .git, vendor, etc.).
+// This gives an agent a complete view of a codebase in one tool call instead of
+// requiring many list_dir + read_file round-trips.
+//
+// Policy: always allowed (read-only, no modifications).
+type ReadProjectTool struct {
+	WorkspaceRoot string
+	MaxFileSize   int64
+}
+
+func (t *ReadProjectTool) Name() string        { return "read_project" }
+func (t *ReadProjectTool) Description() string {
+	return "Recursively reads a project directory and returns all text file contents. Skips .git, node_modules, vendor, binary files, and large files. Use this to understand a whole project at once."
+}
+func (t *ReadProjectTool) Schema() ToolSchema {
+	return ToolSchema{
+		Input: map[string]ParamSpec{
+			"path":   {Type: "string", Description: "Root path relative to workspace root (use '.' for entire workspace)", Required: true},
+			"max_files": {Type: "integer", Description: "Maximum number of files to read (default 50)", Required: false},
+		},
+		Output: ParamSpec{Type: "object", Description: "Map of file paths to their contents, plus file count and total size"},
+	}
+}
+
+// skipDirs are directories that should always be skipped during project traversal.
+var skipDirs = map[string]bool{
+	".git": true, ".svn": true, ".hg": true,
+	"node_modules": true, "vendor": true, "__pycache__": true,
+	".next": true, ".cache": true, "dist": true, "build": true, "out": true,
+	"bin": true, ".prism": true, "runs": true,
+}
+
+// skipExtensions are file extensions that indicate binary/non-code files.
+var skipExtensions = map[string]bool{
+	".exe": true, ".dll": true, ".so": true, ".dylib": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".ico": true,
+	".mp3": true, ".mp4": true, ".wav": true, ".avi": true, ".mov": true,
+	".zip": true, ".tar": true, ".gz": true, ".rar": true, ".7z": true,
+	".pdf": true, ".doc": true, ".docx": true, ".xls": true, ".xlsx": true,
+	".ppt": true, ".pptx": true,
+	".woff": true, ".woff2": true, ".ttf": true, ".eot": true, ".otf": true,
+	".db": true, ".sqlite": true, ".sqlite3": true,
+	".pem": true, ".key": true, ".crt": true,
+	".wasm": true, ".class": true, ".o": true, ".a": true,
+}
+
+// isTextFile uses a simple heuristic: check extension, then peek at first 512 bytes
+// for null characters (which indicate binary content).
+func isTextFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if skipExtensions[ext] {
+		return false
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	buf := make([]byte, 512)
+	n, err := f.Read(buf)
+	if err != nil && n == 0 {
+		return false
+	}
+
+	// Binary files typically contain null bytes
+	for i := 0; i < n; i++ {
+		if buf[i] == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	pathVal, ok := input["path"].(string)
+	if !ok {
+		return ToolResult{Success: false, Error: "required parameter 'path' must be a string"}, nil
+	}
+
+	maxFiles := 50
+	if mf, ok := input["max_files"].(float64); ok && mf > 0 {
+		maxFiles = int(mf)
+	}
+
+	absPath := filepath.Clean(filepath.Join(t.WorkspaceRoot, pathVal))
+
+	// Security: resolve symlinks and verify containment
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("failed to resolve path: %v", err)}, nil
+	}
+	absRoot, _ := filepath.Abs(t.WorkspaceRoot)
+	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
+	if resolvedRoot == "" {
+		resolvedRoot = absRoot
+	}
+	if !safety.IsWithinRoot(resolvedPath, resolvedRoot) {
+		return ToolResult{Success: false, Error: "path is outside workspace root"}, nil
+	}
+
+	maxSize := t.MaxFileSize
+	if maxSize <= 0 {
+		maxSize = 10 * 1024 * 1024 // 10MB default per file
+	}
+
+	var files []map[string]any
+	var totalSize int
+	var skippedCount int
+
+	err = filepath.Walk(resolvedPath, func(walkPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil // skip errors, keep walking
+		}
+
+		// Skip directories we don't care about
+		if info.IsDir() {
+			if skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Skip binary files by extension
+		ext := strings.ToLower(filepath.Ext(walkPath))
+		if skipExtensions[ext] {
+			skippedCount++
+			return nil
+		}
+
+		// Skip files that are too large
+		if info.Size() > maxSize {
+			skippedCount++
+			return nil
+		}
+
+		// Check if it's a text file
+		if !isTextFile(walkPath) {
+			skippedCount++
+			return nil
+		}
+
+		// Enforce max files limit
+		if len(files) >= maxFiles {
+			return nil // stop adding but don't error
+		}
+
+		data, err := os.ReadFile(walkPath)
+		if err != nil {
+			skippedCount++
+			return nil
+		}
+
+		// Get relative path from workspace root
+		relPath, err := filepath.Rel(resolvedRoot, walkPath)
+		if err != nil {
+			relPath = walkPath
+		}
+
+		files = append(files, map[string]any{
+			"path":    relPath,
+			"content": string(data),
+			"size":    len(data),
+		})
+		totalSize += len(data)
+
+		return nil
+	})
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("walk failed: %v", err)}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Output: map[string]any{
+			"root":          pathVal,
+			"files":         files,
+			"file_count":    len(files),
+			"total_bytes":   totalSize,
+			"skipped_count": skippedCount,
+			"max_files":     maxFiles,
+			"truncated":     skippedCount > 0 || len(files) >= maxFiles,
+		},
+	}, nil
+}
+
 // RegisterBuiltins adds the built-in tools to a registry, using the given
 // workspace root and max file size. Returns the registry for chaining.
 func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int64) *Registry {
@@ -497,6 +688,7 @@ func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int6
 	registry.Register(&ListDirTool{WorkspaceRoot: workspaceRoot})
 	registry.Register(&ReadFileTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize})
 	registry.Register(&WriteFileDryRun{})
+	registry.Register(&ReadProjectTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize})
 
 	return registry
 }

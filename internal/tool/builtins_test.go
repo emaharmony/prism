@@ -222,7 +222,7 @@ func TestRegisterBuiltins(t *testing.T) {
 	RegisterBuiltins(reg, ".", 1024*1024)
 
 	names := reg.List()
-	expectedTools := []string{"echo", "list_dir", "read_file", "write_file_dry_run"}
+	expectedTools := []string{"echo", "list_dir", "read_file", "write_file_dry_run", "read_project"}
 	for _, name := range expectedTools {
 		found := false
 		for _, n := range names {

@@ -529,9 +529,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// Step 7c: Append tool instructions to prompt so the LLM knows it has tools
 	if cc.toolExec != nil {
-		availableTools := cc.toolExec.Registry.List()
-		if len(availableTools) > 0 {
-			prompt += agent.BuildToolPromptSuffix(availableTools)
+		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		if len(toolInfos) > 0 {
+			prompt += agent.BuildToolPromptSuffix(toolInfos)
 		}
 	}
 
