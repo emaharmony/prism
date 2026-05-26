@@ -291,13 +291,16 @@ func executeServe(args []string) {
 				}
 			}
 
-			// V27: Set up tool executor for file system access
+			// V27/V28: Set up tool executor with full tool suite
 		toolReg := tool.NewRegistry()
-		toolReg.Register(&tool.EchoTool{})
-		toolReg.Register(&tool.ListDirTool{WorkspaceRoot: "."})
-		toolReg.Register(&tool.ReadFileTool{WorkspaceRoot: "."})
+		tool.RegisterBuiltins(toolReg, ".", 10*1024*1024) // all read-only + project tools
+		// V28: Git mutation tools (require approval)
+		toolReg.Register(&tool.GitAddTool{WorkspaceRoot: "."})
+		toolReg.Register(&tool.GitCommitTool{WorkspaceRoot: "."})
+		toolReg.Register(&tool.GitPushTool{WorkspaceRoot: "."})
+
 		toolPolicy := tool.DefaultPolicyConfig()
-		// Write operations require approval
+		// Mutation operations require approval
 		toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
 		toolExec := tool.NewExecutor(toolReg, toolPolicy)
 

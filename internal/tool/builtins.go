@@ -690,12 +690,30 @@ func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int6
 	registry.Register(&WriteFileDryRun{})
 	registry.Register(&ReadProjectTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize})
 
+	// V28: Project comprehension tools
+	registry.Register(&SearchFilesTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&ProjectOverviewTool{WorkspaceRoot: workspaceRoot})
+
+	// V28: Git read-only tools
+	registry.Register(&GitStatusTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitLogTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitDiffTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitBranchListTool{WorkspaceRoot: workspaceRoot})
+
 	return registry
 }
 
-// RegisterBuiltinsV4 adds all V3 + V4 tools to the registry.
+// RegisterBuiltinsV4 adds all V3 + V4 + V28 tools to the registry.
+// V4 tools (write_file_proposal) require approval.
+// V28 mutation tools (git_add, git_commit, git_push) require approval.
 func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize int64) *Registry {
 	RegisterBuiltins(registry, workspaceRoot, maxFileSize)
 	registry.Register(&WriteFileProposal{WorkspaceRoot: workspaceRoot})
+
+	// V28: Git mutation tools (requires approval)
+	registry.Register(&GitAddTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitCommitTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitPushTool{WorkspaceRoot: workspaceRoot})
+
 	return registry
 }
