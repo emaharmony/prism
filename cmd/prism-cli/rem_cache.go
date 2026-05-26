@@ -31,17 +31,19 @@ func newRemembranceCache(ttl time.Duration) *remembranceCache {
 }
 
 // Get returns a cached BuildContext result if it exists and hasn't expired.
+// Expired entries are removed on read (lazy cleanup).
 // Returns nil if not found or expired.
 func (c *remembranceCache) Get(key string) *remcli.ContextBuildResponse {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock() // Need write lock to delete expired entries
+	defer c.mu.Unlock()
 
 	entry, ok := c.items[key]
 	if !ok {
 		return nil
 	}
 	if time.Now().After(entry.expiresAt) {
-		return nil // expired
+		delete(c.items, key) // Remove expired entry on read
+		return nil
 	}
 	return entry.resp
 }
