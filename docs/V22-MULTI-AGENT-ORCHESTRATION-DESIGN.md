@@ -1,5 +1,8 @@
 # V22 Multi-Agent Orchestration — Design Document
 
+**Status:** ✅ Complete (merged to main, PR #34)
+**Date:** 2026-05-22
+
 ## Goal
 Lumi delegates to Mango through the event bus. Parallel agents work on separate tasks. Approval works in Discord.
 
