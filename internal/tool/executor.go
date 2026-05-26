@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/emaharmony/prism/internal/policy"
+	"github.com/emaharmony/prism/internal/safety"
 )
 
 // Executor runs a tool through the full lifecycle: policy check → event
@@ -163,8 +164,11 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		"correlation_id": correlationID,
 	})
 
+	// Sanitize tool inputs before execution (command injection prevention)
+	sanitizedInput := safety.SanitizeToolInput(toolName, input)
+
 	// Resolve and execute the tool
-	result, err := e.Registry.Execute(ctx, toolName, input)
+	result, err := e.Registry.Execute(ctx, toolName, sanitizedInput)
 	if err != nil {
 		e.emitEvent("prism.tool.failed", map[string]any{
 			"tool_name":      toolName,
