@@ -90,51 +90,7 @@ func TestConnectionStage_Rollback(t *testing.T) {
 	}
 }
 
-func TestRemembranceStage_Disabled(t *testing.T) {
-	stage := &RemembranceStage{MemoryEnabled: false}
-	rc := &RunContext{RunID: "run_test", Task: "hello"}
-
-	newRC, result, err := stage.Execute(context.Background(), rc)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if !result.Success {
-		t.Errorf("Execute() result.Success = false, want true")
-	}
-	if result.Data["source"] != "disabled" {
-		t.Errorf("expected source=disabled, got %v", result.Data["source"])
-	}
-	// Should not emit events when disabled (the event is only emitted when enabled)
-	// Actually, the current implementation emits one event even when disabled.
-	// Let's just check it doesn't crash.
-	_ = newRC
-}
-
-func TestRemembranceStage_Enabled(t *testing.T) {
-	stage := &RemembranceStage{MemoryEnabled: true, MemoryURL: "http://localhost:8080"}
-	rc := &RunContext{RunID: "run_test", Task: "hello", Agent: "lumi", Project: "prism"}
-
-	newRC, result, err := stage.Execute(context.Background(), rc)
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if !result.Success {
-		t.Errorf("Execute() result.Success = false, want true")
-	}
-	if len(newRC.Events) != 1 {
-		t.Errorf("expected 1 event, got %d", len(newRC.Events))
-	}
-}
-
-func TestRemembranceStage_Validate_MissingURL(t *testing.T) {
-	stage := &RemembranceStage{MemoryEnabled: true, MemoryURL: ""}
-	rc := &RunContext{RunID: "run_test"}
-
-	err := stage.Validate(rc)
-	if err == nil {
-		t.Error("expected validation error for missing memory URL")
-	}
-}
+// RemembranceStage tests moved to remembrance_test.go
 
 func TestLLMStage_Validate(t *testing.T) {
 	stage := &LLMStage{}
