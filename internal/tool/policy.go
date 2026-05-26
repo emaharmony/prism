@@ -87,6 +87,23 @@ func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) Pol
 	case "read_file":
 		return evaluatePathPolicy(cfg, toolName, input)
 
+	case "read_project":
+		return evaluatePathPolicy(cfg, toolName, input)
+
+	case "search_files":
+		return evaluatePathPolicy(cfg, toolName, input)
+
+	case "project_overview":
+		return evaluatePathPolicy(cfg, toolName, input)
+
+	// V28: Git read-only tools — always approved
+	case "git_status", "git_log", "git_diff", "git_branch_list":
+		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is read-only git, always approved", toolName)}
+
+	// V28: Git mutation tools — require approval
+	case "git_add", "git_commit", "git_push":
+		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s is a git mutation, requires approval", toolName)}
+
 	default:
 		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("tool %q is not in the approved list", toolName)}
 	}
