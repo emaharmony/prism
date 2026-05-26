@@ -620,13 +620,13 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				runCtx,
 				prompt,
 				agentCfg,
-				llmProvider,
 				msg.ChannelID,
 				placeholderMsgID,
 			)
 			if toolErr != nil {
 				log.Printf("[TOOL] tool loop failed: %v", toolErr)
-				// Fall through — we'll use whatever response we have
+				// Show a user-facing error instead of raw tool_request JSON
+				finalRC.LLMResponse = "I tried to use a tool to help with that, but something went wrong. Could you rephrase your request?"
 			}
 
 			// Log tool call summaries

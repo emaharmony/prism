@@ -2,46 +2,56 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 // ── Tool Loop Tests ──────────────────────────────────────────────
 
 func TestFormatToolResult(t *testing.T) {
 	tests := []struct {
-		name     string
-		toolName string
-		result   map[string]any
-		want     string
+		name   string
+		result tool.ToolResult
+		want   string
 	}{
 		{
-			name:     "success with output",
-			toolName: "read_file",
-			result:   map[string]any{"output": "file contents here", "success": true},
-			want:     "file contents here",
+			name:   "success with output",
+			result: tool.ToolResult{Output: map[string]any{"output": "file contents here"}, Success: true},
+			want:   "file contents here",
 		},
 		{
-			name:     "error result",
-			toolName: "read_file",
-			result:   map[string]any{"output": "", "success": false, "error": "file not found"},
-			want:     "Error: file not found",
+			name:   "error result",
+			result: tool.ToolResult{Success: false, Error: "file not found"},
+			want:   "Error: file not found",
 		},
 		{
-			name:     "empty output",
-			toolName: "list_dir",
-			result:   map[string]any{"output": "", "success": true},
-			want:     "(tool returned no output)",
+			name:   "empty output",
+			result: tool.ToolResult{Success: true},
+			want:   "(tool returned no output)",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolResult(tt.toolName, tt.result)
+			got := formatToolResult(tt.result)
 			if got != tt.want {
 				t.Errorf("formatToolResult() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatToolResultTruncation(t *testing.T) {
+	result := tool.ToolResult{Output: map[string]any{"output": strings.Repeat("x", 10000)}, Success: true}
+	got := formatToolResult(result)
+	if len(got) > 8100 {
+		t.Errorf("formatToolResult() too long: %d chars", len(got))
+	}
+	if !strings.HasSuffix(got, "... (truncated)") {
+		t.Errorf("formatToolResult() should end with '... (truncated)', got suffix: %q", got[len(got)-20:])
 	}
 }
 
@@ -56,7 +66,7 @@ func TestFormatToolResultPrompt(t *testing.T) {
 }
 
 func TestFormatToolErrorPrompt(t *testing.T) {
-	err := formatToolErrorPrompt("read_file", errNotFound)
+	err := formatToolErrorPrompt("read_file", fmt.Errorf("file not found"))
 	if len(err) == 0 {
 		t.Error("formatToolErrorPrompt should not be empty")
 	}
@@ -64,8 +74,6 @@ func TestFormatToolErrorPrompt(t *testing.T) {
 		t.Errorf("expected prompt to start with 'Tool ', got %q", err[:5])
 	}
 }
-
-var errNotFound = fmt.Errorf("file not found")
 
 func TestFormatApprovalMessage(t *testing.T) {
 	parsed := agent.AgentResponse{
@@ -154,5 +162,11 @@ func TestTruncateStr(t *testing.T) {
 func TestMaxToolIterations(t *testing.T) {
 	if maxToolIterations != 5 {
 		t.Errorf("maxToolIterations = %d, want 5", maxToolIterations)
+	}
+}
+
+func TestToolLoopTimeout(t *testing.T) {
+	if toolLoopTimeout != 2*time.Minute {
+		t.Errorf("toolLoopTimeout = %v, want 2m", toolLoopTimeout)
 	}
 }
