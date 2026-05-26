@@ -465,6 +465,34 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 7: Build the full prompt (session history + workspace context)
 	prompt := cc.buildPrompt(sess, agentCfg)
 
+	// Step 7b: Inject Remembrance context (if available)
+	if cc.remClient != nil {
+		remCtx, remCtxErr := cc.remClient.BuildContext(prompt, "", agentCfg.ID, 5)
+		if remCtxErr != nil {
+			log.Printf("[REMEMBRANCE] context build failed: %v", remCtxErr)
+		} else if remCtx != nil {
+			var memoryParts []string
+			for _, mem := range remCtx.Memories {
+				if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
+					memoryParts = append(memoryParts, ct)
+				} else if s, ok := mem["summary"].(string); ok && s != "" {
+					memoryParts = append(memoryParts, s)
+				}
+			}
+			for _, ent := range remCtx.Entities {
+				if ct, ok := ent["compiled_truth"].(string); ok && ct != "" {
+					name, _ := ent["name"].(string)
+					memoryParts = append(memoryParts, fmt.Sprintf("[%s] %s", name, ct))
+				}
+			}
+			if len(memoryParts) > 0 {
+				memoryBlock := "\n\n---\nRelevant context from memory:\n" + strings.Join(memoryParts, "\n\n") + "\n---\n\n"
+				prompt = memoryBlock + prompt
+				log.Printf("[REMEMBRANCE] injected %d memory sources into prompt", len(remCtx.Memories))
+			}
+		}
+	}
+
 	// Step 8: Set up streaming — create placeholder and StreamCallback
 	var placeholderMsgID string
 	var streamMu sync.Mutex
