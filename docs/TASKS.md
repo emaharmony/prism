@@ -166,7 +166,8 @@
 | RemembranceStage: capture + context | ✅ | Enhanced stage with Capture() and BuildContext() |
 | RemembranceStage: unit tests | ✅ | 9 tests covering disabled, graceful, capture, context |
 | Full test suite pass | ✅ | All 54+ packages, 0 failures |
-| E2E test: agent output → memory → context | ⬜ | Integration test with mock Remembrance |
+| E2E test: agent output → memory → context | ✅ | Integration tests with mock Remembrance (5 tests) |
+| Wire Remembrance context into serve pipeline | ✅ | Step 7b: BuildContext before LLM call |
 | Dream cycle trigger (cron + event) | ⬜ | Nightly cron + after-N-PERSIST event |
 | Context caching (60s TTL) | ⬜ | Cache BuildContext results per session |
 
