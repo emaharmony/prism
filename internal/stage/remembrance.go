@@ -248,7 +248,8 @@ func (s *RemembranceStage) buildContext(rc *RunContext) (contextStr string, sour
 
 	ctxResp, ctxErr := s.client.BuildContext(query, rc.Project, rc.Agent, 10)
 	if ctxErr != nil {
-		log.Printf("prism: remembrance context failed: %v", ctxErr)
+		ctxErr = fmt.Errorf("remembrance context build failed: %w", ctxErr)
+		log.Printf("prism: %v", ctxErr)
 		return "", "failed", nil, nil, ctxErr
 	}
 
