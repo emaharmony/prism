@@ -164,8 +164,8 @@
 | NATS subscriber in Remembrance Python | ✅ | nats_sub.py: *.agent.output → auto-capture |
 | Serve command (REST + NATS) | ✅ | serve.py: starts both REST API and NATS subscriber |
 | RemembranceStage: capture + context | ✅ | Enhanced stage with Capture() and BuildContext() |
-| RemembranceStage: unit tests | ✅ | 9 tests covering disabled, graceful, capture, context |
-| Full test suite pass | ✅ | All 54+ packages, 0 failures |
+| RemembranceStage: unit tests | ✅ | 14 tests covering all paths + health cache |
+| Full test suite pass | ✅ | 54 packages, 0 failures |
 | E2E test: agent output → memory → context | ✅ | Integration tests with mock Remembrance (5 tests) |
 | Wire Remembrance context into serve pipeline | ✅ | Step 7b: BuildContext before LLM call |
 | Dream cycle trigger (cron + event) | ⬜ | Nightly cron + after-N-PERSIST event |
