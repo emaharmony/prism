@@ -527,6 +527,14 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+	// Step 7c: Append tool instructions to prompt so the LLM knows it has tools
+	if cc.toolExec != nil {
+		availableTools := cc.toolExec.Registry.List()
+		if len(availableTools) > 0 {
+			prompt += agent.BuildToolPromptSuffix(availableTools)
+		}
+	}
+
 	// Step 8: Set up streaming — create placeholder and StreamCallback
 	var placeholderMsgID string
 	var streamMu sync.Mutex
