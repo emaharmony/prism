@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -12,6 +14,7 @@ import (
 )
 
 const maxToolIterations = 5
+const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.
 //
@@ -19,20 +22,24 @@ const maxToolIterations = 5
 // If so, it executes the tool, feeds the result back as a new prompt, and
 // calls the LLM again. This repeats until:
 //   - The LLM gives a final text response (no tool request)
-//   - The maximum iteration count is reached
+//   - The maximum iteration count is reached (returns a fallback message)
 //   - A tool requires approval (pauses for human review)
-//   - An error occurs
+//   - An error occurs (returns a user-facing error message)
 //
 // The final text response is returned. Tool call summaries are logged
 // and stored in the session for context continuity.
 func (cc *conversationContext) runToolLoop(
-	runCtx context.Context,
+	parentCtx context.Context,
 	prompt string,
 	agentCfg *orchestrator.AgentConfig,
-	llmProvider interface{},
 	channelID string,
 	placeholderMsgID string,
 ) (string, []toolCallSummary, error) {
+	// Create a fresh context with its own timeout for the tool loop.
+	// This avoids sharing the 60s pipeline timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), toolLoopTimeout)
+	defer cancel()
+
 	var summaries []toolCallSummary
 	currentPrompt := prompt
 
@@ -40,9 +47,9 @@ func (cc *conversationContext) runToolLoop(
 		log.Printf("[TOOL] iteration %d/%d", i+1, maxToolIterations)
 
 		// Call the LLM with the current prompt
-		responseText, err := cc.callLLMForToolLoop(runCtx, currentPrompt, agentCfg)
+		responseText, err := cc.callLLMForToolLoop(ctx, currentPrompt, agentCfg)
 		if err != nil {
-			return "", summaries, err
+			return "", summaries, fmt.Errorf("LLM call failed in tool loop iteration %d: %w", i+1, err)
 		}
 
 		// Parse the response — is it a tool request or a final response?
@@ -58,7 +65,7 @@ func (cc *conversationContext) runToolLoop(
 			log.Printf("[TOOL] iteration %d: agent requests tool %q", i+1, parsed.ToolName)
 
 			// Execute the tool
-			toolResult, approvalNeeded, err := cc.executeTool(runCtx, parsed, agentCfg)
+			toolResult, approvalNeeded, err := cc.executeTool(ctx, parsed, agentCfg)
 			if err != nil {
 				log.Printf("[TOOL] tool %q failed: %v", parsed.ToolName, err)
 				// Feed the error back to the LLM so it can try a different approach
@@ -84,7 +91,7 @@ func (cc *conversationContext) runToolLoop(
 				return formatApprovalMessage(parsed), summaries, nil
 			}
 
-			resultStr := formatToolResult(parsed.ToolName, toolResult)
+			resultStr := formatToolResult(toolResult)
 			summary.Status = "success"
 			summary.Result = resultStr
 			summaries = append(summaries, summary)
@@ -100,9 +107,20 @@ func (cc *conversationContext) runToolLoop(
 		return responseText, summaries, nil
 	}
 
-	// Max iterations reached — return whatever we have
-	log.Printf("[TOOL] max iterations (%d) reached, returning last response", maxToolIterations)
-	return "", summaries, nil
+	// Max iterations reached — return a user-facing fallback message
+	log.Printf("[TOOL] max iterations (%d) reached, returning fallback message", maxToolIterations)
+	fallback := fmt.Sprintf("I used %d tool calls but wasn't able to reach a final conclusion. Here's what I found:", maxToolIterations)
+	for _, ts := range summaries {
+		fallback += fmt.Sprintf("\n- %s: %s", ts.Tool, ts.Status)
+		if ts.Result != "" {
+			fallback += fmt.Sprintf(" (%s)", truncateStr(ts.Result, 200))
+		}
+		if ts.Error != "" {
+			fallback += fmt.Sprintf(" — error: %s", ts.Error)
+		}
+	}
+	fallback += "\n\nCould you rephrase your request so I can help more directly?"
+	return fallback, summaries, nil
 }
 
 // callLLMForToolLoop makes an LLM call within the tool loop context.
@@ -133,34 +151,30 @@ func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt st
 	return resp.Text, nil
 }
 
-// executeTool runs a tool with policy checks and returns the result.
-func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.AgentResponse, agentCfg *orchestrator.AgentConfig) (map[string]any, bool, error) {
+// executeTool runs a tool with policy checks and returns the typed result.
+func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.AgentResponse, agentCfg *orchestrator.AgentConfig) (tool.ToolResult, bool, error) {
 	if cc.toolExec == nil {
-		return nil, false, fmt.Errorf("tool execution not available")
+		return tool.ToolResult{}, false, fmt.Errorf("tool execution not available")
 	}
 
 	// Check policy
 	policyResult := tool.EvaluatePolicy(cc.toolPolicy, parsed.ToolName, parsed.ToolInput)
 
 	if policyResult.Decision == tool.PolicyDenied {
-		return nil, false, fmt.Errorf("tool %q denied by policy: %s", parsed.ToolName, policyResult.Reason)
+		return tool.ToolResult{}, false, fmt.Errorf("tool %q denied by policy: %s", parsed.ToolName, policyResult.Reason)
 	}
 
 	if policyResult.Decision == tool.PolicyRequiresApproval {
-		return nil, true, nil // approval needed
+		return tool.ToolResult{}, true, nil // approval needed
 	}
 
 	// Execute the tool
 	result, err := cc.toolExec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "", "", parsed.ToolInput)
 	if err != nil {
-		return nil, false, err
+		return tool.ToolResult{}, false, err
 	}
 
-	return map[string]any{
-		"output":  result.Output,
-		"success": result.Success,
-		"error":   result.Error,
-	}, false, nil
+	return result, false, nil
 }
 
 // toolCallSummary records a single tool call in the loop.
@@ -172,22 +186,29 @@ type toolCallSummary struct {
 	Error  string         `json:"error,omitempty"`
 }
 
-// formatToolResult formats a tool result for inclusion in the LLM prompt.
-func formatToolResult(toolName string, result map[string]any) string {
-	output, _ := result["output"].(string)
-	success, _ := result["success"].(bool)
-	errStr, _ := result["error"].(string)
-
-	if !success && errStr != "" {
-		return fmt.Sprintf("Error: %s", errStr)
+// formatToolResult formats a typed ToolResult for inclusion in the LLM prompt.
+func formatToolResult(result tool.ToolResult) string {
+	if !result.Success && result.Error != "" {
+		return fmt.Sprintf("Error: %s", result.Error)
 	}
-	if output == "" {
+	// Extract text output from the map
+	outputStr := ""
+	if result.Output != nil {
+		if text, ok := result.Output["output"].(string); ok {
+			outputStr = text
+		} else {
+			// Fallback: JSON-encode the whole output
+			data, _ := json.Marshal(result.Output)
+			outputStr = string(data)
+		}
+	}
+	if outputStr == "" {
 		return "(tool returned no output)"
 	}
-	if len(output) > 8000 {
-		return output[:8000] + "\n... (truncated)"
+	if len(outputStr) > 8000 {
+		return outputStr[:8000] + "\n... (truncated)"
 	}
-	return output
+	return outputStr
 }
 
 // formatToolResultPrompt creates the prompt to feed back to the LLM after a tool succeeds.
