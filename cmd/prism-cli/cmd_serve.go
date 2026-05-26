@@ -33,6 +33,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -91,6 +92,7 @@ type conversationContext struct {
 	actionReg   *action.Registry     // V21: action registry for event-triggered actions
 	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
 	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
+	remCache    *remembranceCache     // V26: TTL cache for BuildContext results
 	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
 	taskStore   *task.Store           // V22: Task store for delegation tracking
 }
@@ -113,6 +115,7 @@ func executeServe(args []string) {
 		taskStore   *task.Store
 		delegEngine *delegation.Engine
 		orch        *orchestrator.Orchestrator
+		remClient   *remembrance.Client
 	)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -247,7 +250,6 @@ func executeServe(args []string) {
 			}
 
 			// V21: Create Remembrance client if enabled
-			var remClient *remembrance.Client
 			if cfg.Remembrance.Enabled {
 				remClient = remembrance.NewClient(cfg.Remembrance.URL)
 				if remClient.IsAvailable() {
@@ -301,6 +303,7 @@ func executeServe(args []string) {
 				actionReg:   actionReg,
 				remClient:   remClient,
 				remSem:      make(chan struct{}, 4),
+				remCache:    newRemembranceCache(60 * time.Second),
 				delegEngine: delegEngine,
 				taskStore:   taskStore,
 			}
@@ -359,7 +362,12 @@ func executeServe(args []string) {
 	fmt.Println()
 	fmt.Println("🔮 Prism is running. Press Ctrl+C to stop.")
 
-	// 11. Wait for shutdown signal
+	// 11. Start dream cycle scheduler (3AM nightly + event-triggered)
+	if remClient != nil {
+		go startDreamScheduler(remClient)
+	}
+
+	// 12. Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -464,6 +472,45 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// Step 7: Build the full prompt (session history + workspace context)
 	prompt := cc.buildPrompt(sess, agentCfg)
+
+	// Step 7b: Inject Remembrance context (if available, with 60s TTL cache)
+	// NOTE: This uses the same remembrance.Client as RemembranceStage but applies
+	// session-aware caching and prompt injection that the generic stage can't do.
+	// RemembranceStage is the reusable pipeline component; this is the runtime integration.
+	if cc.remClient != nil {
+		cacheKey := fmt.Sprintf("%s:%s", agentCfg.ID, sess.ID)
+		remCtx := cc.remCache.Get(cacheKey)
+		if remCtx == nil {
+			var remCtxErr error
+			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, 5)
+			if remCtxErr != nil {
+				log.Printf("[REMEMBRANCE] context build failed: %v", remCtxErr)
+			} else if remCtx != nil {
+				cc.remCache.Set(cacheKey, remCtx)
+			}
+		}
+		if remCtx != nil {
+			var memoryParts []string
+			for _, mem := range remCtx.Memories {
+				if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
+					memoryParts = append(memoryParts, ct)
+				} else if s, ok := mem["summary"].(string); ok && s != "" {
+					memoryParts = append(memoryParts, s)
+				}
+			}
+			for _, ent := range remCtx.Entities {
+				if ct, ok := ent["compiled_truth"].(string); ok && ct != "" {
+					name, _ := ent["name"].(string)
+					memoryParts = append(memoryParts, fmt.Sprintf("[%s] %s", name, ct))
+				}
+			}
+			if len(memoryParts) > 0 {
+				memoryBlock := "\n\n---\nRelevant context from memory:\n" + strings.Join(memoryParts, "\n\n") + "\n---\n\n"
+				prompt = memoryBlock + prompt
+				log.Printf("[REMEMBRANCE] injected %d memory sources into prompt", len(remCtx.Memories))
+			}
+		}
+	}
 
 	// Step 8: Set up streaming — create placeholder and StreamCallback
 	var placeholderMsgID string
@@ -614,20 +661,19 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		captureAgentID := finalRC.Agent
 		captureRunID := run.ID
 		captureText := responseText
-		captureCtx, captureCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 30*time.Second)
+		captureSource := fmt.Sprintf("prism:%s", captureAgentID)
 
 		// Acquire semaphore slot (non-blocking — skip if at capacity)
 		select {
 		case cc.remSem <- struct{}{}:
 			go func() {
-				defer captureCancel()
 				defer func() { <-cc.remSem }() // Release semaphore slot
 
 				result, err := cc.remClient.Capture(
 					captureText,
-					captureAgentID,
+					captureSource,
 					"conversation",
-					"working",
+					"",
 				)
 				if err != nil {
 					log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
@@ -635,15 +681,22 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				}
 				if decision, ok := result["decision"]; ok {
 					log.Printf("[REMEMBRANCE] run %s: decision=%v, captured", captureRunID, decision)
+					// Track PERSIST captures for dream cycle event trigger
+					if decision == "PERSIST" || decision == "persist" {
+						atomic.AddInt64(&dreamPersistCount, 1)
+					}
 				} else {
 					log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
 				}
 
-				_ = captureCtx
+				// Invalidate context cache for this session so next turn gets fresh context
+				if cc.remCache != nil {
+					cacheKey := fmt.Sprintf("%s:%s", captureAgentID, sess.ID)
+					cc.remCache.Invalidate(cacheKey)
+				}
 			}()
 		default:
 			// At capacity — skip this capture
-			captureCancel()
 			log.Printf("[REMEMBRANCE] skipped capture (run %s): concurrency limit reached", run.ID)
 		}
 	}
