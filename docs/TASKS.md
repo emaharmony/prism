@@ -157,7 +157,7 @@
 | Edge drawing + deletion | ✅ | Click-to-connect edges, keyboard delete |
 | Save/write-back to prism.yaml | ⬜ | Write YAML to disk (needs approval gate) |
 
-## Phase 7: Remembrance Integration (V26) — 🟡 In Progress
+## Phase 7: Remembrance Integration (V26) — ✅ Complete
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -168,8 +168,8 @@
 | Full test suite pass | ✅ | 54 packages, 0 failures |
 | E2E test: agent output → memory → context | ✅ | Integration tests with mock Remembrance (5 tests) |
 | Wire Remembrance context into serve pipeline | ✅ | Step 7b: BuildContext before LLM call |
-| Dream cycle trigger (cron + event) | ⬜ | Nightly cron + after-N-PERSIST event |
-| Context caching (60s TTL) | ⬜ | Cache BuildContext results per session |
+| Dream cycle trigger (cron + event) | ✅ | Nightly 3AM + after 10 PERSIST captures |
+| Context caching (60s TTL) | ✅ | remembranceCache with RWMutex, cache invalidated on capture |
 
 ---
 
