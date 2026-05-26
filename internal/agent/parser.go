@@ -4,7 +4,10 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 // AgentResponseType distinguishes between a final text response and a tool request.
@@ -101,18 +104,31 @@ func extractJSON(text string) string {
 // BuildToolPromptSuffix appends tool instructions to a prompt, telling the
 // model to return JSON with either a "final" or "tool_request" shape.
 // V4: Includes approval-gated mutation instructions.
-func BuildToolPromptSuffix(availableTools []string) string {
+// V28: Includes tool descriptions and parameter schemas so the model knows how to call them.
+func BuildToolPromptSuffix(toolInfos []tool.ToolInfo) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Tool Instructions\n")
-	sb.WriteString("You have access to the following tools: ")
-	for i, t := range availableTools {
-		if i > 0 {
-			sb.WriteString(", ")
+	sb.WriteString("You have access to the following tools:\n\n")
+	for _, ti := range toolInfos {
+		sb.WriteString(fmt.Sprintf("- **%s**: %s", ti.Name, ti.Description))
+		if len(ti.Schema.Input) > 0 {
+			sb.WriteString(" Parameters: ")
+			first := true
+			for pname, spec := range ti.Schema.Input {
+				if !first {
+					sb.WriteString(", ")
+				}
+				first = false
+				req := ""
+				if spec.Required {
+					req = " (required)"
+				}
+				sb.WriteString(fmt.Sprintf("%s: %s%s", pname, spec.Type, req))
+			}
 		}
-		sb.WriteString(t)
+		sb.WriteString("\n")
 	}
-	sb.WriteString("\n\n")
-	sb.WriteString("Respond with JSON in one of these shapes:\n")
+	sb.WriteString("\nRespond with JSON in one of these shapes:\n")
 	sb.WriteString("- Final response: {\"type\": \"final\", \"content\": \"your text here\"}\n")
 	sb.WriteString("- Tool request: {\"type\": \"tool_request\", \"tool\": \"tool_name\", \"input\": {\"key\": \"value\"}}\n")
 	sb.WriteString("\nYou may make at most ONE tool request per response. If you need multiple tool calls, respond with the first one and the system will provide results.\n")

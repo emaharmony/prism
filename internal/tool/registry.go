@@ -45,6 +45,30 @@ func (r *Registry) List() []string {
 	return names
 }
 
+// ListWithDescriptions returns tool names with their descriptions, useful for
+// building LLM prompts that tell the model what each tool does.
+func (r *Registry) ListWithDescriptions() []ToolInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	infos := make([]ToolInfo, 0, len(r.tools))
+	for _, t := range r.tools {
+		infos = append(infos, ToolInfo{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Schema:      t.Schema(),
+		})
+	}
+	return infos
+}
+
+// ToolInfo holds tool metadata for prompts and documentation.
+type ToolInfo struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Schema      ToolSchema `json:"schema"`
+}
+
 // Resolve returns a tool by name. Returns an error if the tool is not found.
 func (r *Registry) Resolve(name string) (Tool, error) {
 	r.mu.RLock()
