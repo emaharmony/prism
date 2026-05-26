@@ -654,13 +654,25 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	for stageName, stageResult := range finalRC.Results {
 		if stageResult != nil && !stageResult.Success {
 			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, stageResult.Error)
-			switch stageName {
-			case "routing":
-				cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
-			case "llm":
-				cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
-			default:
-				cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
+			// Clean up placeholder before sending error
+			if placeholderMsgID != "" {
+				errMsg := "Something went wrong processing your message. Please try again."
+				switch stageName {
+				case "routing":
+					errMsg = "I'm not configured properly. Please contact the administrator."
+				case "llm":
+					errMsg = "I'm having trouble thinking right now. Please try again in a moment."
+				}
+				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ "+errMsg)
+			} else {
+				switch stageName {
+				case "routing":
+					cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+				case "llm":
+					cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+				default:
+					cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
+				}
 			}
 			return
 		}
@@ -669,8 +681,41 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 10: Post-pipeline — handle response delivery and session save
 	responseText := finalRC.LLMResponse
 
-	// If we got a response but no streaming placeholder, send it directly
-	if placeholderMsgID == "" && responseText != "" {
+	// Deliver the response to Discord
+	if placeholderMsgID != "" {
+		streamMu.Lock()
+		if responseText != "" {
+			// Edit the placeholder with the final response
+			// (sync path: placeholder still shows "✧ ..."; streaming path: may already be up to date)
+			if accumulatedText != responseText {
+				content := responseText
+				if len(content) > 2000 {
+					runes := []rune(content)
+					for len(runes) > 1 && len(string(runes))+3 > 2000 {
+						runes = runes[:len(runes)-1]
+					}
+					content = string(runes) + "..."
+				}
+				if err := cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, content); err != nil {
+					log.Printf("[ERROR] failed to edit placeholder (run %s): %v", run.ID, err)
+					// Fallback: send as new message so the user still gets the response
+					if sendErr := cc.bot.Send(&discordbot.OutboundMessage{
+						ChannelID: msg.ChannelID,
+						Content:   content,
+					}); sendErr != nil {
+						log.Printf("[ERROR] fallback send also failed (run %s): %v", run.ID, sendErr)
+					}
+				}
+			}
+		} else {
+			// Empty response — clean up the placeholder so "✧ ..." doesn't linger
+			if err := cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ No response generated."); err != nil {
+				log.Printf("[WARN] failed to clean up placeholder on empty response (run %s): %v", run.ID, err)
+			}
+		}
+		streamMu.Unlock()
+	} else if responseText != "" {
+		// No placeholder — send as new message
 		err := cc.bot.Send(&discordbot.OutboundMessage{
 			ChannelID: msg.ChannelID,
 			Content:   responseText,
