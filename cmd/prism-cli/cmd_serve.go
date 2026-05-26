@@ -474,6 +474,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	prompt := cc.buildPrompt(sess, agentCfg)
 
 	// Step 7b: Inject Remembrance context (if available, with 60s TTL cache)
+	// NOTE: This uses the same remembrance.Client as RemembranceStage but applies
+	// session-aware caching and prompt injection that the generic stage can't do.
+	// RemembranceStage is the reusable pipeline component; this is the runtime integration.
 	if cc.remClient != nil {
 		cacheKey := fmt.Sprintf("%s:%s", agentCfg.ID, sess.ID)
 		remCtx := cc.remCache.Get(cacheKey)
@@ -658,20 +661,19 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		captureAgentID := finalRC.Agent
 		captureRunID := run.ID
 		captureText := responseText
-		captureCtx, captureCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 30*time.Second)
+		captureSource := fmt.Sprintf("prism:%s", captureAgentID)
 
 		// Acquire semaphore slot (non-blocking — skip if at capacity)
 		select {
 		case cc.remSem <- struct{}{}:
 			go func() {
-				defer captureCancel()
 				defer func() { <-cc.remSem }() // Release semaphore slot
 
 				result, err := cc.remClient.Capture(
 					captureText,
-					captureAgentID,
+					captureSource,
 					"conversation",
-					"working",
+					"",
 				)
 				if err != nil {
 					log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
@@ -687,8 +689,6 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 					log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
 				}
 
-				_ = captureCtx
-
 				// Invalidate context cache for this session so next turn gets fresh context
 				if cc.remCache != nil {
 					cacheKey := fmt.Sprintf("%s:%s", captureAgentID, sess.ID)
@@ -697,7 +697,6 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			}()
 		default:
 			// At capacity — skip this capture
-			captureCancel()
 			log.Printf("[REMEMBRANCE] skipped capture (run %s): concurrency limit reached", run.ID)
 		}
 	}

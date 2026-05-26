@@ -38,6 +38,11 @@ const healthCheckTTL = 30 * time.Second
 //   - Capture: sends agent output to Remembrance for processing
 //   - Context: fetches relevant memories before LLM calls
 //
+// This stage is the reusable pipeline component. The `prism serve` runtime
+// uses the same client but adds session-aware caching and prompt injection
+// that this generic stage can't provide. Both codepaths use the same source
+// format: "prism:<agent_id>".
+//
 // If memory is disabled or unavailable, the pipeline continues without
 // memory context (graceful degradation).
 type RemembranceStage struct {
