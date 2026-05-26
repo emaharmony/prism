@@ -1,291 +1,265 @@
-# Prism Onboarding Guide
+# Prism — Developer Onboarding
 
-> **For people who don't know Go.** This guide explains what Prism is, how it works, and how to read the code — even if you've never written a line of Go.
-
-## What Is Prism?
-
-Prism is an **event-native AI agent framework**. Instead of hiding AI work inside prompt chains, Prism turns every meaningful step into an **event** — a structured record that can be observed, replayed, audited, and extended.
-
-Think of it like a flight data recorder for AI workflows. Every time something happens (a task starts, an LLM is called, a file is proposed, a validation runs), Prism writes it down as an event with a unique ID, a timestamp, and a link back to what caused it.
-
-## The Big Picture
-
-```
-You type a command        Prism orchestrates          Events flow
-─────────────────►        ─────────────────►          ──────────►
-                                                                 
-  prism run --task "..."   1. Connect to NATS         Every step
-                          2. Build a prompt            becomes an
-                          3. Call the LLM              event with
-                          4. Execute tools             a unique ID
-                          5. Write results             and parent
-                          6. Run validation (V5)       chain
-                          7. Generate review (V5)
-                          8. Save everything to disk
-```
-
-## Core Concepts
-
-### Events
-
-An **event** is a JSON record of something that happened. Every event has:
-
-| Field | What it means | Example |
-|-------|---------------|---------|
-| `id` | Unique identifier (ULID — sorted by time) | `evt_01KRC7AQXH2W66WNXM07` |
-| `type` | What happened, dot-namespaced | `prism.task.created` |
-| `source` | Which component emitted it | `prism-cli` |
-| `timestamp` | When it happened (UTC, nanosecond precision) | `2026-05-11T15:13:25.123456789Z` |
-| `correlation_id` | Groups all events in one run | `corr_01KRC7AQXBM1Y5ZY0QEBG56JTC` |
-| `parent_id` | Direct causal predecessor | `evt_01KRC7AQT3WNFK0PV7` |
-| `payload` | The actual data | `{"task": "fix the bug", "project": "prism"}` |
-
-The **parent chain** is the key insight. If event B was caused by event A, then B's `parent_id` = A's `id`. You can trace any event back to the original task that started it.
-
-### NATS JetStream
-
-NATS is the **event bus** — a message broker that routes events between components. JetStream adds persistence (events are saved, not just forwarded).
-
-Prism uses it as the central nervous system. Every event gets published to a NATS stream called `PRISM`, and any component can subscribe to events it cares about.
-
-You don't need to understand NATS to read the code. Just know:
-- `r.js.Publish(subject, data)` = send an event
-- `r.js.AddStream(...)` = create the event storage
-- If NATS isn't running, events are logged but not published (graceful degradation)
-
-### Runs
-
-A **run** is one complete execution of a task. Every run gets its own directory under `runs/`:
-
-```text
-runs/
-└── run_01KRC7AQXBM1Y5ZY0QEBG56JTC/   ← One directory per run
-    ├── events.jsonl        ← All events, one JSON per line
-    ├── summary.json        ← Run status, event counts, version info
-    ├── output.md           ← What the LLM wrote
-    ├── approvals/          ← V4: Approval requests and decisions
-    │   └── appr_01KR...json
-    ├── validation/         ← V5: Validation results (inside the run directory)
-    │   ├── go_test_all.json
-    │   ├── go_test_all.stdout.txt
-    │   └── go_test_all.stderr.txt
-    └── review.md           ← V5: Review artifact (inside the run directory)
-```
-
-### Versions (V1 → V5)
-
-Prism grew incrementally. Each version adds one capability:
-
-| Version | What it added | Key idea |
-|---------|---------------|----------|
-| **V1** | Task lifecycle + events | Every step is an event |
-| **V2** | Real LLM execution | The model actually runs |
-| **V3** | Tool execution | The model can use tools (read files, list dirs) |
-| **V4** | Approval-gated mutations | Model proposes, human approves file writes |
-| **V5** | Validation + review | After mutation, run tests and generate review |
-
-All versions coexist. The code doesn't branch by version — V5 code lives alongside V1 code.
-
-## Project Structure
-
-```
-prism/
-├── cmd/
-│   ├── prism-cli/        ← The CLI you run (`prism run`, `prism approval list`, etc.)
-│   ├── prism-bus/        ← Standalone NATS JetStream server
-│   └── prism-agent/      ← Agent runtime (subscribes to events, processes them)
-│
-├── internal/             ← All core logic (Go convention: "internal" = not importable by outsiders)
-│   ├── event/            ← The event schema — Event struct, IDs, summaries, event types
-│   ├── run/              ← The Runner — orchestrates the entire lifecycle
-│   ├── provider/         ← LLM providers (Ollama, Mock for testing)
-│   ├── agent/            ← Placeholder agent (V1/V2 deterministic output)
-│   ├── prompt/           ← Prompt builder (assembles prompt.md from template)
-│   ├── tool/             ← Tool registry, policy engine, built-in tools
-│   ├── approval/         ← V4: Approval model, state machine, file-based store
-│   ├── mutation/         ← V4: Safe file writer after approval is granted
-│   ├── validation/       ← V5: Validation profiles, executor, safety checks
-│   ├── review/           ← V5: Deterministic reviewer, review artifact
-│   └── remembrance/      ← Memory/context hook (HTTP client to memory system)
-│
-├── sdk/
-│   └── prism/            ← Python SDK (PrismClient, Event class, tool helpers)
-│
-├── runs/                 ← Run outputs (gitignored, created at runtime)
-└── docs/
-    ├── DESIGN.md         ← Architecture design document
-    └── ONBOARDING.md     ← This file!
-```
-
-## The Run Lifecycle (Step by Step)
-
-When you type `prism run --task "fix the bug" --project prism`, here's what happens:
-
-### Phase 1: Setup
-1. **Connect to NATS** — The Runner opens a connection to the NATS server and creates the `PRISM` stream
-2. **Create the run** — A new run ID is generated (`run_<ulid>`), a directory is created
-
-### Phase 2: Context
-3. **Inject memory context** (optional) — The Runner calls the Remembrance service to get relevant memories for the task. If it fails, the run continues without memory (graceful fallback)
-4. **Build the prompt** — The prompt builder assembles `prompt.md` from a template, injecting the task, project, and any memory context
-
-### Phase 3: Execution
-5. **Call the LLM** — The configured provider (Ollama, mock, etc.) generates a response from the prompt
-6. **Save the output** — The LLM's response is written to `output.md`
-
-### Phase 4: Tool Execution (V3+)
-7. **Parse tool requests** — If the LLM's output contains a JSON tool request (type, tool, input), the Runner parses it
-8. **Evaluate policy** — The policy engine checks if the tool is allowed and what level of approval it needs
-9. **Execute the tool** — If allowed, the tool runs and the result is recorded
-
-### Phase 5: Approval (V4+)
-10. **Handle proposals** — If the tool was `write_file_proposal`, the Runner creates an approval request (pending state) and saves it to `approvals/<approval_id>.json`. The file is NOT written yet.
-11. **Wait for human** — The run ends in `pending_approval` status. A human operator reviews the proposal and uses `prism approval approve` or `prism approval deny`.
-
-### Phase 6: Validation + Review (V5+)
-12. **Apply mutation** — When approved, the mutation executor writes the file safely (path traversal check, workspace containment)
-13. **Run validation** — If `--validate` was passed, each allowlisted validation profile (e.g., `go_test_all`) is executed with a timeout
-14. **Generate review** — A deterministic reviewer examines the mutation + validation results and writes `review.md` with a recommendation
-
-### Phase 7: Persistence
-15. **Save everything** — Events are appended to `events.jsonl`, summary is updated in `summary.json`
-
-## Go Concepts You'll See
-
-If you're new to Go, here's a cheat sheet for patterns used in Prism:
-
-### `package internal`
-Go's `internal/` directory is special — code inside it can only be imported by code in the same parent directory. This is Go's way of saying "these are implementation details, not a public API."
-
-### `func (r *Runner) Method()`
-This is a **method** on the `Runner` struct (like `this.method()` in other languages). The `r` is the receiver — it's how the function accesses the Runner's data.
-
-### `if err != nil { return err }`
-Go doesn't have exceptions. Functions return both a result and an error. You'll see this pattern everywhere — it means "if something went wrong, stop and report the error up the chain."
-
-### `defer`
-`defer` runs a statement when the function exits, no matter how it exits (normal return, error return, panic). Used for cleanup like closing files or connections.
-
-### `context.Context`
-`context` is Go's way of passing deadlines, cancellation signals, and request-scoped values through a call chain. When you see `ctx context.Context`, think "this operation can be cancelled or timed out."
-
-### `json.Marshal` / `json.Unmarshal`
-Convert Go structs to/from JSON. Struct tags like `` `json:"run_id"` `` control the JSON field names.
-
-### `_ = someValue`
-The blank identifier — "I don't care about this value." Used when a function returns something you don't need.
-
-### `interface{}`
-The "any" type — can hold any value. Modern Go uses `any` as an alias. You'll see both in the codebase.
-
-## Key Files to Read First
-
-If you want to understand Prism by reading code, start here in order:
-
-1. **`internal/event/event.go`** — The event schema. This is the foundation everything else builds on.
-2. **`internal/run/runner.go`** — The orchestrator. This is the biggest file and the most important. It connects everything.
-3. **`internal/tool/policy.go`** — The safety model. This decides what tools are allowed and what needs approval.
-4. **`internal/approval/approval.go`** — The approval state machine. Simple and well-isolated.
-5. **`internal/mutation/executor.go`** — How file writes happen safely after approval.
-6. **`internal/validation/executor.go`** — How validation commands run safely.
-7. **`internal/review/review.go`** — How reviews are generated deterministically.
-
-## Glossary
-
-| Term | Meaning |
-|------|---------|
-| **ULID** | Universally Unique Lexicographically Sortable Identifier — like UUID but sortable by time. All Prism IDs use ULIDs. |
-| **NATS** | High-performance messaging system. Prism uses it as the event bus. |
-| **JetStream** | NATS persistence layer. Stores events durably instead of just forwarding them. |
-| **correlation_id** | Shared by all events in one run. Links them together like a thread. |
-| **parent_id** | Points to the direct cause of an event. Forms a causal chain. |
-| **provider** | An LLM backend (Ollama, OpenAI, mock). The `Provider` interface defines how Prism talks to any LLM. |
-| **policy** | Rules about what tools can do. `allowed` = run it, `requires_approval` = ask a human first, `denied` = block it. |
-| **mutation** | A file write operation. "Mutation" because it changes the filesystem. |
-| **validation profile** | A named, allowlisted command that can run after a mutation (e.g., `go_test_all`). |
-| **review** | A deterministic analysis of the mutation + validation results, written as `review.md`. |
-| **remembrance** | The memory/context service. Optional — if it's down, Prism keeps working. |
-| **dry run** | A mode where Prism shows what it would do without actually doing it. Used for tool preview. |
-
-## Common Workflows
-
-### "I want to see what happened in a run"
-```bash
-cat runs/run_01KR.../summary.json    # Quick status overview
-cat runs/run_01KR.../events.jsonl    # Full event log
-cat runs/run_01KR.../review.md      # V5 review of the change
-```
-
-### "I want to approve or deny a file write"
-```bash
-prism approval list                              # See pending approvals
-prism approval show appr_01KR... --run run_01KR  # Read the proposal
-prism approval approve appr_01KR --by ema --run run_01KR  # Approve it
-prism approval deny appr_01KR --by ema --reason "Not needed"  # Deny it
-```
-
-### "I want to run validation after a mutation"
-```bash
-prism validation list                      # See available profiles
-prism validation run go_test_all --project prism  # Run tests
-prism approval approve appr_01KR --by ema --validate  # Approve + validate
-```
-
-## Architecture Diagram
-
-```
-                    ┌─────────────┐
-                    │  prism-cli  │  Your command goes here
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │   Runner    │  Orchestrates everything
-                    └──────┬──────┘
-                           │
-              ┌────────────┼────────────────┐
-              │            │                │
-       ┌──────▼──────┐ ┌──▼───┐ ┌─────────▼────────┐
-       │  Provider    │ │ Tool │ │   Remembrance    │
-       │  (LLM call)  │ │ Exec │ │   (memory hook)  │
-       └─────────────┘ └──┬───┘ └──────────────────┘
-                          │
-                 ┌────────┼─────────┐
-                 │        │         │
-          ┌──────▼──┐ ┌──▼────┐ ┌──▼──────┐
-          │ Policy  │ │Approval│ │Mutation │
-          │ (allow/ │ │(pending│ │(safe    │
-          │ deny)   │ │→yes/no)│ │ write)  │
-          └─────────┘ └───────┘ └────┬────┘
-                                       │
-                              ┌────────▼────────┐
-                              │   Validation    │  V5
-                              │  (run tests)    │
-                              └────────┬────────┘
-                                       │
-                              ┌────────▼────────┐
-                              │     Review      │  V5
-                              │  (summarize)    │
-                              └─────────────────┘
-                                       │
-                              ┌────────▼────────┐
-                              │   NATS Bus      │  Events flow here
-                              │  (JetStream)    │
-                              └─────────────────┘
-```
-
-> **Note:** `prism-agent` (in `cmd/prism-agent/`) is a separate component that subscribes
-> to the NATS event bus and processes events autonomously. It's currently a placeholder —
-> the real processing happens in the Runner. When activated, it would appear alongside
-> `prism-cli` at the top of the diagram.
-
-## Contributing
-
-All changes go through pull requests. See the project rules:
-- One branch per task
-- Ema reviews and merges all PRs
-- Every feature must be tested before moving on
-- No direct pushes to main
+Welcome to Prism. This guide gets you from clone to contributing in ~15 minutes.
 
 ---
 
-*Welcome to Prism. Every event tells a story. 💎*
+## What Prism Is
+
+Prism is a Go event-native AI agent platform that runs as a persistent service. Agents communicate through a NATS event bus, maintain conversation sessions, remember context across conversations (via Remembrance), and can be monitored through a web dashboard.
+
+**Three ways to use it:**
+1. **Persistent daemon** (`prism serve`) — connects to Discord, maintains sessions, responds in real time
+2. **One-shot CLI** (`prism run`) — single LLM calls with tools, workflows, and approval gates
+3. **Platform** (HTTP API + SSE) — integrate Prism into your own tools
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone and build
+git clone https://github.com/emaharmony/prism.git
+cd prism
+go build -o prism ./cmd/prism-cli/
+
+# 2. Run the test suite (988 tests, 54 packages)
+go test ./...
+
+# 3. Create a config
+cp prism.yaml.example prism.yaml
+
+# 4. Start the daemon
+./prism serve
+
+# 5. Open the dashboard
+open http://localhost:8322
+```
+
+### With Memory (Remembrance)
+
+```bash
+# Terminal 1: Start Remembrance (Python service)
+pip install -e ".[nats]"
+python -m rememberance_mcp.serve --port 8788
+
+# Terminal 2: Start Prism
+./prism serve
+```
+
+Enable in `prism.yaml`:
+```yaml
+remembrance:
+  enabled: true
+  url: "http://localhost:8788"
+```
+
+### One-Shot CLI
+
+```bash
+# Single LLM call
+./prism run --prompt "Explain event-driven architecture" --provider ollama
+
+# With tools
+./prism run --prompt "Read main.go and summarize it" --tools read_file --allow-tools
+
+# With approval gate (requires human approval before write)
+./prism run --prompt "Fix the bug" --tools write_file --require-approval
+```
+
+---
+
+## Key Concepts
+
+### Events
+Everything in Prism is an event. Agent outputs, tool calls, approval requests, session changes — all become canonical events on the NATS bus. Events are the source of truth.
+
+- **Per-agent namespaces**: `lumi.agent.output`, `mango.task.created`, `remembrance.dream.triggered`
+- **WAL persistence**: Every stage checkpoint is written to a write-ahead log before execution
+- **Idempotent replay**: If Prism crashes, it replays from the last checkpoint
+
+### Sessions
+Conversations are stored in SQLite sessions. Each session has:
+- A message history (user + assistant messages)
+- An idle timeout (default: 30 minutes)
+- A daily reset (default: 4 AM)
+- Compaction: truncation when context exceeds budget
+
+### Agents
+Agents are defined in `prism.yaml`. Each has:
+- An `id` (used for event namespaces: `<id>.agent.output`)
+- A `role` (lead, developer, researcher, orchestrator)
+- A `provider` + `model` (ollama, openai, anthropic, gemini)
+- `capabilities` (what the agent is allowed to do)
+- `context` (which workspace files to inject into the prompt)
+- `primary: true` marks the default agent
+
+### Remembrance (Memory)
+Remembrance is a separate Python service that:
+- **Captures** agent output through a gate (DilBERT classifier: SKIP/COLD/ACTIVE/PERSIST)
+- **Extracts** entities, relationships, and facts
+- **Builds context** for future conversations (hybrid search: FTS5 + vector + graph + RRF)
+- **Maintains itself** through a dream cycle (nightly 3AM + event trigger after 10 PERSIST captures)
+
+Two integration paths:
+1. **Async capture**: Agent output → NATS event → Remembrance auto-captures
+2. **Sync context**: Before LLM call, `BuildContext()` injects relevant memories
+
+### Delegation
+Agents can delegate tasks to other agents:
+- `[DELEGATE: mango | code]` in LLM output triggers task creation
+- Tasks have a lifecycle: created → assigned → in_progress → completed/failed
+- Approval gates require human sign-off before execution
+- Capabilities enforce what each agent can do
+
+### Approvals
+Mutations (file writes, command execution) can require human approval:
+- Approval types: file_write, command_exec, config_change, resource_access, agent_delegation
+- Approve/deny via Discord reactions or the dashboard
+- All approvals are tracked in SQLite
+
+### Dashboard
+6-tab web UI at `http://localhost:8322`:
+1. **Overview** — system status, agent states, recent events
+2. **Runs** — run history with event timelines
+3. **Events** — live event stream with filtering
+4. **Approvals** — pending/approved/denied mutations
+5. **Diagrams** — 5 SVG visualization types
+6. **Editor** — drag-and-drop visual workflow editor
+
+---
+
+## Architecture Tour
+
+```
+prism serve
+    │
+    ├── NATS JetStream (embedded or external)
+    │   ├── lumi.agent.output
+    │   ├── mango.agent.output
+    │   ├── prism.tool.completed
+    │   └── remembrance.dream.triggered
+    │
+    ├── Discord Bot
+    │   ├── Message received → debounce → session → agent router → LLM → respond
+    │   └── Streaming via placeholder message edits (900ms batching)
+    │
+    ├── Remembrance (Python, separate process)
+    │   ├── NATS subscriber: *.agent.output → capture
+    │   ├── REST API: /capture, /context/build, /search, /dream
+    │   └── Dream cycle: 3AM nightly + after 10 PERSIST
+    │
+    ├── HTTP API (port 8322)
+    │   ├── /api/v1/runs, /agents, /approvals, /tasks, /events
+    │   └── /api/v1/events/stream (SSE with 30s heartbeat)
+    │
+    └── Dashboard (static HTML)
+        ├── Tabs: overview, runs, events, approvals, diagrams, editor
+        └── Editor: SVG drag-and-drop → write to prism.yaml
+```
+
+### Pipeline Stages
+
+When `prism run` executes a workflow:
+1. **LLMStage** — call the language model
+2. **DelegationStage** — detect `[DELEGATE: agent | type]` markers, create tasks
+3. **PersistenceStage** — save artifacts to run directory
+4. **EventPublishStage** — publish canonical events to NATS
+5. **RemembranceStage** — capture output + build context (when enabled)
+
+When `prism serve` handles a Discord message:
+1. **Debounce** → 3s per user
+2. **Session** → lookup/create conversation
+3. **Router** → find the right agent
+4. **Context** → inject workspace files + Remembrance memories
+5. **LLM** → call with streaming callback
+6. **Respond** → edit placeholder message with tokens
+7. **Save** → persist to session
+8. **Capture** → async fire-and-forget to Remembrance
+
+---
+
+## Go Development Cheat Sheet
+
+```go
+// All packages are under github.com/emaharmony/prism/internal/<name>
+
+// Create an event
+evt := event.New("lumi.agent.output", map[string]any{
+    "content":    "Task complete",
+    "session_id": "abc-123",
+})
+
+// Publish to the bus
+bus.Publish(context.Background(), evt)
+
+// Subscribe to events
+bus.Subscribe("mango.*.completed", func(e event.Event) { ... })
+
+// Use the session manager
+mgr := session.NewManager(".prism/data/sessions.db")
+sess, _ := mgr.GetOrCreate("user_123", "lumi")
+
+// Use the Remembrance client
+client := remembrance.NewClient("http://localhost:8788")
+available := client.IsAvailable()
+ctx, _ := client.BuildContext("what is prism", "prism", "lumi", 10)
+result, _ := client.Capture("Important info", "prism:lumi", "project", "")
+```
+
+### Common Patterns
+
+- **Error handling**: All errors are returned, never panicked (except in tests)
+- **Context propagation**: `context.Context` is passed to all I/O operations
+- **Graceful degradation**: Remembrance, NATS, and adapters all fail gracefully
+- **Idempotency**: WAL replay, capture dedup, and task operations are all idempotent
+- **Synchronization**: `sync.RWMutex` for read-heavy caches, `sync.Once` for one-time init
+- **Goroutine safety**: All shared state is protected; use the race detector: `go test -race ./...`
+
+---
+
+## Contributing
+
+1. **Pick a task** from [TASKS.md](./TASKS.md) — look for items marked 🟡 (in progress) or ⬜ (not started)
+2. **Create a branch**: `vXX-feature-name` (e.g., `v27-streaming-responses`)
+3. **Implement + test**: Every feature must have tests before moving on
+4. **Code review**: Lumi reviews all diffs before push; Mango runs Loop 3 security review
+5. **Create a PR**: All changes go through pull requests (no direct pushes to main)
+6. **Ema merges**: Only Ema merges to main
+
+### PR Naming
+
+```
+feat(vXX): Short description of what changed
+fix(vXX): Bug fix description
+docs: What documentation was updated
+```
+
+### Branch Naming
+
+```
+vXX-feature-name    # e.g., v27-streaming-responses
+```
+
+---
+
+## Architecture Evolution
+
+For detailed design history, see the [docs/](./docs/) directory. Key milestones:
+
+| Version | What | Design Doc |
+|---------|------|-----------|
+| V1-V5 | Foundation: CLI, events, tools, approvals, validation | See `docs/` |
+| V8-V9 | Policy engine, adapter contract | V8, V9 design docs |
+| V10-V11 | State projections, dashboard | V10, V11 design docs |
+| V12-V13 | Architectural refactor, multi-agent events | V12, V13 design docs |
+| V14a-e | Pipeline stages, crash recovery, providers, Discord | V14a-e design docs |
+| V15 | Vector search | V15 design doc |
+| V16-V17 | Intelligence arc, performance | V16, V17 design docs |
+| V18-V19 | OpenClaw config, smart context | V18, V19 design docs |
+| V20 | Live orchestrator, `prism serve` | [V20 design doc](./V20-LIVE-ORCHESTRATOR-DESIGN.md) |
+| V21 | Full conversation pipeline | [V21 design doc](./V21-FULL-CONVERSATION-DESIGN.md) |
+| V22 | Multi-agent delegation | [V22 design doc](./V22-MULTI-AGENT-ORCHESTRATION-DESIGN.md) |
+| V23 | Platform: API, dashboard, bridge, SDK | [V23 design doc](./V23-PLATFORM-DESIGN.md) |
+| V24-V25 | Visual representations + workflow editor | V24, V25 design docs |
+| V26 | Remembrance integration | [V26 design doc](./V26-REMEMBRANCE-INTEGRATION-DESIGN.md) |

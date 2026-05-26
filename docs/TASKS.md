@@ -1,7 +1,7 @@
 # Prism — Task Tracker
 
 **Last Updated:** 2026-05-26
-**Status:** V26 (Remembrance Integration) in progress. M6.6 complete, V25 merged.
+**Status:** V26 (Remembrance Integration) complete, merged to main. v0.26.0.
 
 ---
 
@@ -113,9 +113,9 @@
 |------|--------|-------|
 | Remembrance as Prism service | ✅ | V26: NATS subscriber auto-captures *.agent.output |
 | Context auto-save after every run | ✅ | V26: RemembranceStage captures + builds context |
-| Streaming responses | ⬜ | Token-by-token delivery to Discord |
-| Cron scheduler | ⬜ | `prism.cron.triggered` events |
-| `prism migrate --from-openclaw` | ⬜ | Import channels, agents, cron jobs, sessions |
+| Streaming responses | 🟡 | Token-by-token delivery to Discord — deferred |
+| Cron scheduler | 🟡 | `prism.cron.triggered` events — deferred |
+| `prism migrate --from-openclaw` | 🟡 | Import channels, agents, cron jobs, sessions — deferred |
 | OpenClaw config transfer v2 | ⬜ | Import Discord/Telegram tokens, agent definitions |
 | E2E test: full conversation with memory | ⬜ | Session + Remembrance + Discord |
 
