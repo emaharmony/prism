@@ -45,3 +45,5 @@ prism.exe
 
 # Local config (contains secrets)
 prism.yaml
+prism.exe
+prism-workspace/prism.yaml
