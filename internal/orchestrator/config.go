@@ -85,6 +85,11 @@ type AgentConfig struct {
 	// Context lists which context sources to inject: soul, agents, user, etc.
 	Context []string `yaml:"context"`
 
+	// ConversationPostfix is appended to the system prompt to shape conversation behavior.
+	// It primes the model to stay present, ask follow-ups, and avoid premature closures.
+	// Example: "Stay curious. Ask follow-up questions. Don't wrap up unless the topic is genuinely resolved."
+	ConversationPostfix string `yaml:"conversation_postfix"`
+
 	// Primary marks this agent as the default for unaddressed messages.
 	Primary bool `yaml:"primary"`
 
