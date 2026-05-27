@@ -920,7 +920,9 @@ func (cc *conversationContext) findAgentConfig(agentID string) *orchestrator.Age
 // V21: System prompt is built from:
 //   1. Agent identity (role + name)
 //   2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
-//   3. Conversation history
+//   3. Session awareness (message count, recency, session duration)
+//   4. Conversation postfix (configurable behavior shaping)
+//   5. Conversation history
 func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
 	var sb strings.Builder
 
@@ -950,7 +952,23 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 		}
 	}
 
-	sb.WriteString("\nRespond helpfully and with the personality and principles described above.\n\n")
+	// --- Session awareness (V29) ---
+	// Gives the model situational awareness about the conversation state
+	// so it can modulate tone and engagement based on session context.
+	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
+	sessionMsgCount := len(sess.Messages)
+	sb.WriteString(fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
+
+	// --- Conversation postfix (V29) ---
+	// Configurable behavior shaping appended after all context but before history.
+	// Defaults to warmth/continuation if not set in config.
+	postfix := agentCfg.ConversationPostfix
+	if postfix == "" {
+		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
+			"Don't wrap things up in a bow unless the topic is genuinely resolved. " +
+			"Be warm, curious, and engaged — not a transactional Q&A machine."
+	}
+	sb.WriteString("\n" + postfix + "\n\n")
 
 	// --- Conversation history ---
 	for _, msg := range sess.Messages {
