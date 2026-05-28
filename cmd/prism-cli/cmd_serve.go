@@ -1014,11 +1014,7 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	sb.WriteString("\n" + postfix + "\n\n")
 
 	// --- Tool usage guidance (V30) ---
-	sb.WriteString("## Tool Usage\n")
-	sb.WriteString("You have tools available. Use them when you need information you don't have. " +
-		"After receiving tool results, prefer to give your final answer directly rather than calling more tools. " +
-		"Do not call tools repeatedly without making progress. " +
-		"If a tool returns an error, explain the error to the user instead of retrying the same tool.\n\n")
+	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
 
 	// --- Conversation history ---
 	for _, msg := range sess.Messages {

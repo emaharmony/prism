@@ -2,6 +2,7 @@ package main
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -27,32 +28,37 @@ func (cc *conversationContext) runToolLoopChat(
 	channelID string,
 	placeholderMsgID string,
 ) (string, []toolCallSummary, error) {
-	ctx, cancel := stdctx.WithTimeout(stdctx.Background(), chatToolLoopTimeout)
+	ctx, cancel := stdctx.WithTimeout(parentCtx, chatToolLoopTimeout)
 	defer cancel()
 
 	var summaries []toolCallSummary
 	currentMessages := make([]provider.ChatMessage, len(messages))
 	copy(currentMessages, messages)
 
+	nudgeInjected := false // only inject the wrap-up nudge once
+	var lastContent string // track last content-bearing response for fallback
+
 	for i := 0; i < maxChatToolIterations; i++ {
 		log.Printf("[TOOL-CHAT] iteration %d/%d", i+1, maxChatToolIterations)
 
-		// After 3 iterations, add a nudge message telling the model to wrap up.
+		// After 3 iterations, inject a nudge message telling the model to wrap up.
 		// This prevents infinite tool-calling loops where the model keeps requesting
 		// tools without ever producing a final content response.
-		if i >= 3 {
+		// Only inject ONCE to avoid token waste and model confusion.
+		if i >= 3 && !nudgeInjected {
 			nudgeMsg := "You have already used several tools. Please provide your final answer now based on the information you have gathered. Do not call any more tools."
 			currentMessages = append(currentMessages, provider.ChatMessage{
 				Role:    "system",
 				Content: nudgeMsg,
 			})
+			nudgeInjected = true
 		}
 
 		// After 6 iterations, remove tools from the request entirely.
 		// The model MUST give a final answer now.
 		toolsForThisIteration := chatTools
 		if i >= 6 {
-			toolsForThisIteration = nil
+			toolsForThisIteration = []provider.ChatTool{} // explicit empty slice: no tools allowed
 			log.Printf("[TOOL-CHAT] iteration %d: removing tools from request to force final answer", i+1)
 		}
 
@@ -60,6 +66,11 @@ func (cc *conversationContext) runToolLoopChat(
 		response, err := cc.callChatLLM(ctx, currentMessages, toolsForThisIteration, agentCfg)
 		if err != nil {
 			return "", summaries, fmt.Errorf("LLM call failed in chat tool loop iteration %d: %w", i+1, err)
+		}
+
+		// Track content-bearing responses for fallback
+		if response.Content != "" {
+			lastContent = response.Content
 		}
 
 		// No tool calls — this is the final response
@@ -93,9 +104,12 @@ func (cc *conversationContext) runToolLoopChat(
 		}
 	}
 
-	// Max iterations reached — return whatever content we have from the last response
-	// instead of an error. The model may have produced partial content.
-	log.Printf("[TOOL-CHAT] max iterations (%d) reached, returning fallback", maxChatToolIterations)
+	// Max iterations reached — use partial content if available, otherwise build fallback
+	log.Printf("[TOOL-CHAT] max iterations (%d) reached", maxChatToolIterations)
+	if lastContent != "" {
+		log.Printf("[TOOL-CHAT] returning partial content (%d chars)", len(lastContent))
+		return lastContent, summaries, nil
+	}
 	return "", summaries, fmt.Errorf("chat tool loop exceeded max iterations (%d)", maxChatToolIterations)
 }
 
@@ -151,7 +165,13 @@ func (cc *conversationContext) executeChatTool(
 				}
 			}
 			if resultStr == "" {
-				resultStr = fmt.Sprintf("%v", result.Output)
+				// resultStr = json.Marshal produces LLM-readable output
+				resultBytes, jsonErr := json.Marshal(result.Output)
+				if jsonErr != nil {
+					resultStr = fmt.Sprintf("%v", result.Output)
+				} else {
+					resultStr = string(resultBytes)
+				}
 			}
 		} else {
 			status = "error"
@@ -221,11 +241,7 @@ func (cc *conversationContext) buildMessages(sess *session.Session, agentCfg *or
 	systemContent += "\n" + postfix + "\n"
 
 	// Tool usage guidance
-	systemContent += "\n## Tool Usage\n"
-	systemContent += "You have tools available. Use them when you need information you don't have. " +
-		"After receiving tool results, prefer to give your final answer directly rather than calling more tools. " +
-		"Do not call tools repeatedly without making progress. " +
-		"If a tool returns an error, explain the error to the user instead of retrying the same tool.\n"
+	systemContent += "\n## Tool Usage\n" + toolUsageGuidance + "\n"
 
 	messages = append(messages, provider.ChatMessage{
 		Role:    "system",

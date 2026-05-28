@@ -14,6 +14,13 @@ import (
 )
 
 const maxToolIterations = 10
+
+// toolUsageGuidance is shared between the chat and text-based tool loops.
+// This prevents duplication — both paths must present the same guidance to the model.
+const toolUsageGuidance = "You have tools available. Use them when you need information you don't have. " +
+	"After receiving tool results, prefer to give your final answer directly rather than calling more tools. " +
+	"Do not call tools repeatedly without making progress. " +
+	"If a tool returns an error, explain the error to the user instead of retrying the same tool."
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.
@@ -36,15 +43,23 @@ func (cc *conversationContext) runToolLoop(
 	placeholderMsgID string,
 ) (string, []toolCallSummary, error) {
 	// Create a fresh context with its own timeout for the tool loop.
-	// This avoids sharing the 60s pipeline timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), toolLoopTimeout)
+	// Derive from parentCtx so cancellation (server shutdown, etc.) propagates.
+	ctx, cancel := context.WithTimeout(parentCtx, toolLoopTimeout)
 	defer cancel()
 
 	var summaries []toolCallSummary
 	currentPrompt := prompt
+	nudgeInjected := false // only inject the wrap-up nudge once
 
 	for i := 0; i < maxToolIterations; i++ {
 		log.Printf("[TOOL] iteration %d/%d", i+1, maxToolIterations)
+
+		// After 3 iterations, inject a nudge telling the model to wrap up.
+		// This prevents infinite tool-calling loops.
+		if i >= 3 && !nudgeInjected {
+			currentPrompt += "\n\nYou have already used several tools. Please provide your final answer now based on the information you have gathered. Do not request any more tools."
+			nudgeInjected = true
+		}
 
 		// Call the LLM with the current prompt
 		responseText, err := cc.callLLMForToolLoop(ctx, currentPrompt, agentCfg)
