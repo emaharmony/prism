@@ -294,12 +294,17 @@ func executeServe(args []string) {
 			}
 
 			// V27/V28: Set up tool executor with full tool suite
+		workspaceRoot := cfg.Prism.Workspace
+		if workspaceRoot == "" {
+			workspaceRoot = "."
+		}
+
 		toolReg := tool.NewRegistry()
-		tool.RegisterBuiltins(toolReg, ".", 10*1024*1024) // all read-only + project tools
+		tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024) // all read-only + project tools
 		// V28: Git mutation tools (require approval)
-		toolReg.Register(&tool.GitAddTool{WorkspaceRoot: "."})
-		toolReg.Register(&tool.GitCommitTool{WorkspaceRoot: "."})
-		toolReg.Register(&tool.GitPushTool{WorkspaceRoot: "."})
+		toolReg.Register(&tool.GitAddTool{WorkspaceRoot: workspaceRoot})
+		toolReg.Register(&tool.GitCommitTool{WorkspaceRoot: workspaceRoot})
+		toolReg.Register(&tool.GitPushTool{WorkspaceRoot: workspaceRoot})
 
 		toolPolicy := tool.DefaultPolicyConfig()
 		// Mutation operations require approval

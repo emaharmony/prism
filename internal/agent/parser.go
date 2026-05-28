@@ -105,6 +105,7 @@ func extractJSON(text string) string {
 // model to return JSON with either a "final" or "tool_request" shape.
 // V4: Includes approval-gated mutation instructions.
 // V28: Includes tool descriptions and parameter schemas so the model knows how to call them.
+// V29: Stronger emphasis on actually USING tools instead of just talking about them.
 func BuildToolPromptSuffix(toolInfos []tool.ToolInfo) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Tool Instructions\n")
@@ -128,7 +129,13 @@ func BuildToolPromptSuffix(toolInfos []tool.ToolInfo) string {
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\nRespond with JSON in one of these shapes:\n")
+	sb.WriteString("\n## How to Use Tools\n")
+	sb.WriteString("IMPORTANT: When you need information from files, projects, or git, you MUST actually call the tool.\n")
+	sb.WriteString("Do NOT say \"Let me search for that\" or \"I'll look that up\" in a final response.\n")
+	sb.WriteString("Instead, emit a tool_request JSON and the system will execute it and give you the results.\n")
+	sb.WriteString("If you want to read a file, use read_file. If you want to search, use search_files. If you want an overview, use project_overview.\n")
+	sb.WriteString("Never describe what you would do — actually DO it by emitting a tool_request.\n\n")
+	sb.WriteString("Respond with JSON in one of these shapes:\n")
 	sb.WriteString("- Final response: {\"type\": \"final\", \"content\": \"your text here\"}\n")
 	sb.WriteString("- Tool request: {\"type\": \"tool_request\", \"tool\": \"tool_name\", \"input\": {\"key\": \"value\"}}\n")
 	sb.WriteString("\nYou may make at most ONE tool request per response. If you need multiple tool calls, respond with the first one and the system will provide results.\n")
