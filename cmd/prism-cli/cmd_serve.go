@@ -578,7 +578,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	if cc.toolExec != nil {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		if len(toolInfos) > 0 {
-			prompt += agent.BuildToolPromptSuffix(toolInfos)
+			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot)
 		}
 	}
 
