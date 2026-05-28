@@ -37,8 +37,27 @@ func (cc *conversationContext) runToolLoopChat(
 	for i := 0; i < maxChatToolIterations; i++ {
 		log.Printf("[TOOL-CHAT] iteration %d/%d", i+1, maxChatToolIterations)
 
+		// After 3 iterations, add a nudge message telling the model to wrap up.
+		// This prevents infinite tool-calling loops where the model keeps requesting
+		// tools without ever producing a final content response.
+		if i >= 3 {
+			nudgeMsg := "You have already used several tools. Please provide your final answer now based on the information you have gathered. Do not call any more tools."
+			currentMessages = append(currentMessages, provider.ChatMessage{
+				Role:    "system",
+				Content: nudgeMsg,
+			})
+		}
+
+		// After 6 iterations, remove tools from the request entirely.
+		// The model MUST give a final answer now.
+		toolsForThisIteration := chatTools
+		if i >= 6 {
+			toolsForThisIteration = nil
+			log.Printf("[TOOL-CHAT] iteration %d: removing tools from request to force final answer", i+1)
+		}
+
 		// Call the LLM with current messages
-		response, err := cc.callChatLLM(ctx, currentMessages, chatTools, agentCfg)
+		response, err := cc.callChatLLM(ctx, currentMessages, toolsForThisIteration, agentCfg)
 		if err != nil {
 			return "", summaries, fmt.Errorf("LLM call failed in chat tool loop iteration %d: %w", i+1, err)
 		}
@@ -74,7 +93,9 @@ func (cc *conversationContext) runToolLoopChat(
 		}
 	}
 
-	// Max iterations reached — return whatever we have
+	// Max iterations reached — return whatever content we have from the last response
+	// instead of an error. The model may have produced partial content.
+	log.Printf("[TOOL-CHAT] max iterations (%d) reached, returning fallback", maxChatToolIterations)
 	return "", summaries, fmt.Errorf("chat tool loop exceeded max iterations (%d)", maxChatToolIterations)
 }
 
@@ -198,6 +219,13 @@ func (cc *conversationContext) buildMessages(sess *session.Session, agentCfg *or
 			"Be warm, curious, and engaged — not a transactional Q&A machine."
 	}
 	systemContent += "\n" + postfix + "\n"
+
+	// Tool usage guidance
+	systemContent += "\n## Tool Usage\n"
+	systemContent += "You have tools available. Use them when you need information you don't have. " +
+		"After receiving tool results, prefer to give your final answer directly rather than calling more tools. " +
+		"Do not call tools repeatedly without making progress. " +
+		"If a tool returns an error, explain the error to the user instead of retrying the same tool.\n"
 
 	messages = append(messages, provider.ChatMessage{
 		Role:    "system",
