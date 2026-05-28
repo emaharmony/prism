@@ -13,7 +13,7 @@ import (
 	"github.com/emaharmony/prism/internal/tool"
 )
 
-const maxToolIterations = 5
+const maxToolIterations = 10
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.

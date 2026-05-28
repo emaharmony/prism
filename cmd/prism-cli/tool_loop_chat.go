@@ -13,7 +13,7 @@ import (
 	"github.com/emaharmony/prism/internal/tool"
 )
 
-const maxChatToolIterations = 5
+const maxChatToolIterations = 10
 const chatToolLoopTimeout = 2 * time.Minute
 
 // runToolLoopChat handles native tool calling via ChatProvider.
