@@ -62,6 +62,12 @@ type PrismConfig struct {
 
 	// LogLevel sets verbosity: debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
+
+	// AllowedPaths is a list of additional directory roots the agent can access
+	// beyond the workspace root. Paths are absolute or relative to CWD.
+	// The workspace root is always implicitly allowed.
+	// Example: ["/Users/ema/projects/repos", "/tmp/prism-data"]
+	AllowedPaths []string `yaml:"allowed_paths"`
 }
 
 // AgentConfig defines a single agent in prism.yaml.

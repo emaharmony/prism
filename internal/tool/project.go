@@ -17,6 +17,7 @@ import (
 // Policy: always allowed (read-only, no modifications).
 type SearchFilesTool struct {
 	WorkspaceRoot string
+	AllowedPaths  []string
 }
 
 func (t *SearchFilesTool) Name() string        { return "search_files" }
@@ -140,6 +141,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 // Policy: always allowed (read-only, no modifications).
 type ProjectOverviewTool struct {
 	WorkspaceRoot string
+	AllowedPaths  []string
 }
 
 func (t *ProjectOverviewTool) Name() string        { return "project_overview" }

@@ -70,6 +70,8 @@ func (t *EchoTool) Execute(ctx context.Context, input map[string]any) (ToolResul
 type ListDirTool struct {
 	// WorkspaceRoot is the root directory that constrains allowed paths.
 	WorkspaceRoot string
+	// AllowedPaths is a list of additional directory roots the agent can access.
+	AllowedPaths []string
 }
 
 func (t *ListDirTool) Name() string        { return "list_dir" }
@@ -92,34 +94,12 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 		}, nil
 	}
 
-	absPath := filepath.Clean(filepath.Join(t.WorkspaceRoot, pathVal))
-
-	// Defense-in-depth: resolve symlinks and verify the path stays within root
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	resolvedPath, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
 		return ToolResult{
 			Success: false,
 			Output:  nil,
-			Error:   fmt.Sprintf("failed to resolve path: %v", err),
-		}, nil
-	}
-	absRoot, err := filepath.Abs(t.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{
-			Success: false,
-			Output:  nil,
-			Error:   "invalid workspace root",
-		}, nil
-	}
-	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
-	if resolvedRoot == "" {
-		resolvedRoot = absRoot
-	}
-	if !safety.IsWithinRoot(resolvedPath, resolvedRoot) {
-		return ToolResult{
-			Success: false,
-			Output:  nil,
-			Error:   "path is outside workspace root (symlink escape blocked)",
+			Error:   err.Error(),
 		}, nil
 	}
 
@@ -163,6 +143,8 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 type ReadFileTool struct {
 	// WorkspaceRoot is the root directory that constrains allowed paths.
 	WorkspaceRoot string
+	// AllowedPaths is a list of additional directory roots the agent can access.
+	AllowedPaths []string
 	// MaxFileSize is the maximum allowed file size in bytes.
 	MaxFileSize int64
 }
@@ -497,6 +479,7 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 // Policy: always allowed (read-only, no modifications).
 type ReadProjectTool struct {
 	WorkspaceRoot string
+	AllowedPaths  []string
 	MaxFileSize   int64
 }
 
@@ -679,20 +662,20 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 
 // RegisterBuiltins adds the built-in tools to a registry, using the given
 // workspace root and max file size. Returns the registry for chaining.
-func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int64) *Registry {
+func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int64, allowedPaths ...string) *Registry {
 	if maxFileSize <= 0 {
 		maxFileSize = 1024 * 1024 // 1MB default
 	}
 
 	registry.Register(&EchoTool{})
-	registry.Register(&ListDirTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&ReadFileTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize})
+	registry.Register(&ListDirTool{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
+	registry.Register(&ReadFileTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize, AllowedPaths: allowedPaths})
 	registry.Register(&WriteFileDryRun{})
-	registry.Register(&ReadProjectTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize})
+	registry.Register(&ReadProjectTool{WorkspaceRoot: workspaceRoot, MaxFileSize: maxFileSize, AllowedPaths: allowedPaths})
 
 	// V28: Project comprehension tools
-	registry.Register(&SearchFilesTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&ProjectOverviewTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&SearchFilesTool{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
+	registry.Register(&ProjectOverviewTool{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
 
 	// V28: Git read-only tools
 	registry.Register(&GitStatusTool{WorkspaceRoot: workspaceRoot})

@@ -299,8 +299,20 @@ func executeServe(args []string) {
 			workspaceRoot = "."
 		}
 
+		// V30: Resolve allowed paths to absolute
+		allowedPaths := make([]string, 0, len(cfg.Prism.AllowedPaths))
+		for _, p := range cfg.Prism.AllowedPaths {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				log.Printf("[WARN] invalid allowed_path %q: %v", p, err)
+				continue
+			}
+			allowedPaths = append(allowedPaths, abs)
+			log.Printf("[TOOL] allowed path: %s", abs)
+		}
+
 		toolReg := tool.NewRegistry()
-		tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024) // all read-only + project tools
+		tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024, allowedPaths...) // all read-only + project tools
 		// V28: Git mutation tools (require approval)
 		toolReg.Register(&tool.GitAddTool{WorkspaceRoot: workspaceRoot})
 		toolReg.Register(&tool.GitCommitTool{WorkspaceRoot: workspaceRoot})
@@ -309,6 +321,8 @@ func executeServe(args []string) {
 		toolPolicy := tool.DefaultPolicyConfig()
 		// Mutation operations require approval
 		toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
+		toolPolicy.WorkspaceRoot = workspaceRoot
+		toolPolicy.AllowedPaths = allowedPaths
 		toolExec := tool.NewExecutor(toolReg, toolPolicy)
 
 		convCtx := &conversationContext{
