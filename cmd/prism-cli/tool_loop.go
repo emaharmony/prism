@@ -128,7 +128,7 @@ func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt st
 	// Add tool instructions to the prompt
 	toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 	if len(toolInfos) > 0 {
-		prompt += agent.BuildToolPromptSuffix(toolInfos)
+		prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot)
 	}
 
 	// Use the provider from the registry

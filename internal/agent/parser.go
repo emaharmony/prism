@@ -106,9 +106,11 @@ func extractJSON(text string) string {
 // V4: Includes approval-gated mutation instructions.
 // V28: Includes tool descriptions and parameter schemas so the model knows how to call them.
 // V29: Stronger emphasis on actually USING tools instead of just talking about them.
-func BuildToolPromptSuffix(toolInfos []tool.ToolInfo) string {
+// V29b: Includes workspace root path so the model knows where files are.
+func BuildToolPromptSuffix(toolInfos []tool.ToolInfo, workspaceRoot string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Tool Instructions\n")
+	sb.WriteString(fmt.Sprintf("Your workspace root is: %s\n\n", workspaceRoot))
 	sb.WriteString("You have access to the following tools:\n\n")
 	for _, ti := range toolInfos {
 		sb.WriteString(fmt.Sprintf("- **%s**: %s", ti.Name, ti.Description))
