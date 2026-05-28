@@ -67,6 +67,25 @@ func (r *ProviderRegistry) Get(modelID string) (Provider, error) {
 	return p, nil
 }
 
+// GetChatProvider returns a ChatProvider if the model's provider supports native tool calling.
+// Returns an error if the model is not found or the provider doesn't implement ChatProvider.
+// Use this when you want to use /api/chat with structured messages and tool calling.
+func (r *ProviderRegistry) GetChatProvider(modelID string) (ChatProvider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	p, ok := r.providers[modelID]
+	if !ok {
+		return nil, fmt.Errorf("model %q not found in registry; available: %v", modelID, r.listModelsLocked())
+	}
+	chatProv, ok := p.(ChatProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider for %s (%s) does not support chat generation with tool calling",
+			modelID, r.models[modelID].ProviderName)
+	}
+	return chatProv, nil
+}
+
 // ModelInfo returns metadata for a model ID.
 func (r *ProviderRegistry) ModelInfo(modelID string) (ModelInfo, error) {
 	r.mu.RLock()

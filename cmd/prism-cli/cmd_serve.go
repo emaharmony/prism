@@ -664,47 +664,85 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-	// Step 9b: Tool execution loop — if LLM requested a tool, execute it and loop
+// Step 9b: Tool execution loop — branch on ChatProvider vs text-based
 	if cc.toolExec != nil {
-		parsed := agent.ParseAgentOutput(finalRC.LLMResponse)
-		if parsed.Type == agent.ResponseToolRequest {
-			log.Printf("[TOOL] LLM requested tool %q, entering tool loop", parsed.ToolName)
+		// Check if the provider supports native tool calling (ChatProvider)
+		chatProv, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
+		supportsChat := chatErr == nil
 
-			// Run the tool loop (multi-turn)
-			finalResponse, toolSummaries, toolErr := cc.runToolLoop(
+		if supportsChat {
+			_ = chatProv // used via cc.runToolLoopChat which calls cc.providers.GetChatProvider internally
+			// Native tool calling path: use ChatProvider with structured messages
+			// Build messages array and tools list
+			messages := cc.buildMessages(sess, agentCfg)
+			chatTools := cc.buildChatTools()
+
+			log.Printf("[TOOL-CHAT] entering native tool loop with %d tools", len(chatTools))
+
+			finalResponse, toolSummaries, toolErr := cc.runToolLoopChat(
 				runCtx,
-				prompt,
+				messages,
+				chatTools,
 				agentCfg,
 				msg.ChannelID,
 				placeholderMsgID,
 			)
 			if toolErr != nil {
-				log.Printf("[TOOL] tool loop failed: %v", toolErr)
-				// Show a user-facing error instead of raw tool_request JSON
+				log.Printf("[TOOL-CHAT] tool loop failed: %v", toolErr)
 				finalRC.LLMResponse = "I tried to use a tool to help with that, but something went wrong. Could you rephrase your request?"
+			} else if finalResponse != "" {
+				finalRC.LLMResponse = finalResponse
 			}
 
 			// Log tool call summaries
 			for _, ts := range toolSummaries {
-				log.Printf("[TOOL] %s: %s (%s)", ts.Tool, ts.Status, truncateStr(ts.Result, 100))
-			}
-
-			// Use the final response from the tool loop
-			if finalResponse != "" {
-				finalRC.LLMResponse = finalResponse
+				log.Printf("[TOOL-CHAT] %s: %s (%s)", ts.Tool, ts.Status, truncateStr(ts.Result, 100))
 			}
 
 			// Save tool interactions to session
 			for _, ts := range toolSummaries {
 				toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
 				if ts.Error != "" {
-				toolMsg += " — " + ts.Error
+					toolMsg += " — " + ts.Error
 				}
 				cc.sessMgr.AddMessage(sess.ID, "tool", toolMsg, ts.Tool)
 			}
+		} else {
+			// Text-based tool calling path (fallback for providers without ChatProvider)
+			parsed := agent.ParseAgentOutput(finalRC.LLMResponse)
+			if parsed.Type == agent.ResponseToolRequest {
+				log.Printf("[TOOL] LLM requested tool %q, entering tool loop", parsed.ToolName)
+
+				finalResponse, toolSummaries, toolErr := cc.runToolLoop(
+					runCtx,
+					prompt,
+					agentCfg,
+					msg.ChannelID,
+					placeholderMsgID,
+				)
+				if toolErr != nil {
+					log.Printf("[TOOL] tool loop failed: %v", toolErr)
+					finalRC.LLMResponse = "I tried to use a tool to help with that, but something went wrong. Could you rephrase your request?"
+				}
+
+				for _, ts := range toolSummaries {
+					log.Printf("[TOOL] %s: %s (%s)", ts.Tool, ts.Status, truncateStr(ts.Result, 100))
+				}
+
+				if finalResponse != "" {
+					finalRC.LLMResponse = finalResponse
+				}
+
+				for _, ts := range toolSummaries {
+					toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
+					if ts.Error != "" {
+						toolMsg += " — " + ts.Error
+					}
+					cc.sessMgr.AddMessage(sess.ID, "tool", toolMsg, ts.Tool)
+				}
+			}
 		}
 	}
-
 	// Check pipeline results for stage failures
 	for stageName, stageResult := range finalRC.Results {
 		if stageResult != nil && !stageResult.Success {
@@ -1054,8 +1092,12 @@ func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provi
 
 // createOllamaProvider creates an Ollama provider instance.
 // Uses localhost:11434 by default. V21: configurable base URL.
+// V30: Returns both Provider and ChatProvider — Ollama supports both interfaces.
 func createOllamaProvider(model string) (provider.Provider, error) {
 	p := ollama.New("") // empty = default localhost:11434
+	// The Ollama Provider also implements ChatProvider via ollama.ChatProvider.
+	// It is registered under the same model ID and the runtime uses interface
+	// assertions to detect chat capability: prov.(provider.ChatProvider)
 	return p, nil
 }
 
