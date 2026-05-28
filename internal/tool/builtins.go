@@ -169,34 +169,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 		}, nil
 	}
 
-	absPath := filepath.Clean(filepath.Join(t.WorkspaceRoot, pathVal))
-
-	// Defense-in-depth: resolve symlinks and verify the path stays within root
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	resolvedPath, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
 		return ToolResult{
 			Success: false,
 			Output:  nil,
-			Error:   fmt.Sprintf("failed to resolve path: %v", err),
-		}, nil
-	}
-	absRoot, err := filepath.Abs(t.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{
-			Success: false,
-			Output:  nil,
-			Error:   "invalid workspace root",
-		}, nil
-	}
-	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
-	if resolvedRoot == "" {
-		resolvedRoot = absRoot
-	}
-	if !safety.IsWithinRoot(resolvedPath, resolvedRoot) {
-		return ToolResult{
-			Success: false,
-			Output:  nil,
-			Error:   "path is outside workspace root (symlink escape blocked)",
+			Error:   err.Error(),
 		}, nil
 	}
 
@@ -559,20 +537,9 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 		maxFiles = int(mf)
 	}
 
-	absPath := filepath.Clean(filepath.Join(t.WorkspaceRoot, pathVal))
-
-	// Security: resolve symlinks and verify containment
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	resolvedPath, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
-		return ToolResult{Success: false, Error: fmt.Sprintf("failed to resolve path: %v", err)}, nil
-	}
-	absRoot, _ := filepath.Abs(t.WorkspaceRoot)
-	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
-	if resolvedRoot == "" {
-		resolvedRoot = absRoot
-	}
-	if !safety.IsWithinRoot(resolvedPath, resolvedRoot) {
-		return ToolResult{Success: false, Error: "path is outside workspace root"}, nil
+		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
 	maxSize := t.MaxFileSize
@@ -628,7 +595,7 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 		}
 
 		// Get relative path from workspace root
-		relPath, err := filepath.Rel(resolvedRoot, walkPath)
+		relPath, err := filepath.Rel(resolvedPath, walkPath)
 		if err != nil {
 			relPath = walkPath
 		}
