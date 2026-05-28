@@ -160,8 +160,8 @@ func TestTruncateStr(t *testing.T) {
 }
 
 func TestMaxToolIterations(t *testing.T) {
-	if maxToolIterations != 5 {
-		t.Errorf("maxToolIterations = %d, want 5", maxToolIterations)
+	if maxToolIterations != 10 {
+		t.Errorf("maxToolIterations = %d, want 10", maxToolIterations)
 	}
 }
 
