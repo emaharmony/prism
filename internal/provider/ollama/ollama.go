@@ -31,21 +31,29 @@ const DefaultBaseURL = "http://localhost:11434"
 const DefaultHTTPTimeout = 5 * time.Minute
 
 // Provider generates completions via a local Ollama instance.
+// It also embeds ChatProvider for native tool calling support (V30).
 type Provider struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	chat       *ChatProvider // embedded chat provider for /api/chat
 }
 
 // New creates an OllamaProvider with sensible defaults.
 // If baseURL is empty it defaults to http://localhost:11434.
+// The returned Provider also implements ChatProvider via interface assertion.
 func New(baseURL string) *Provider {
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = DefaultBaseURL
 	}
-	return &Provider{
+	p := &Provider{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		HTTPClient: &http.Client{Timeout: DefaultHTTPTimeout, Transport: provider.DefaultTransport},
 	}
+	p.chat = &ChatProvider{
+		BaseURL:    p.BaseURL,
+		HTTPClient: p.HTTPClient,
+	}
+	return p
 }
 
 // ---------- request / response types for /api/generate ----------
@@ -149,5 +157,13 @@ func (o *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	}, nil
 }
 
-// Compile-time interface check.
+// ChatGenerate delegates to the embedded ChatProvider.
+// This makes the Ollama Provider satisfy the ChatProvider interface
+// via interface assertion: prov.(provider.ChatProvider) will succeed.
+func (o *Provider) ChatGenerate(ctx context.Context, req provider.ChatGenerateRequest) (provider.ChatGenerateResponse, error) {
+	return o.chat.ChatGenerate(ctx, req)
+}
+
+// Compile-time interface checks.
 var _ provider.Provider = (*Provider)(nil)
+var _ provider.ChatProvider = (*Provider)(nil)
