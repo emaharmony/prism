@@ -29,9 +29,13 @@ import (
 
 // PolicyConfig holds the configuration for policy decisions.
 type PolicyConfig struct {
-	// WorkspaceRoot is the root directory that list_dir and read_file are
-	// allowed to access. Any path outside this root is denied.
+	// WorkspaceRoot is the primary root directory that list_dir and read_file are
+	// allowed to access. Any path outside this root (and AllowedPaths) is denied.
 	WorkspaceRoot string
+	// AllowedPaths is a list of additional directory roots the agent can access.
+	// The workspace root is always implicitly included. Paths are resolved to
+	// absolute paths at evaluation time.
+	AllowedPaths []string
 	// MaxFileSize is the maximum file size in bytes that read_file will allow.
 	// Defaults to 1MB if zero.
 	MaxFileSize int64
@@ -43,6 +47,14 @@ func DefaultPolicyConfig() PolicyConfig {
 		WorkspaceRoot: ".",
 		MaxFileSize:   1024 * 1024, // 1MB
 	}
+}
+
+// AllRoots returns all allowed root directories (workspace root + allowed paths).
+// Used by tools to check path containment.
+func (pc PolicyConfig) AllRoots() []string {
+	roots := []string{pc.WorkspaceRoot}
+	roots = append(roots, pc.AllowedPaths...)
+	return roots
 }
 
 // PolicyResult captures the decision and reason for a policy evaluation.
@@ -176,24 +188,32 @@ func evaluatePathPolicy(cfg PolicyConfig, toolName string, input map[string]any)
 		return PolicyResult{Decision: PolicyDenied, Reason: "path traversal with '..' is blocked"}
 	}
 
-	// Block absolute paths that are outside the workspace root
+	// Resolve all allowed roots to absolute form
+	allRoots := cfg.AllRoots()
+	absRoots := make([]string, len(allRoots))
+	for i, r := range allRoots {
+		absR, err := filepath.Abs(r)
+		if err != nil {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("invalid root path: %q", r)}
+		}
+		absRoots[i] = absR
+	}
+
+	var absPath string
 	if filepath.IsAbs(pathStr) {
-		return PolicyResult{Decision: PolicyDenied, Reason: "absolute paths are not allowed"}
+		// Absolute path — check against all allowed roots
+		absPath = filepath.Clean(pathStr)
+	} else {
+		// Relative path — resolve against workspace root (primary)
+		absPath = filepath.Clean(filepath.Join(absRoots[0], pathStr))
 	}
 
-	// Resolve both workspace root and target path to absolute form
-	absRoot, err := filepath.Abs(cfg.WorkspaceRoot)
-	if err != nil {
-		return PolicyResult{Decision: PolicyDenied, Reason: "invalid workspace root"}
-	}
-	absPath := filepath.Clean(filepath.Join(absRoot, pathStr))
-
-	// Check that the resolved path is within the workspace root
-	if !safety.IsWithinRoot(absPath, absRoot) {
-		return PolicyResult{Decision: PolicyDenied, Reason: "path is outside the workspace root"}
+	// Check that the resolved path is within at least one allowed root
+	if !safety.IsWithinAnyRoot(absPath, absRoots) {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("path %q is not within any allowed root", pathStr)}
 	}
 
-	return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s path is within workspace root", toolName)}
+	return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s path is within allowed roots", toolName)}
 }
 
 // resolvePath joins the workspace root with the given path and cleans it.

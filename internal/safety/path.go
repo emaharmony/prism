@@ -119,3 +119,53 @@ func ResolveAndContain(root, relPath string) (string, error) {
 
 	return absPath, nil
 }
+
+// IsWithinAnyRoot checks whether absPath is within any of the provided root directories.
+// This is the multi-root version of IsWithinRoot, used when an agent has access to
+// multiple directory roots (workspace root + allowed_paths).
+//
+// Returns true if absPath is contained within at least one root.
+// All paths must be absolute.
+func IsWithinAnyRoot(absPath string, absRoots []string) bool {
+	for _, root := range absRoots {
+		if IsWithinRoot(absPath, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveAndContainMulti resolves a path against multiple allowed roots.
+// If relPath is relative, it's resolved against the first root (primary/workspace).
+// If relPath is absolute, it's checked against all roots.
+// Returns the absolute safe path on success, or an error if path traversal is detected.
+func ResolveAndContainMulti(roots []string, relPath string) (string, error) {
+	if len(roots) == 0 {
+		return "", fmt.Errorf("safety: no roots provided")
+	}
+
+	// Resolve all roots to absolute paths
+	absRoots := make([]string, len(roots))
+	for i, r := range roots {
+		absR, err := filepath.Abs(r)
+		if err != nil {
+			return "", fmt.Errorf("safety: resolve root %q: %w", r, err)
+		}
+		absRoots[i] = absR
+	}
+
+	var absPath string
+	if filepath.IsAbs(relPath) {
+		// Absolute path — check against all roots directly
+		absPath = filepath.Clean(relPath)
+	} else {
+		// Relative path — resolve against the primary (workspace) root
+		absPath = filepath.Join(absRoots[0], filepath.Clean(relPath))
+	}
+
+	if !IsWithinAnyRoot(absPath, absRoots) {
+		return "", fmt.Errorf("safety: path %q is not within any allowed root", relPath)
+	}
+
+	return absPath, nil
+}
