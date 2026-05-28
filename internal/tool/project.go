@@ -54,24 +54,16 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 		maxResults = int(mr)
 	}
 
-	absRoot, err := filepath.Abs(t.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{Success: false, Error: "invalid workspace root"}, nil
-	}
-	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
-	if resolvedRoot == "" {
-		resolvedRoot = absRoot
-	}
-
-	absSearchDir := filepath.Clean(filepath.Join(resolvedRoot, searchDir))
-	if !isWithinRoot(absSearchDir, resolvedRoot) {
-		return ToolResult{Success: false, Error: "path is outside workspace root"}, nil
+	// Resolve search directory against allowed paths
+	searchDirResolved, resolveErr := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, searchDir)
+	if resolveErr != nil {
+		return ToolResult{Success: false, Error: resolveErr.Error()}, nil
 	}
 
 	var matches []map[string]any
 	var totalMatches int
 
-	err = filepath.Walk(absSearchDir, func(walkPath string, info os.FileInfo, walkErr error) error {
+	err := filepath.Walk(searchDirResolved, func(walkPath string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
@@ -96,7 +88,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 		}
 		defer f.Close()
 
-		relPath, _ := filepath.Rel(resolvedRoot, walkPath)
+		relPath, _ := filepath.Rel(searchDirResolved, walkPath)
 		scanner := bufio.NewScanner(f)
 		lineNum := 0
 		for scanner.Scan() {
@@ -175,18 +167,10 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 		projectPath = p
 	}
 
-	absRoot, err := filepath.Abs(t.WorkspaceRoot)
+	// Resolve project directory against allowed paths
+	absProjectDir, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, projectPath)
 	if err != nil {
-		return ToolResult{Success: false, Error: "invalid workspace root"}, nil
-	}
-	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
-	if resolvedRoot == "" {
-		resolvedRoot = absRoot
-	}
-
-	absProjectDir := filepath.Clean(filepath.Join(resolvedRoot, projectPath))
-	if !isWithinRoot(absProjectDir, resolvedRoot) {
-		return ToolResult{Success: false, Error: "path is outside workspace root"}, nil
+		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
 	// Read key files
@@ -212,7 +196,7 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 	})
 
 	// Build directory tree (2 levels deep for overview)
-	tree := buildDirectoryTree(absProjectDir, resolvedRoot, 2)
+	tree := buildDirectoryTree(absProjectDir, absProjectDir, 2)
 
 	return ToolResult{
 		Success: true,
