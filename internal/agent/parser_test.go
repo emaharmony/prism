@@ -108,7 +108,7 @@ func TestBuildToolPromptSuffix(t *testing.T) {
 		{Name: "echo", Description: "Returns the input text unchanged.", Schema: ToolSchemaForTest("echo")},
 		{Name: "read_file", Description: "Reads a text file.", Schema: ToolSchemaForTest("read_file")},
 	}
-	suffix := BuildToolPromptSuffix(toolInfos, "/test/workspace")
+	suffix := BuildToolPromptSuffix(toolInfos, "/test/workspace", "/other/projects")
 
 	if suffix == "" {
 		t.Error("tool prompt suffix should not be empty")
