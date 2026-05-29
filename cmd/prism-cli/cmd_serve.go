@@ -1000,7 +1000,7 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 			WithNamedContexts(agentCfg.Context).
 			WithTokenBudget(budget)
 
-		injected, err := builder.Build()
+		injected, err := builder.BuildCached()
 		if err == nil && injected.FormattedString != "" {
 			sb.WriteString("\n")
 			sb.WriteString(injected.FormattedString)

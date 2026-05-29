@@ -598,7 +598,7 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
 			WithNamedContexts(agentCfg.Context).
 			WithTokenBudget(budget)
-		injected, err := builder.Build()
+		injected, err := builder.BuildCached()
 		if err == nil && injected.FormattedString != "" {
 			sb.WriteString("\n" + injected.FormattedString)
 		}
@@ -657,7 +657,7 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
 			WithNamedContexts(agentCfg.Context).
 			WithTokenBudget(budget)
-		injected, err := builder.Build()
+		injected, err := builder.BuildCached()
 		if err == nil && injected.FormattedString != "" {
 			systemContent += "\n" + injected.FormattedString
 		}
