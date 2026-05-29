@@ -19,7 +19,7 @@ type remembranceCache struct {
 }
 
 type cacheEntry struct {
-	resp      *remcli.ContextBuildResponse
+	resp      *remcli.ContextPackResponse
 	expiresAt time.Time
 }
 
@@ -33,7 +33,7 @@ func newRemembranceCache(ttl time.Duration) *remembranceCache {
 // Get returns a cached BuildContext result if it exists and hasn't expired.
 // Expired entries are removed on read (lazy cleanup).
 // Returns nil if not found or expired.
-func (c *remembranceCache) Get(key string) *remcli.ContextBuildResponse {
+func (c *remembranceCache) Get(key string) *remcli.ContextPackResponse {
 	c.mu.Lock() // Need write lock to delete expired entries
 	defer c.mu.Unlock()
 
@@ -49,7 +49,7 @@ func (c *remembranceCache) Get(key string) *remcli.ContextBuildResponse {
 }
 
 // Set stores a BuildContext result with the configured TTL.
-func (c *remembranceCache) Set(key string, resp *remcli.ContextBuildResponse) {
+func (c *remembranceCache) Set(key string, resp *remcli.ContextPackResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
