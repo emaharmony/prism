@@ -138,26 +138,39 @@ func NewClientWithTimeout(baseURL string, timeout time.Duration) *Client {
 // ── V1 Methods ──────────────────────────────────────────────────
 
 // BuildContext requests context from Remembrance for a task.
-// V1 compatibility: calls GET /context/build?task=<task>&project=<project>&agent=<agent>
+// POSTs to /v1/context/build with the agent's task.
 func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextBuildResponse, error) {
-	params := url.Values{}
-	params.Set("task", task)
-	if project != "" {
-		params.Set("project", project)
-	}
-	if agent != "" {
-		params.Set("agent", agent)
+	body := map[string]any{
+		"task":       task,
+		"project_id": project,
+		"agent_id":   agent,
 	}
 	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
+		body["max_tokens"] = limit
+	}
+	if project == "" {
+		body["project_id"] = "framework"
 	}
 
-	reqURL := fmt.Sprintf("%s/context/build?%s", c.BaseURL, params.Encode())
-	var resp ContextBuildResponse
-	if err := c.doGet(reqURL, &resp); err != nil {
+	result, err := c.doPost(c.BaseURL+"/v1/context/build", body)
+	if err != nil {
 		return nil, err
 	}
-	return &resp, nil
+
+	// Parse the response into ContextBuildResponse
+	resp := &ContextBuildResponse{}
+	jsonBytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal response: %w", err)
+	}
+	if err := json.Unmarshal(jsonBytes, resp); err != nil {
+		// If we can't unmarshal into the struct, return the raw result as a basic response
+		resp = &ContextBuildResponse{
+			Query:        task,
+			TotalResults: 0,
+		}
+	}
+	return resp, nil
 }
 
 // IsAvailable checks if Remembrance is reachable.
@@ -172,19 +185,33 @@ func (c *Client) IsAvailable() bool {
 
 // ── V2 Methods ──────────────────────────────────────────────────
 
-// Capture sends text through the full pipeline (gate → extract → graph → store).
+// Capture sends a conversation to Remembrance for ingestion.
+// POSTs to /v1/memory/ingest with the conversation text.
 func (c *Client) Capture(text, source, category, tier string) (map[string]any, error) {
 	body := map[string]any{
-		"text":   text,
-		"source": source,
+		"content":      text,
+		"category":      "conversation",
+		"title":         "auto-captured",
+		"summary":       truncate(text, 200),
+		"source_type":   source, // e.g. "prism:lumi"
+		"scope":         "project",
+		"importance_score": 0.5,
 	}
 	if category != "" {
 		body["category"] = category
 	}
 	if tier != "" {
-		body["tier"] = tier
+		body["scope"] = tier
 	}
-	return c.doPost(c.BaseURL+"/capture", body)
+
+	return c.doPost(c.BaseURL+"/v1/memory/ingest", body)
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }
 
 // Search performs hybrid search (FTS5 + vector + graph + RRF).

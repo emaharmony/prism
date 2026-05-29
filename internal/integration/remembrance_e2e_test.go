@@ -23,33 +23,25 @@ func TestE2E_RemembranceCaptureContext(t *testing.T) {
 	// Mock Remembrance server that records captures and returns context
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
 
-		case "/capture":
+		case "/v1/memory/ingest":
 			// Record what was captured
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
-			capturedText, _ = body["text"].(string)
-			capturedSource, _ = body["source"].(string)
+			capturedText, _ = body["content"].(string)
+			capturedSource, _ = body["source_type"].(string)
 
 			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
 			w.Write([]byte(`{
-				"id": "mem_e2e_001",
-				"decision": "PERSIST",
-				"confidence": 0.95,
-				"backend": "dilbert",
-				"category": "project",
-				"tier": "persist",
-				"summary": "Agent completed task",
-				"topics": ["prism", "remembrance"],
-				"entities": ["lumi"],
-				"new_entities": [],
-				"edges_created": 1
+				"memory_id": "mem_e2e_001",
+				"status": "ingested"
 			}`))
 
-		case "/context/build":
+		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
 				"query": "what is prism",
@@ -240,10 +232,10 @@ func TestE2E_RemembranceRequiredFailure(t *testing.T) {
 func TestE2E_RemembranceClientBuildContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/context/build":
+		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
 				"query": "prism architecture",

@@ -56,8 +56,10 @@ func (cc *conversationContext) runToolLoopChat(
 		// After 6 iterations, remove tools from the request entirely.
 		// The model MUST give a final answer now.
 		toolsForThisIteration := chatTools
+		forceFinal := false
 		if i >= 6 {
 			toolsForThisIteration = []provider.ChatTool{} // explicit empty slice: no tools allowed
+			forceFinal = true
 			log.Printf("[TOOL-CHAT] iteration %d: removing tools from request to force final answer", i+1)
 		}
 
@@ -76,6 +78,22 @@ func (cc *conversationContext) runToolLoopChat(
 		if !response.HasToolCalls() {
 			log.Printf("[TOOL-CHAT] iteration %d: final response (%d chars)", i+1, len(response.Content))
 			return response.Content, summaries, nil
+		}
+
+		// If tools were removed (forceFinal) but model still generated tool_calls,
+		// treat the content as the final answer. Ignore hallucinated tool calls.
+		if forceFinal {
+			if response.Content != "" {
+				log.Printf("[TOOL-CHAT] iteration %d: forceFinal — model still requested tools, using content (%d chars)", i+1, len(response.Content))
+				return response.Content, summaries, nil
+			}
+			// No content and no valid tool calls — use last known content
+			if lastContent != "" {
+				log.Printf("[TOOL-CHAT] iteration %d: forceFinal — no content, using lastContent (%d chars)", i+1, len(lastContent))
+				return lastContent, summaries, nil
+			}
+			log.Printf("[TOOL-CHAT] iteration %d: forceFinal — no content and no lastContent, returning fallback", i+1)
+			return "I've gathered information but had trouble composing a final response. Please ask again.", summaries, nil
 		}
 
 		// Process tool calls

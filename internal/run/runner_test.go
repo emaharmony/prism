@@ -1259,11 +1259,15 @@ func startMockMemoryServer(t *testing.T) *mockMemoryServer {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/context/build", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/context/build", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		resp := `{"query": "test", "project": "", "agent": "", "memories": [{"id": "test-doc-1", "compiled_truth": "Test remembrance context for unit test.", "summary": "test snippet one", "category": "test", "tier": "persist", "score": 0.95}, {"id": "test-doc-2", "compiled_truth": "test snippet two", "summary": "test snippet two", "category": "test", "tier": "active", "score": 0.85}], "entities": [], "open_threads": [], "total_results": 2}`
 		w.Write([]byte(resp))
+	})
+	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status": "ok"}`))
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
