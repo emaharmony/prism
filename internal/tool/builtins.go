@@ -645,10 +645,10 @@ func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int6
 	registry.Register(&ProjectOverviewTool{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
 
 	// V28: Git read-only tools
-	registry.Register(&GitStatusTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&GitLogTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&GitDiffTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&GitBranchListTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitStatusTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&GitLogTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&GitDiffTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&GitBranchListTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 
 	return registry
 }
@@ -656,14 +656,14 @@ func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int6
 // RegisterBuiltinsV4 adds all V3 + V4 + V28 tools to the registry.
 // V4 tools (write_file_proposal) require approval.
 // V28 mutation tools (git_add, git_commit, git_push) require approval.
-func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize int64) *Registry {
-	RegisterBuiltins(registry, workspaceRoot, maxFileSize)
+func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize int64, allowedPaths ...string) *Registry {
+	RegisterBuiltins(registry, workspaceRoot, maxFileSize, allowedPaths...)
 	registry.Register(&WriteFileProposal{WorkspaceRoot: workspaceRoot})
 
 	// V28: Git mutation tools (requires approval)
-	registry.Register(&GitAddTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&GitCommitTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&GitPushTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&GitAddTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&GitCommitTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&GitPushTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 
 	return registry
 }

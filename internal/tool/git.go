@@ -15,21 +15,32 @@ import (
 
 // ---------- Read-only Git Tools (always allowed) ----------
 
-// GitStatusTool runs `git status` in the workspace.
+// GitStatusTool runs `git status` in a repository directory.
 type GitStatusTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitStatusTool) Name() string        { return "git_status" }
 func (t *GitStatusTool) Description() string { return "Shows the working tree status (git status). Lists modified, staged, and untracked files." }
 func (t *GitStatusTool) Schema() ToolSchema {
 	return ToolSchema{
-		Input:  map[string]ParamSpec{},
+		Input: map[string]ParamSpec{
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook. If unsure, use project_overview first.", Required: false},
+		},
 		Output: ParamSpec{Type: "string", Description: "Git status output"},
 	}
 }
 func (t *GitStatusTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, "status", "--porcelain=v2", "--branch")
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
+	out, exitCode, err := runGitCommand(repoDir, "status", "--porcelain=v2", "--branch")
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git status failed: %v", err)}, nil
 	}
@@ -44,7 +55,7 @@ func (t *GitStatusTool) Execute(ctx context.Context, input map[string]any) (Tool
 
 // GitLogTool runs `git log` to show recent commits.
 type GitLogTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitLogTool) Name() string        { return "git_log" }
@@ -52,13 +63,23 @@ func (t *GitLogTool) Description() string { return "Shows recent git commit hist
 func (t *GitLogTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"count": {Type: "integer", Description: "Number of commits to show (default: 10, max: 50)", Required: false},
-			"branch": {Type: "string", Description: "Branch name to show log for (default: current branch)", Required: false},
+			"count":     {Type: "integer", Description: "Number of commits to show (default: 10, max: 50)", Required: false},
+			"branch":    {Type: "string", Description: "Branch name to show log for (default: current branch)", Required: false},
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook.", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "Git log output with commit hashes, authors, dates, and messages"},
 	}
 }
 func (t *GitLogTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
 	count := 10
 	if c, ok := input["count"].(float64); ok && c > 0 {
 		count = int(c)
@@ -73,7 +94,7 @@ func (t *GitLogTool) Execute(ctx context.Context, input map[string]any) (ToolRes
 		args = append(args, branch)
 	}
 
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, args...)
+	out, exitCode, err := runGitCommand(repoDir, args...)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git log failed: %v", err)}, nil
 	}
@@ -88,7 +109,7 @@ func (t *GitLogTool) Execute(ctx context.Context, input map[string]any) (ToolRes
 
 // GitDiffTool shows git diffs (unstaged, staged, or against a branch).
 type GitDiffTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitDiffTool) Name() string        { return "git_diff" }
@@ -96,14 +117,24 @@ func (t *GitDiffTool) Description() string { return "Shows git diffs — changes
 func (t *GitDiffTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"staged": {Type: "boolean", Description: "Show staged changes instead of unstaged (default: false)", Required: false},
-			"branch": {Type: "string", Description: "Compare against a branch (e.g., 'main') instead of working tree", Required: false},
-			"path":   {Type: "string", Description: "Specific file or directory to diff", Required: false},
+			"staged":    {Type: "boolean", Description: "Show staged changes instead of unstaged (default: false)", Required: false},
+			"branch":    {Type: "string", Description: "Compare against a branch (e.g., 'main') instead of working tree", Required: false},
+			"path":      {Type: "string", Description: "Specific file or directory to diff", Required: false},
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook.", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "Git diff output"},
 	}
 }
 func (t *GitDiffTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
 	args := []string{"diff"}
 
 	if staged, ok := input["staged"].(bool); ok && staged {
@@ -119,7 +150,7 @@ func (t *GitDiffTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 		args = append(args, "--", diffPath)
 	}
 
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, args...)
+	out, exitCode, err := runGitCommand(repoDir, args...)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git diff failed: %v", err)}, nil
 	}
@@ -141,19 +172,30 @@ func (t *GitDiffTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 
 // GitBranchListTool lists local branches.
 type GitBranchListTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitBranchListTool) Name() string        { return "git_branch_list" }
 func (t *GitBranchListTool) Description() string { return "Lists local git branches with the current branch marked. Use this to see what branches exist." }
 func (t *GitBranchListTool) Schema() ToolSchema {
 	return ToolSchema{
-		Input:  map[string]ParamSpec{},
+		Input: map[string]ParamSpec{
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook.", Required: false},
+		},
 		Output: ParamSpec{Type: "array", Description: "List of branch names with current branch indicator"},
 	}
 }
 func (t *GitBranchListTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, "branch", "--list")
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
+	out, exitCode, err := runGitCommand(repoDir, "branch", "--list")
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git branch failed: %v", err)}, nil
 	}
@@ -172,8 +214,8 @@ func (t *GitBranchListTool) Execute(ctx context.Context, input map[string]any) (
 		name := strings.TrimPrefix(line, "* ")
 		name = strings.TrimSpace(name)
 		branches = append(branches, map[string]any{
-			"name":     name,
-			"current":  isCurrent,
+			"name":    name,
+			"current": isCurrent,
 		})
 	}
 
@@ -185,7 +227,7 @@ func (t *GitBranchListTool) Execute(ctx context.Context, input map[string]any) (
 
 // GitAddTool stages files for commit. This is a mutation — it requires approval.
 type GitAddTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitAddTool) Name() string        { return "git_add" }
@@ -193,12 +235,22 @@ func (t *GitAddTool) Description() string { return "Stages file changes for the 
 func (t *GitAddTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path": {Type: "string", Description: "File or directory to stage (use '.' for all changes)", Required: true},
+			"path":      {Type: "string", Description: "File or directory to stage (use '.' for all changes)", Required: true},
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook.", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "Staging result"},
 	}
 }
 func (t *GitAddTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
 	pathVal, ok := input["path"].(string)
 	if !ok || pathVal == "" {
 		return ToolResult{Success: false, Error: "required parameter 'path' must be a non-empty string"}, nil
@@ -209,7 +261,7 @@ func (t *GitAddTool) Execute(ctx context.Context, input map[string]any) (ToolRes
 		return ToolResult{Success: false, Error: "path traversal blocked"}, nil
 	}
 
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, "add", pathVal)
+	out, exitCode, err := runGitCommand(repoDir, "add", pathVal)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git add failed: %v", err)}, nil
 	}
@@ -228,7 +280,7 @@ func (t *GitAddTool) Execute(ctx context.Context, input map[string]any) (ToolRes
 // GitCommitTool creates a git commit. This is a mutation — it requires approval
 // before executing. The agent must propose the commit, and a human must approve.
 type GitCommitTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitCommitTool) Name() string        { return "git_commit" }
@@ -236,12 +288,22 @@ func (t *GitCommitTool) Description() string { return "Creates a git commit with
 func (t *GitCommitTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"message": {Type: "string", Description: "The commit message", Required: true},
+			"message":   {Type: "string", Description: "The commit message", Required: true},
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook.", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "Commit hash and summary"},
 	}
 }
 func (t *GitCommitTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
 	message, ok := input["message"].(string)
 	if !ok || message == "" {
 		return ToolResult{Success: false, Error: "required parameter 'message' must be a non-empty string"}, nil
@@ -254,7 +316,7 @@ func (t *GitCommitTool) Execute(ctx context.Context, input map[string]any) (Tool
 		message = message[:500]
 	}
 
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, "commit", "-m", message)
+	out, exitCode, err := runGitCommand(repoDir, "commit", "-m", message)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git commit failed: %v", err)}, nil
 	}
@@ -271,7 +333,7 @@ func (t *GitCommitTool) Execute(ctx context.Context, input map[string]any) (Tool
 // GitPushTool pushes commits to a remote. This is a mutation — it requires
 // approval before executing.
 type GitPushTool struct {
-	WorkspaceRoot string
+	ToolPaths ToolPaths
 }
 
 func (t *GitPushTool) Name() string        { return "git_push" }
@@ -279,13 +341,23 @@ func (t *GitPushTool) Description() string { return "Pushes commits to a remote 
 func (t *GitPushTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"remote": {Type: "string", Description: "Remote name (default: origin)", Required: false},
-			"branch": {Type: "string", Description: "Branch to push (default: current branch)", Required: false},
+			"remote":    {Type: "string", Description: "Remote name (default: origin)", Required: false},
+			"branch":    {Type: "string", Description: "Branch to push (default: current branch)", Required: false},
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository. Use absolute paths like /Users/ema/projects/repos/bassbook.", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "Push output or error"},
 	}
 }
 func (t *GitPushTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
 	remote := "origin"
 	if r, ok := input["remote"].(string); ok && r != "" {
 		remote = r
@@ -297,7 +369,7 @@ func (t *GitPushTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 		args = append(args, branch)
 	}
 
-	out, exitCode, err := runGitCommand(t.WorkspaceRoot, args...)
+	out, exitCode, err := runGitCommand(repoDir, args...)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("git push failed: %v", err)}, nil
 	}

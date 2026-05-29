@@ -215,9 +215,9 @@ func executeChat(args []string) {
 	}
 
 	tool.RegisterBuiltins(registry, workspaceRoot, 10*1024*1024, allowedPaths...)
-	registry.Register(&tool.GitAddTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&tool.GitCommitTool{WorkspaceRoot: workspaceRoot})
-	registry.Register(&tool.GitPushTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 
 	toolPolicy := tool.DefaultPolicyConfig()
 	toolPolicy.MaxFileSize = 10 * 1024 * 1024
