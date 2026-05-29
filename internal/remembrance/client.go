@@ -169,7 +169,7 @@ func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextP
 		body["max_tokens"] = limit
 	}
 	if project == "" {
-		body["project_id"] = "framework"
+		body["project_id"] = "prism"
 	}
 
 	result, err := c.doPost(c.BaseURL+"/v1/context/build", body)
@@ -205,13 +205,15 @@ func (c *Client) IsAvailable() bool {
 // POSTs to /v1/memory/ingest with the conversation text.
 func (c *Client) Capture(text, source, category, tier string) (map[string]any, error) {
 	body := map[string]any{
-		"content":      text,
-		"category":      "conversation",
-		"title":         "auto-captured",
-		"summary":       truncate(text, 200),
-		"source_type":   source, // e.g. "prism:lumi"
-		"scope":         "project",
-		"importance_score": 0.5,
+		"content":           text,
+		"category":           "conversation",
+		"title":              "auto-captured",
+		"summary":             truncate(text, 200),
+		"source_type":         source, // e.g. "prism:lumi"
+		"source_agent":        source,  // same identifier for agent attribution
+		"scope":               "project",
+		"importance_score":    0.5,
+		"project_id":          "prism", // default project for auto-captured conversations
 	}
 	if category != "" {
 		body["category"] = category
