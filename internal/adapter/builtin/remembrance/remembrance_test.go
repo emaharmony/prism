@@ -39,7 +39,7 @@ func TestAdapterCapabilities(t *testing.T) {
 func TestAdapterHealth(t *testing.T) {
 	// Test with mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/v1/health" {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		}
@@ -76,7 +76,7 @@ func TestAdapterHealthUnavailable(t *testing.T) {
 
 func TestAdapterExecuteCapture(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" && r.URL.Path == "/capture" {
+		if r.Method == "POST" && r.URL.Path == "/v1/memory/ingest" {
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
 				"id":             "mem_123",
@@ -158,7 +158,7 @@ func TestAdapterExecuteCaptureMissingText(t *testing.T) {
 
 func TestClientIsAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/v1/health" {
 			w.WriteHeader(http.StatusOK)
 		}
 	}))

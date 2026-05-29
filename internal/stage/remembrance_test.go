@@ -70,10 +70,10 @@ func TestRemembranceStage_ContextBuild(t *testing.T) {
 	// Mock Remembrance server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/context/build":
+		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
 				"query": "test",
@@ -114,15 +114,15 @@ func TestRemembranceStage_Capture(t *testing.T) {
 	captureCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/capture":
+		case "/v1/memory/ingest":
 			captureCalled = true
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
-				"id": "mem_123",
-				"decision": "PERSIST",
+				"memory_id": "mem_123",
+				"status": "ingested",
 				"confidence": 0.92,
 				"backend": "dilbert",
 				"category": "project",
@@ -157,14 +157,14 @@ func TestRemembranceStage_Capture(t *testing.T) {
 func TestRemembranceStage_CaptureAndContext(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/capture":
+		case "/v1/memory/ingest":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
-				"id": "mem_123",
-				"decision": "PERSIST",
+				"memory_id": "mem_123",
+				"status": "ingested",
 				"confidence": 0.92,
 				"backend": "dilbert",
 				"category": "project",
@@ -175,7 +175,7 @@ func TestRemembranceStage_CaptureAndContext(t *testing.T) {
 				"new_entities": [],
 				"edges_created": 0
 			}`))
-		case "/context/build":
+		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
 				"query": "test",
@@ -211,14 +211,14 @@ func TestRemembranceStage_CaptureAndContext(t *testing.T) {
 func TestRemembranceStage_EmptyOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Capture should NOT be called for empty output
-		if r.URL.Path == "/capture" {
+		if r.URL.Path == "/v1/memory/ingest" {
 			t.Error("capture should not be called for empty output")
 		}
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/v1/health" {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
 		}
-		if r.URL.Path == "/context/build" {
+		if r.URL.Path == "/v1/context/build" {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"query":"test","memories":[],"entities":[],"total_results":0}`))
 		}
@@ -241,10 +241,10 @@ func TestRemembranceStage_ContextBuildFails_Required(t *testing.T) {
 	// Server returns 500 on /context/build — memory is required
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/context/build":
+		case "/v1/context/build":
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(`{"error": "internal server error"}`))
 		default:
@@ -272,10 +272,10 @@ func TestRemembranceStage_ContextBuildFails_Graceful(t *testing.T) {
 	// Server returns 500 on /context/build — memory is NOT required (graceful)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/context/build":
+		case "/v1/context/build":
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(`{"error": "internal server error"}`))
 		default:
@@ -303,11 +303,11 @@ func TestRemembranceStage_HealthCheckCache(t *testing.T) {
 	healthChecks := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health":
+		case "/v1/health":
 			healthChecks++
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
-		case "/context/build":
+		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"query":"test","memories":[],"entities":[],"total_results":0}`))
 		default:
@@ -364,10 +364,10 @@ func TestRemembranceStage_ClientInitializedEagerly(t *testing.T) {
 func TestRemembranceStage_ContextBuildNoTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// /context/build should NOT be called when task is empty
-		if r.URL.Path == "/context/build" {
+		if r.URL.Path == "/v1/context/build" {
 			t.Error("context/build should not be called for empty task")
 		}
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/v1/health" {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(`{"status":"ok"}`))
 		}
