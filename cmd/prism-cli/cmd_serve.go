@@ -318,9 +318,9 @@ func executeServe(args []string) {
 		toolReg := tool.NewRegistry()
 		tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024, allowedPaths...) // all read-only + project tools
 		// V28: Git mutation tools (require approval)
-		toolReg.Register(&tool.GitAddTool{WorkspaceRoot: workspaceRoot})
-		toolReg.Register(&tool.GitCommitTool{WorkspaceRoot: workspaceRoot})
-		toolReg.Register(&tool.GitPushTool{WorkspaceRoot: workspaceRoot})
+		toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+		toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+		toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 
 		toolPolicy := tool.DefaultPolicyConfig()
 		// Mutation operations require approval
