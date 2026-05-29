@@ -218,7 +218,7 @@ func (cc *conversationContext) buildMessages(sess *session.Session, agentCfg *or
 			WithNamedContexts(agentCfg.Context).
 			WithTokenBudget(budget)
 
-		injected, err := builder.Build()
+		injected, err := builder.BuildCached()
 		if err == nil && injected.FormattedString != "" {
 			systemContent += "\n" + injected.FormattedString
 			log.Printf("[CONTEXT] Injected %d tokens from %d sources (hash: %s)",

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // NamedSource maps short names to workspace files.
@@ -65,6 +66,19 @@ type Builder struct {
 	AutoFiles     []string   // Files discovered by keyword matching
 	ExplicitFiles []string   // Files specified via --context-file
 	TokenBudget   int        // Max tokens to inject (0 = no limit)
+
+	// Cache for BuildCached(). Invalidated when workspace files change.
+	cache     *cachedContext
+	cacheMu   sync.Mutex
+}
+
+// cachedContext holds a previously-built InjectedContext along with file
+// mtimes and sizes. BuildCached() checks these to determine if a rebuild
+// is needed. This eliminates redundant file reads when workspace files
+// haven't changed between messages.
+type cachedContext struct {
+	result   *InjectedContext
+	fileInfo map[string]os.FileInfo // path -> Stat result
 }
 
 // NewBuilder creates a context builder with the given workspace root.
@@ -169,6 +183,92 @@ func (b *Builder) Build() (*InjectedContext, error) {
 	}, nil
 }
 
+// BuildCached is a cached version of Build. It returns the cached result
+// if none of the workspace files have changed (checked via os.Stat mtime+size).
+// If any file has changed or this is the first call, it delegates to Build()
+// and caches the result. This is the preferred method for hot-path calls
+// like per-message context injection where workspace files rarely change.
+func (b *Builder) BuildCached() (*InjectedContext, error) {
+	b.cacheMu.Lock()
+	defer b.cacheMu.Unlock()
+
+	// Collect all file paths that would be read
+	filePath := func(name, filename, source string) string {
+		if !filepath.IsAbs(filename) && source == "named" {
+			return filepath.Join(b.WorkspaceRoot, filename)
+		}
+		return filename
+	}
+
+	needRebuild := b.cache == nil
+
+	// Build the set of expected file paths
+	expectedPaths := make(map[string]bool)
+	for _, name := range b.NamedContexts {
+		if filename, ok := NamedSources[name]; ok {
+			p := filePath(name, filename, "named")
+			expectedPaths[p] = true
+		}
+	}
+	for _, path := range b.AutoFiles {
+		expectedPaths[path] = true
+	}
+	for _, path := range b.ExplicitFiles {
+		expectedPaths[path] = true
+	}
+
+	if b.cache != nil {
+		// Check if any file changed or was added/removed
+		for p, oldInfo := range b.cache.fileInfo {
+			if !expectedPaths[p] {
+				// File was removed from the expected set
+				needRebuild = true
+				break
+			}
+			newInfo, err := os.Stat(p)
+			if err != nil {
+				// File no longer exists
+				needRebuild = true
+				break
+			}
+			if newInfo.Size() != oldInfo.Size() || !newInfo.ModTime().Equal(oldInfo.ModTime()) {
+				needRebuild = true
+				break
+			}
+		}
+		// Check for new files not in cache
+		if !needRebuild {
+			for p := range expectedPaths {
+				if _, ok := b.cache.fileInfo[p]; !ok {
+					needRebuild = true
+					break
+				}
+			}
+		}
+	}
+
+	if needRebuild {
+		result, err := b.Build()
+		if err != nil {
+			return nil, err
+		}
+
+		// Collect current file mtimes/sizes for next call
+		fileInfo := make(map[string]os.FileInfo)
+		for p := range expectedPaths {
+			if info, err := os.Stat(p); err == nil {
+				fileInfo[p] = info
+			}
+		}
+
+		b.cache = &cachedContext{
+			result:   result,
+			fileInfo: fileInfo,
+		}
+	}
+
+	return b.cache.result, nil
+}
 // readFile reads a single file from the workspace.
 func (b *Builder) readFile(name, filename, source string, priority int) (ContextFile, error) {
 	// Resolve path: named sources are relative to workspace root
