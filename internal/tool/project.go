@@ -28,7 +28,7 @@ func (t *SearchFilesTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
 			"pattern":    {Type: "string", Description: "The text pattern to search for", Required: true},
-			"path":       {Type: "string", Description: "Directory to search in, relative to workspace root (default: '.')", Required: false},
+			"path":       {Type: "string", Description: "Directory to search in. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (default: '.')", Required: false},
 			"max_results": {Type: "integer", Description: "Maximum number of matching lines to return (default: 30)", Required: false},
 		},
 		Output: ParamSpec{Type: "array", Description: "List of matches with file, line number, and text"},
@@ -143,7 +143,7 @@ func (t *ProjectOverviewTool) Description() string {
 func (t *ProjectOverviewTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path":      {Type: "string", Description: "Project root relative to workspace root (default: '.')", Required: false},
+			"path":      {Type: "string", Description: "Project root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (default: '.')", Required: false},
 			"deep_dive": {Type: "boolean", Description: "If true, also read key architecture files from subdirectories (Prisma schema, API modules, config files, etc.) for deeper understanding", Required: false},
 		},
 		Output: ParamSpec{Type: "object", Description: "Project overview with key files, directory tree, and optionally architecture files"},
