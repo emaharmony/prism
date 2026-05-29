@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -67,7 +68,28 @@ func ResolveToolPath(tp ToolPaths, inputPath string) (string, error) {
 
 	// Check containment against all roots
 	if !safety.IsWithinAnyRoot(absPath, absRoots) {
-		return "", fmt.Errorf("path %q is not within any allowed root", inputPath)
+		// Build a helpful error message listing available directories
+		var available []string
+		for _, root := range absRoots {
+			entries, err := os.ReadDir(root)
+			if err == nil {
+				for _, e := range entries {
+					if e.IsDir() {
+						available = append(available, filepath.Join(root, e.Name()))
+					}
+				}
+			}
+		}
+		suggestion := ""
+		if len(available) > 0 {
+			if len(available) > 5 {
+				suggestion = fmt.Sprintf(" Available directories include: %s (and %d more)",
+					strings.Join(available[:5], ", "), len(available)-5)
+			} else {
+				suggestion = fmt.Sprintf(" Available directories: %s", strings.Join(available, ", "))
+			}
+		}
+		return "", fmt.Errorf("path %q is not within any allowed root.%s", inputPath, suggestion)
 	}
 
 	return absPath, nil

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -111,8 +112,22 @@ class MetadataStore:
         """)
         self.conn.commit()
 
+    def ensure_project(self, project_id: str) -> None:
+        """Auto-create a project row if it doesn't exist, so FK constraints pass."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """INSERT OR IGNORE INTO projects (id, name, description, root_path, created_at, updated_at)
+               VALUES (?, ?, ?, '', ?, ?)""",
+            (project_id, project_id, f"Auto-created project: {project_id}", now, now),
+        )
+        self.conn.commit()
+
     def store_memory(self, memory: Memory) -> Memory:
-        """Insert a memory into the store."""
+        """Insert a memory into the store. Auto-creates the project if missing."""
+        # Auto-create project to satisfy FK constraint
+        if memory.project_id:
+            self.ensure_project(memory.project_id)
+
         self.conn.execute(
             """INSERT INTO memories
                (id, project_id, user_id, scope, category, title, summary, content,

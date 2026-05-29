@@ -94,7 +94,7 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 		}, nil
 	}
 
-	resolvedPath, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
+	resolvedPath, err := FuzzyResolvePath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
 		return ToolResult{
 			Success: false,
@@ -169,7 +169,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 		}, nil
 	}
 
-	resolvedPath, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
+	resolvedPath, err := FuzzyResolvePath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
 		return ToolResult{
 			Success: false,
@@ -537,7 +537,7 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 		maxFiles = int(mf)
 	}
 
-	resolvedPath, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
+	resolvedPath, err := FuzzyResolvePath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
