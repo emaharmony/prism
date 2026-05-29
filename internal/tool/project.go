@@ -138,14 +138,15 @@ type ProjectOverviewTool struct {
 
 func (t *ProjectOverviewTool) Name() string        { return "project_overview" }
 func (t *ProjectOverviewTool) Description() string {
-	return "Provides a quick overview of a project: reads README, package manifest, config files, and builds a directory tree. Use this first to understand a project's structure before diving into specific files."
+	return "Provides an overview of a project: reads README, package manifest, config files, and builds a directory tree. Set deep_dive=true to also read key architecture files (Prisma schema, API modules, Program.cs, configs, etc.) and get recent git history for deeper understanding. Always use deep_dive=true when you need to understand a project's architecture and current direction."
 }
 func (t *ProjectOverviewTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path": {Type: "string", Description: "Project root relative to workspace root (default: '.')", Required: false},
+			"path":      {Type: "string", Description: "Project root relative to workspace root (default: '.')", Required: false},
+			"deep_dive": {Type: "boolean", Description: "If true, also read key architecture files from subdirectories (Prisma schema, API modules, config files, etc.) for deeper understanding", Required: false},
 		},
-		Output: ParamSpec{Type: "object", Description: "Project overview with key files and directory tree"},
+		Output: ParamSpec{Type: "object", Description: "Project overview with key files, directory tree, and optionally architecture files"},
 	}
 }
 
@@ -165,6 +166,11 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 	projectPath := "."
 	if p, ok := input["path"].(string); ok && p != "" {
 		projectPath = p
+	}
+
+	deepDive := false
+	if dd, ok := input["deep_dive"].(bool); ok {
+		deepDive = dd
 	}
 
 	// Resolve project directory against allowed paths
@@ -195,16 +201,70 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 		return keyFileContents[i]["file"].(string) < keyFileContents[j]["file"].(string)
 	})
 
-	// Build directory tree (2 levels deep for overview)
-	tree := buildDirectoryTree(absProjectDir, absProjectDir, 2)
+	// Build directory tree (2 levels deep for overview, 4 for deep dive)
+	treeDepth := 2
+	if deepDive {
+		treeDepth = 4
+	}
+	tree := buildDirectoryTree(absProjectDir, absProjectDir, treeDepth)
+
+	result := map[string]any{
+		"path":           projectPath,
+		"key_files":      keyFileContents,
+		"directory_tree": tree,
+	}
+
+	// Deep dive: read architecture-defining files from subdirectories
+	if deepDive {
+		archFiles, err := findArchitectureFiles(absProjectDir)
+		if err != nil {
+			result["architecture_scan_error"] = err.Error()
+		} else {
+			var archContents []map[string]any
+			for _, relPath := range archFiles {
+				fpath := filepath.Join(absProjectDir, relPath)
+				data, err := os.ReadFile(fpath)
+				if err != nil {
+					continue
+				}
+				content := string(data)
+				if len(content) > 8000 { // cap architecture files at 8KB
+					content = content[:8000] + "\n... (truncated)"
+				}
+				archContents = append(archContents, map[string]any{
+					"file":    relPath,
+					"content": content,
+					"size":    len(data),
+				})
+			}
+			sort.Slice(archContents, func(i, j int) bool {
+				return archContents[i]["file"].(string) < archContents[j]["file"].(string)
+			})
+			result["architecture_files"] = archContents
+		}
+
+		// Also read git recent commits for project velocity/direction
+		gitLog, _, err := runGitCommand(absProjectDir, "log", "--oneline", "-20")
+		if err == nil && gitLog != "" {
+			result["recent_commits"] = gitLog
+		}
+
+		// Read current branch
+		gitBranch, _, err := runGitCommand(absProjectDir, "branch", "--show-current")
+		if err == nil && gitBranch != "" {
+			result["current_branch"] = gitBranch
+		}
+
+		// Count git branches
+		gitBranches, _, err := runGitCommand(absProjectDir, "branch", "-a", "--list")
+		if err == nil && gitBranches != "" {
+			result["branch_count"] = len(strings.Split(strings.TrimSpace(gitBranches), "\n"))
+		}
+	}
 
 	return ToolResult{
 		Success: true,
-		Output: map[string]any{
-			"path":              projectPath,
-			"key_files":         keyFileContents,
-			"directory_tree":    tree,
-		},
+		Output:  result,
 	}, nil
 }
 
@@ -248,15 +308,99 @@ func buildDirectoryTree(root, workspaceRoot string, maxDepth int) []map[string]a
 	return entries
 }
 
-// isWithinRoot checks if a path is within the workspace root.
-// Reuses the safety package logic.
-func isWithinRoot(path, root string) bool {
-	// Use filepath.Rel — if the relative path tries to escape, it will start with ".."
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
+// architectureFilePatterns lists subdirectory files that define a project's architecture.
+// These are files that reveal the tech stack, data model, routing, service structure,
+// and key configuration — not source code implementation details.
+var architectureFilePatterns = []string{
+	// Prisma / ORM
+	"packages/db/prisma/schema.prisma",
+	"prisma/schema.prisma",
+	// .NET API
+	"apps/api/Program.cs",
+	"apps/api/BassBook.Api.csproj",
+	"apps/api/appsettings.json",
+	"apps/api/appsettings.Development.json",
+	// API routes / modules
+	"apps/api/Modules/**/*.cs",
+	// Next.js / Frontend
+	"apps/web/package.json",
+	"apps/web/next.config.js",
+	"apps/web/next.config.mjs",
+	"apps/web/next.config.ts",
+	// Worker / Background jobs
+	"apps/worker/package.json",
+	// Shared packages
+	"packages/types/src/index.ts",
+	"packages/config/src/index.ts",
+	// Monorepo config
+	"turbo.json",
+	// Go projects
+	"cmd/*/main.go",
+	"internal/**/*_types.go",
+	"internal/**/config.go",
+	// Docker / Deploy
+	"Dockerfile",
+	"apps/api/Dockerfile",
+	"apps/web/Dockerfile",
+}
+
+// findArchitectureFiles discovers architecture-relevant files in the project.
+// It checks known patterns and also scans for common architecture markers.
+func findArchitectureFiles(root string) ([]string, error) {
+	var found []string
+	seen := make(map[string]bool)
+
+	// Check known patterns
+	for _, pattern := range architectureFilePatterns {
+		matches, err := filepath.Glob(filepath.Join(root, pattern))
+		if err != nil {
+			continue
+		}
+		for _, match := range matches {
+			rel, err := filepath.Rel(root, match)
+			if err != nil {
+				continue
+			}
+			if !seen[rel] {
+				found = append(found, rel)
+				seen[rel] = true
+			}
+		}
 	}
-	return !strings.HasPrefix(rel, "..") && rel != "."
+
+	// Also scan for common architecture markers that might not be in the pattern list
+	architectureMarkers := []string{
+		"schema.prisma", "Program.cs", "appsettings.json",
+		"next.config.js", "next.config.mjs", "next.config.ts",
+	}
+
+	filepath.Walk(root, func(walkPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if info.IsDir() {
+			// Skip common non-architecture directories
+			name := info.Name()
+			if name == "node_modules" || name == ".git" || name == "bin" || name == "obj" || name == ".next" || name == "dist" || name == "build" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, walkPath)
+		if err != nil {
+			return nil
+		}
+		for _, marker := range architectureMarkers {
+			if filepath.Base(rel) == marker && !seen[rel] {
+				found = append(found, rel)
+				seen[rel] = true
+			}
+		}
+		return nil
+	})
+
+	sort.Strings(found)
+	return found, nil
 }
 
 // runGitCommand is a helper for git tools to execute git commands safely.
