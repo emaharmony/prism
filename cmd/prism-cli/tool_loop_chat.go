@@ -7,7 +7,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/session"
@@ -203,45 +202,14 @@ func (cc *conversationContext) executeChatTool(
 func (cc *conversationContext) buildMessages(sess *session.Session, agentCfg *orchestrator.AgentConfig) []provider.ChatMessage {
 	var messages []provider.ChatMessage
 
-	// --- System message: Agent identity + workspace context + conversation postfix ---
+	// Static system content (cached, built once at startup)
 	var systemContent string
-	systemContent += fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role)
+	systemContent += cc.staticSystemChat
 
-	// Inject workspace context
-	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
-		budget := cc.cfg.Prism.ContextTokenBudget
-		if budget <= 0 {
-			budget = 4000
-		}
-
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(budget)
-
-		injected, err := builder.BuildCached()
-		if err == nil && injected.FormattedString != "" {
-			systemContent += "\n" + injected.FormattedString
-			log.Printf("[CONTEXT] Injected %d tokens from %d sources (hash: %s)",
-				injected.TotalTokens, len(injected.Files), injected.ContentHash[:12])
-		}
-	}
-
-	// Session awareness
+	// Dynamic session awareness
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
 	sessionMsgCount := len(sess.Messages)
 	systemContent += fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge)
-
-	// Conversation postfix
-	postfix := agentCfg.ConversationPostfix
-	if postfix == "" {
-		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
-			"Don't wrap things up unless the topic is genuinely resolved. " +
-			"Be warm, curious, and engaged — not a transactional Q&A machine."
-	}
-	systemContent += "\n" + postfix + "\n"
-
-	// Tool usage guidance
-	systemContent += "\n## Tool Usage\n" + toolUsageGuidance + "\n"
 
 	messages = append(messages, provider.ChatMessage{
 		Role:    "system",

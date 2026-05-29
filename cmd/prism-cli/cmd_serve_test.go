@@ -50,6 +50,7 @@ func TestBuildPrompt_WithContextInjection(t *testing.T) {
 		Context: []string{"soul", "user"},
 	}
 
+	convCtx.rebuildStaticSystemContent(agentCfg)
 	prompt := convCtx.buildPrompt(sess, agentCfg)
 
 	// Verify agent identity is in the prompt
@@ -97,6 +98,7 @@ func TestBuildPrompt_WithoutContextInjection(t *testing.T) {
 		Context: []string{"soul"}, // Requested, but no builder available
 	}
 
+	convCtx.rebuildStaticSystemContent(agentCfg)
 	prompt := convCtx.buildPrompt(sess, agentCfg)
 
 	// Should still have agent identity
@@ -138,6 +140,7 @@ func TestBuildPrompt_EmptyContextList(t *testing.T) {
 		Context: []string{}, // Empty context list — no injection
 	}
 
+	convCtx.rebuildStaticSystemContent(agentCfg)
 	prompt := convCtx.buildPrompt(sess, agentCfg)
 
 	// Should have identity but no SOUL.md
@@ -170,6 +173,7 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 		Context: []string{"soul", "nonexistent"},
 	}
 
+	convCtx.rebuildStaticSystemContent(agentCfg)
 	prompt := convCtx.buildPrompt(sess, agentCfg)
 
 	// Should still work — missing files are skipped gracefully
@@ -359,6 +363,7 @@ func TestBuildPrompt_ConfigurableTokenBudget(t *testing.T) {
 	}
 
 	sess := &session.Session{ID: "test", Messages: []session.Message{}}
+	convCtx.rebuildStaticSystemContent(agentCfg)
 	prompt := convCtx.buildPrompt(sess, agentCfg)
 
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
