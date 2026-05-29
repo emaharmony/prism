@@ -7,20 +7,20 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
-from .config import load_config
-from .models import (
+from ..config import load_config
+from ..models import (
     MemoryCreate, IngestResponse,
     MemorySearchRequest, MemorySearchResponse,
     BuildContextRequest, ContextPack,
 )
-from .stores.metadata_store import MetadataStore
-from .stores.lancedb_store import LanceDBStore
-from .embeddings.ollama_provider import OllamaEmbeddingProvider
-from .memory.ingest import MemoryIngester
-from .memory.search import MemorySearcher
-from .memory.ranker import HybridRanker
-from .memory.context_builder import ContextBuilder
-from .memory.formatter import ContextFormatter
+from ..stores.metadata_store import MetadataStore
+from ..stores.lancedb_store import LanceDBStore
+from ..embeddings.ollama_provider import OllamaEmbeddingProvider
+from ..memory.ingest import MemoryIngester
+from ..memory.search import MemorySearcher
+from ..memory.ranker import HybridRanker
+from ..memory.context_builder import ContextBuilder
+from ..memory.formatter import ContextFormatter
 
 logger = logging.getLogger("remembrance")
 

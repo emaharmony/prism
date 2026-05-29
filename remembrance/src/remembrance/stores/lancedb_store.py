@@ -7,7 +7,6 @@ from typing import Optional
 
 import lancedb
 import pyarrow as pa
-from lancedb.embeddings import EmbeddingsFunctionConfig, EmbeddingFunction
 from lancedb.pydantic import LanceModel, Vector
 
 
