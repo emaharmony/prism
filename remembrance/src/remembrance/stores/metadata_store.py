@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-from .models import Memory, MemoryCreate, AuditLogEntry
+from ..models import Memory, MemoryCreate, AuditLogEntry
 
 
 class MetadataStore:

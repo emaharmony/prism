@@ -162,7 +162,7 @@ func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextB
 
 // IsAvailable checks if Remembrance is reachable.
 func (c *Client) IsAvailable() bool {
-	resp, err := c.HTTPClient.Get(c.BaseURL + "/health")
+	resp, err := c.HTTPClient.Get(c.BaseURL + "/v1/health")
 	if err != nil {
 		return false
 	}
