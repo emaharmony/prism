@@ -93,8 +93,8 @@ func TestE2E_RemembranceCaptureContext(t *testing.T) {
 	if capturedText == "" {
 		t.Error("Expected capture to be called, but no text was captured")
 	}
-	if capturedSource != "prism:lumi" {
-		t.Errorf("Expected source=prism:lumi, got %s", capturedSource)
+	if capturedSource != "agent" {
+		t.Errorf("Expected source_type=agent, got %s", capturedSource)
 	}
 
 	// Verify context was built
