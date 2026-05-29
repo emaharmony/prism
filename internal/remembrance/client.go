@@ -101,15 +101,35 @@ type DreamResponse struct {
 	Totals      map[string]any `json:"totals"`
 }
 
-// ContextBuildResponse represents the full context for a task.
-type ContextBuildResponse struct {
-	Query        string           `json:"query"`
-	Project      string           `json:"project,omitempty"`
-	Agent        string           `json:"agent,omitempty"`
-	Memories     []map[string]any `json:"memories"`
-	Entities     []map[string]any `json:"entities"`
-	OpenThreads  []map[string]any `json:"open_threads"`
-	TotalResults int              `json:"total_results"`
+// ContextPackResponse represents the response from Remembrance's /v1/context/build endpoint.
+// Matches the Python ContextPack model.
+type ContextPackResponse struct {
+	ProjectID        string         `json:"project_id"`
+	AgentID          string         `json:"agent_id"`
+	Task             string         `json:"task"`
+	SelectedMemories []string       `json:"selected_memories"`
+	ContextMarkdown  string         `json:"context_markdown"`
+	ContextJSON      *ContextDetail `json:"context_json,omitempty"`
+	Warnings         []string       `json:"warnings,omitempty"`
+	TokenCount       int            `json:"token_count"`
+}
+
+// ContextDetail holds the structured context data.
+type ContextDetail struct {
+	ProjectID   string          `json:"project_id"`
+	AgentID     string          `json:"agent_id"`
+	Task        string          `json:"task"`
+	Memories    []ContextMemory `json:"selected_memories"`
+	TotalMemory int             `json:"total_memories"`
+}
+
+// ContextMemory represents a single memory in the context response.
+type ContextMemory struct {
+	MemoryID string  `json:"memory_id"`
+	Title    string  `json:"title"`
+	Summary  string  `json:"summary"`
+	Score    float64 `json:"score"`
+	Reason   string  `json:"reason"`
 }
 
 // ── Client ───────────────────────────────────────────────────────
@@ -139,7 +159,7 @@ func NewClientWithTimeout(baseURL string, timeout time.Duration) *Client {
 
 // BuildContext requests context from Remembrance for a task.
 // POSTs to /v1/context/build with the agent's task.
-func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextBuildResponse, error) {
+func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextPackResponse, error) {
 	body := map[string]any{
 		"task":       task,
 		"project_id": project,
@@ -157,20 +177,16 @@ func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextB
 		return nil, err
 	}
 
-	// Parse the response into ContextBuildResponse
-	resp := &ContextBuildResponse{}
+	// Marshal/unmarshal to get typed response
 	jsonBytes, err := json.Marshal(result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response: %w", err)
 	}
-	if err := json.Unmarshal(jsonBytes, resp); err != nil {
-		// If we can't unmarshal into the struct, return the raw result as a basic response
-		resp = &ContextBuildResponse{
-			Query:        task,
-			TotalResults: 0,
-		}
+	var resp ContextPackResponse
+	if err := json.Unmarshal(jsonBytes, &resp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	return resp, nil
+	return &resp, nil
 }
 
 // IsAvailable checks if Remembrance is reachable.

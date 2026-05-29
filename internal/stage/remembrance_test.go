@@ -76,14 +76,21 @@ func TestRemembranceStage_ContextBuild(t *testing.T) {
 		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
-				"query": "test",
-				"memories": [
-					{"id": "m1", "compiled_truth": "Ema is the founder", "summary": "Ema founded the project"}
-				],
-				"entities": [
-					{"id": "e1", "name": "Ema", "compiled_truth": "Senior developer"}
-				],
-				"total_results": 1
+				"project_id": "prism",
+				"agent_id": "lumi",
+				"task": "who is ema",
+				"selected_memories": ["m1"],
+				"context_markdown": "# Retrieved Remembrance Context\n\n## Task\nwho is ema\n\n## Relevant Context\n- **Ema is the founder** \u2014 Ema founded the project\n",
+				"context_json": {
+					"project_id": "prism",
+					"agent_id": "lumi",
+					"task": "who is ema",
+					"selected_memories": [
+						{"memory_id": "m1", "title": "Ema is the founder", "summary": "Ema founded the project", "score": 0.9, "reason": "highly relevant"}
+					],
+					"total_memories": 1
+				},
+				"token_count": 100
 			}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -178,10 +185,12 @@ func TestRemembranceStage_CaptureAndContext(t *testing.T) {
 		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
-				"query": "test",
-				"memories": [],
-				"entities": [],
-				"total_results": 0
+				"project_id": "prism",
+				"agent_id": "lumi",
+				"task": "test",
+				"selected_memories": [],
+				"context_markdown": "",
+				"token_count": 0
 			}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -220,7 +229,7 @@ func TestRemembranceStage_EmptyOutput(t *testing.T) {
 		}
 		if r.URL.Path == "/v1/context/build" {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"query":"test","memories":[],"entities":[],"total_results":0}`))
+			w.Write([]byte(`{"project_id":"prism","task":"test","selected_memories":[],"context_markdown":"","token_count":0}`))
 		}
 	}))
 	defer server.Close()
@@ -309,7 +318,7 @@ func TestRemembranceStage_HealthCheckCache(t *testing.T) {
 			w.Write([]byte(`{"status":"ok"}`))
 		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"query":"test","memories":[],"entities":[],"total_results":0}`))
+			w.Write([]byte(`{"project_id":"prism","task":"test","selected_memories":[],"context_markdown":"","token_count":0}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

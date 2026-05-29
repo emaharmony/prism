@@ -266,38 +266,33 @@ func (r *Runner) Run() (*RunResult, error) {
 			contextStr = ""
 		} else if ctxResp != nil {
 			// Memory succeeded
-			// V2 ContextBuildResponse has Context field with compiled text
-			// Build context string from V2 response
-			// Format: each memory's compiled_truth or summary
-			var contextParts []string
-			for _, mem := range ctxResp.Memories {
-				if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
-					contextParts = append(contextParts, ct)
-				} else if s, ok := mem["summary"].(string); ok && s != "" {
-					contextParts = append(contextParts, s)
+			// ContextPackResponse has ContextMarkdown (ready-to-inject)
+			// and ContextJSON with structured memory data
+			if ctxResp.ContextMarkdown != "" {
+				contextStr = ctxResp.ContextMarkdown
+				memoryStatus = "injected"
+				log.Printf("prism: remembrance context built (%d sources, markdown)", len(ctxResp.SelectedMemories))
+			} else if ctxResp.ContextJSON != nil && len(ctxResp.ContextJSON.Memories) > 0 {
+				var contextParts []string
+				for _, mem := range ctxResp.ContextJSON.Memories {
+					if mem.Summary != "" {
+						contextParts = append(contextParts, mem.Summary)
+					}
 				}
+				contextStr = strings.Join(contextParts, "\n\n")
+				memoryStatus = "injected"
 			}
-			// Add entity context
-			for _, ent := range ctxResp.Entities {
-				if ct, ok := ent["compiled_truth"].(string); ok && ct != "" {
-					contextParts = append(contextParts, fmt.Sprintf("[%s] %s", ent["name"], ct))
-				}
-			}
-			contextStr = strings.Join(contextParts, "\n\n")
-			memoryStatus = "injected"
-			sourcesCount := len(ctxResp.Memories)
-			log.Printf("prism: remembrance context built (%d sources)", sourcesCount)
 
 			// V1 backward compat
 			r.emitWithParent(event.V1EventTypes.MemoryContextBuilt, "prism-cli", map[string]any{
 				"task":          r.config.Task,
-				"sources_count": sourcesCount,
+				"sources_count": len(ctxResp.SelectedMemories),
 			}, evt.ID)
 
 			// V2 context.injected
 			r.emitWithParent(event.V2EventTypes.ContextInjected, "prism-cli", map[string]any{
 				"task":          r.config.Task,
-				"sources_count": sourcesCount,
+				"sources_count": len(ctxResp.SelectedMemories),
 			}, evt.ID)
 		} else {
 			// No context available (404)

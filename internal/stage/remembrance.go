@@ -258,30 +258,48 @@ func (s *RemembranceStage) buildContext(rc *RunContext) (contextStr string, sour
 		return "", "failed", nil, nil, ctxErr
 	}
 
-	if ctxResp == nil || len(ctxResp.Memories) == 0 {
+	if ctxResp == nil || (ctxResp.ContextMarkdown == "" && (ctxResp.ContextJSON == nil || len(ctxResp.ContextJSON.Memories) == 0)) {
 		return "", "empty", nil, nil, nil
 	}
 
-	// Format context string from memories and entities
-	var contextParts []string
-	for _, mem := range ctxResp.Memories {
-		if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
-			contextParts = append(contextParts, ct)
-		} else if smry, ok := mem["summary"].(string); ok && smry != "" {
-			contextParts = append(contextParts, smry)
+	// Use context_markdown directly if available (Python ContextPack format)
+	if ctxResp.ContextMarkdown != "" {
+		log.Printf("prism: remembrance context built (%d memories, markdown)", len(ctxResp.SelectedMemories))
+		// Convert structured memories for return value
+		var memories []map[string]any
+		if ctxResp.ContextJSON != nil {
+			for _, m := range ctxResp.ContextJSON.Memories {
+				memories = append(memories, map[string]any{
+					"memory_id": m.MemoryID,
+					"title":      m.Title,
+					"summary":    m.Summary,
+					"score":       m.Score,
+					"reason":     m.Reason,
+				})
+			}
 		}
+		return ctxResp.ContextMarkdown, "injected", memories, nil, nil
 	}
-	for _, ent := range ctxResp.Entities {
-		if ct, ok := ent["compiled_truth"].(string); ok && ct != "" {
-			name, _ := ent["name"].(string)
-			contextParts = append(contextParts, fmt.Sprintf("[%s] %s", name, ct))
+
+	// Fallback: build from structured memories
+	var contextParts []string
+	for _, m := range ctxResp.ContextJSON.Memories {
+		if m.Summary != "" {
+			contextParts = append(contextParts, m.Summary)
 		}
+		memories = append(memories, map[string]any{
+			"memory_id": m.MemoryID,
+			"title":      m.Title,
+			"summary":    m.Summary,
+			"score":       m.Score,
+			"reason":     m.Reason,
+		})
 	}
 
 	contextStr = strings.Join(contextParts, "\n\n")
-	log.Printf("prism: remembrance context built (%d memories, %d entities)", len(ctxResp.Memories), len(ctxResp.Entities))
+	log.Printf("prism: remembrance context built (%d memories, structured)", len(memories))
 
-	return contextStr, "injected", ctxResp.Memories, ctxResp.Entities, nil
+	return contextStr, "injected", memories, nil, nil
 }
 
 // Rollback is a no-op — memory operations have no side effects to undo.

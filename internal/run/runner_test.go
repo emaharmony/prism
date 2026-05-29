@@ -1088,10 +1088,10 @@ func TestV2ContextInjectionInPrompt(t *testing.T) {
 	}
 
 	promptStr := string(promptData)
-	if !strings.Contains(promptStr, "## Retrieved Context") {
-		t.Error("prompt.md missing ## Retrieved Context section")
+	if !strings.Contains(promptStr, "Relevant Context") {
+		t.Error("prompt.md missing Relevant Context section")
 	}
-	if !strings.Contains(promptStr, "Test remembrance context for unit test") {
+	if !strings.Contains(promptStr, "test snippet one") {
 		t.Error("prompt.md missing injected context content")
 	}
 
@@ -1262,7 +1262,7 @@ func startMockMemoryServer(t *testing.T) *mockMemoryServer {
 	mux.HandleFunc("/v1/context/build", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		resp := `{"query": "test", "project": "", "agent": "", "memories": [{"id": "test-doc-1", "compiled_truth": "Test remembrance context for unit test.", "summary": "test snippet one", "category": "test", "tier": "persist", "score": 0.95}, {"id": "test-doc-2", "compiled_truth": "test snippet two", "summary": "test snippet two", "category": "test", "tier": "active", "score": 0.85}], "entities": [], "open_threads": [], "total_results": 2}`
+		resp := `{"project_id": "prism", "agent_id": "lumi", "task": "test", "selected_memories": ["test-doc-1", "test-doc-2"], "context_markdown": "# Retrieved Remembrance Context\n\n## Task\ntest\n\n## Relevant Context\n- **Test context for unit test** \u2014 test snippet one\n- **Another test** \u2014 test snippet two\n", "context_json": {"project_id": "prism", "agent_id": "lumi", "task": "test", "selected_memories": [{"memory_id": "test-doc-1", "title": "Test context for unit test", "summary": "test snippet one", "score": 0.95, "reason": "test"}, {"memory_id": "test-doc-2", "title": "Another test", "summary": "test snippet two", "score": 0.85, "reason": "test"}], "total_memories": 2}, "token_count": 150}`
 		w.Write([]byte(resp))
 	})
 	mux.HandleFunc("/v1/health", func(w http.ResponseWriter, r *http.Request) {

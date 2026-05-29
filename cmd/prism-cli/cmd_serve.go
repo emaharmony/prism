@@ -575,24 +575,24 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			}
 		}
 		if remCtx != nil {
-			var memoryParts []string
-			for _, mem := range remCtx.Memories {
-				if ct, ok := mem["compiled_truth"].(string); ok && ct != "" {
-					memoryParts = append(memoryParts, ct)
-				} else if s, ok := mem["summary"].(string); ok && s != "" {
-					memoryParts = append(memoryParts, s)
-				}
-			}
-			for _, ent := range remCtx.Entities {
-				if ct, ok := ent["compiled_truth"].(string); ok && ct != "" {
-					name, _ := ent["name"].(string)
-					memoryParts = append(memoryParts, fmt.Sprintf("[%s] %s", name, ct))
-				}
-			}
-			if len(memoryParts) > 0 {
-				memoryBlock := "\n\n---\nRelevant context from memory:\n" + strings.Join(memoryParts, "\n\n") + "\n---\n\n"
+			// Use context_markdown directly if available (Python ContextPack format)
+			if remCtx.ContextMarkdown != "" {
+				memoryBlock := "\n\n---\nRelevant context from memory:\n" + remCtx.ContextMarkdown + "\n---\n\n"
 				prompt = memoryBlock + prompt
-				log.Printf("[REMEMBRANCE] injected %d memory sources into prompt", len(remCtx.Memories))
+				log.Printf("[REMEMBRANCE] injected %d memory sources into prompt (markdown)", len(remCtx.SelectedMemories))
+			} else if remCtx.ContextJSON != nil && len(remCtx.ContextJSON.Memories) > 0 {
+				// Fallback: build from structured memories
+				var memoryParts []string
+				for _, mem := range remCtx.ContextJSON.Memories {
+					if mem.Summary != "" {
+						memoryParts = append(memoryParts, mem.Summary)
+					}
+				}
+				if len(memoryParts) > 0 {
+					memoryBlock := "\n\n---\nRelevant context from memory:\n" + strings.Join(memoryParts, "\n\n") + "\n---\n\n"
+					prompt = memoryBlock + prompt
+					log.Printf("[REMEMBRANCE] injected %d memory sources into prompt (structured)", len(remCtx.ContextJSON.Memories))
+				}
 			}
 		}
 	}

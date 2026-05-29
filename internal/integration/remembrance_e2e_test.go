@@ -44,23 +44,17 @@ func TestE2E_RemembranceCaptureContext(t *testing.T) {
 		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
-				"query": "what is prism",
-				"memories": [
-					{
-						"id": "mem_e2e_001",
-						"compiled_truth": "Prism is an event-native agentic environment",
-						"summary": "Prism is an event-native agentic environment"
-					}
-				],
-				"entities": [
-					{
-						"id": "e_prism",
-						"name": "Prism",
-						"compiled_truth": "Event-native agentic environment with NATS bus"
-					}
-				],
-				"open_threads": [],
-				"total_results": 1
+				"project_id": "prism",
+				"agent_id": "lumi",
+				"task": "what is prism",
+				"selected_memories": ["mem_e2e_001"],
+				"context_markdown": "# Retrieved Remembrance Context\n\n## Relevant Context\n- Prism is an event-native agentic environment\n",
+				"context_json": {
+					"selected_memories": [
+						{"memory_id": "mem_e2e_001", "title": "Prism", "summary": "Prism is an event-native agentic environment", "score": 0.9, "reason": "relevant"}
+					]
+				},
+				"token_count": 100
 			}`))
 
 		default:
@@ -238,14 +232,18 @@ func TestE2E_RemembranceClientBuildContext(t *testing.T) {
 		case "/v1/context/build":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{
-				"query": "prism architecture",
-				"memories": [
-					{"id": "m1", "compiled_truth": "Prism uses NATS JetStream", "summary": "NATS bus"}
-				],
-				"entities": [
-					{"id": "e1", "name": "NATS", "compiled_truth": "Message bus for events"}
-				],
-				"total_results": 1
+				"project_id": "prism",
+				"agent_id": "lumi",
+				"task": "prism architecture",
+				"selected_memories": ["m1"],
+				"context_markdown": "# Retrieved Remembrance Context\n\n## Relevant Context\n- Prism uses NATS JetStream\n",
+				"context_json": {
+					"selected_memories": [
+						{"memory_id": "m1", "title": "NATS", "summary": "NATS bus", "score": 0.9, "reason": "relevant"}
+					],
+					"total_memories": 1
+				},
+				"token_count": 100
 			}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -265,14 +263,14 @@ func TestE2E_RemembranceClientBuildContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildContext error: %v", err)
 	}
-	if resp.TotalResults != 1 {
-		t.Errorf("Expected 1 total result, got %d", resp.TotalResults)
+	if len(resp.SelectedMemories) != 1 {
+		t.Errorf("Expected 1 selected memory, got %d", len(resp.SelectedMemories))
 	}
-	if len(resp.Memories) != 1 {
-		t.Errorf("Expected 1 memory, got %d", len(resp.Memories))
+	if resp.ContextMarkdown == "" {
+		t.Error("Expected non-empty context_markdown")
 	}
-	if len(resp.Entities) != 1 {
-		t.Errorf("Expected 1 entity, got %d", len(resp.Entities))
+	if resp.ContextJSON == nil || len(resp.ContextJSON.Memories) != 1 {
+		t.Error("Expected 1 memory in context_json")
 	}
 
 	// Verify event types exist

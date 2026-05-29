@@ -13,9 +13,9 @@ import (
 
 func TestRemCache_SetGetHit(t *testing.T) {
 	c := newRemembranceCache(60 * time.Second)
-	resp := &remcli.ContextBuildResponse{
-		Query:       "test",
-		TotalResults: 1,
+	resp := &remcli.ContextPackResponse{
+		Task:       "test",
+		TokenCount: 1,
 	}
 	c.Set("lumi:s1", resp)
 
@@ -23,8 +23,8 @@ func TestRemCache_SetGetHit(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected cache hit, got nil")
 	}
-	if got.Query != "test" {
-		t.Errorf("expected query=test, got %s", got.Query)
+	if got.Task != "test" {
+		t.Errorf("expected task=test, got %s", got.Task)
 	}
 }
 
@@ -37,7 +37,7 @@ func TestRemCache_GetMiss(t *testing.T) {
 
 func TestRemCache_TTLExpiry(t *testing.T) {
 	c := newRemembranceCache(100 * time.Millisecond)
-	resp := &remcli.ContextBuildResponse{Query: "test"}
+	resp := &remcli.ContextPackResponse{Task: "test"}
 	c.Set("k1", resp)
 
 	// Should be available immediately
@@ -55,7 +55,7 @@ func TestRemCache_TTLExpiry(t *testing.T) {
 
 func TestRemCache_TTLExpiryDeletesEntry(t *testing.T) {
 	c := newRemembranceCache(50 * time.Millisecond)
-	resp := &remcli.ContextBuildResponse{Query: "test"}
+	resp := &remcli.ContextPackResponse{Task: "test"}
 	c.Set("k1", resp)
 
 	time.Sleep(80 * time.Millisecond)
@@ -74,7 +74,7 @@ func TestRemCache_TTLExpiryDeletesEntry(t *testing.T) {
 
 func TestRemCache_Invalidate(t *testing.T) {
 	c := newRemembranceCache(60 * time.Second)
-	resp := &remcli.ContextBuildResponse{Query: "test"}
+	resp := &remcli.ContextPackResponse{Task: "test"}
 	c.Set("k1", resp)
 
 	c.Invalidate("k1")
@@ -85,7 +85,7 @@ func TestRemCache_Invalidate(t *testing.T) {
 
 func TestRemCache_Clear(t *testing.T) {
 	c := newRemembranceCache(60 * time.Second)
-	resp := &remcli.ContextBuildResponse{Query: "test"}
+	resp := &remcli.ContextPackResponse{Task: "test"}
 	c.Set("k1", resp)
 	c.Set("k2", resp)
 
@@ -101,7 +101,7 @@ func TestRemCache_Clear(t *testing.T) {
 
 func TestRemCache_ConcurrentAccess(t *testing.T) {
 	c := newRemembranceCache(60 * time.Second)
-	resp := &remcli.ContextBuildResponse{Query: "test"}
+	resp := &remcli.ContextPackResponse{Task: "test"}
 
 	var wg sync.WaitGroup
 	// Concurrent writes
@@ -125,7 +125,7 @@ func TestRemCache_ConcurrentAccess(t *testing.T) {
 
 func TestRemCache_LazyEviction(t *testing.T) {
 	c := newRemembranceCache(60 * time.Second)
-	resp := &remcli.ContextBuildResponse{Query: "test"}
+	resp := &remcli.ContextPackResponse{Task: "test"}
 
 	// Fill cache beyond 100 entries
 	for i := 0; i < 110; i++ {
