@@ -79,7 +79,7 @@ func (t *ListDirTool) Description() string { return "Lists files and directories
 func (t *ListDirTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path": {Type: "string", Description: "Path relative to workspace root", Required: true},
+			"path": {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
 		},
 		Output: ParamSpec{Type: "array", Description: "List of file and directory names"},
 	}
@@ -154,7 +154,7 @@ func (t *ReadFileTool) Description() string { return "Reads a text file within t
 func (t *ReadFileTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path": {Type: "string", Description: "Path relative to workspace root", Required: true},
+			"path": {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
 		},
 		Output: ParamSpec{Type: "string", Description: "The file contents"},
 	}
@@ -246,7 +246,7 @@ func (t *WriteFileDryRun) Description() string { return "Previews a file write d
 func (t *WriteFileDryRun) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path":    {Type: "string", Description: "Path relative to workspace root", Required: true},
+			"path":    {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
 			"content": {Type: "string", Description: "Proposed file content", Required: true},
 		},
 		Output: ParamSpec{Type: "object", Description: "Preview of the write operation"},
@@ -339,7 +339,7 @@ func (t *WriteFileProposal) Description() string { return "Proposes a file write
 func (t *WriteFileProposal) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path":    {Type: "string", Description: "Path relative to workspace root", Required: true},
+			"path":    {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
 			"content": {Type: "string", Description: "Proposed file content", Required: true},
 		},
 		Output: ParamSpec{Type: "object", Description: "Approval ID and preview"},
@@ -468,7 +468,7 @@ func (t *ReadProjectTool) Description() string {
 func (t *ReadProjectTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path":   {Type: "string", Description: "Root path relative to workspace root (use '.' for entire workspace)", Required: true},
+			"path":   {Type: "string", Description: "Root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (use '.' for entire workspace)", Required: true},
 			"max_files": {Type: "integer", Description: "Maximum number of files to read (default 50)", Required: false},
 		},
 		Output: ParamSpec{Type: "object", Description: "Map of file paths to their contents, plus file count and total size"},
