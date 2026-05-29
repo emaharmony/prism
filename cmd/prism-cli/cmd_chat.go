@@ -19,6 +19,7 @@ import (
 	"bufio"
 	ctxcontext "context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -26,6 +27,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,23 +45,47 @@ import (
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/nats-io/nats.go"
 )
 
 // chatContext holds all dependencies for the interactive chat loop.
 // It mirrors conversationContext but without Discord-specific fields.
 type chatContext struct {
-	router      *router.Router
-	sessMgr     *session.Manager
-	cfg         *orchestrator.Config
-	providers   *provider.ProviderRegistry
-	ctxBuilder  *context.Builder
-	toolExec    *tool.Executor
-	toolPolicy  tool.PolicyConfig
-	eventLog    *runtrack.EventLogger
-	cancelReg   *runtrack.CancelRegistry
-	actionReg   *action.Registry
-	taskStore   *task.Store
-	delegEngine *delegation.Engine
+	router       *router.Router
+	sessMgr      *session.Manager
+	cfg          *orchestrator.Config
+	providers    *provider.ProviderRegistry
+	ctxBuilder   *context.Builder
+	toolExec     *tool.Executor
+	toolPolicy   tool.PolicyConfig
+	eventLog     *runtrack.EventLogger
+	cancelReg    *runtrack.CancelRegistry
+	actionReg    *action.Registry
+	taskStore    *task.Store
+	delegEngine  *delegation.Engine
+	natsConn     *nats.Conn            // Persistent NATS connection for event pipeline
+	natsURL      string                // NATS URL (embedded or external)
+	natsCleanup  func()                // Cleanup for embedded NATS
+	rateLimiter  *chatRateLimit        // Per-message rate limiting for CLI
+}
+
+// chatRateLimit provides simple rate limiting for CLI chat.
+// Unlike Discord (per-user), this is per-process — prevents runaway LLM calls.
+type chatRateLimit struct {
+	mu        sync.Mutex
+	lastCall  time.Time
+	minDelay  time.Duration // Minimum time between messages
+}
+
+func (r *chatRateLimit) Allow() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	if now.Sub(r.lastCall) < r.minDelay {
+		return false
+	}
+	r.lastCall = now
+	return true
 }
 
 func executeChat(args []string) {
@@ -104,6 +130,7 @@ func executeChat(args []string) {
 
 	// 2. Start embedded NATS (for event pipeline)
 	natsURL := cfg.Prism.NATSURL
+	var natsCleanup func()
 	if natsURL == "" {
 		url, cleanup, err := bus.StartEmbeddedBus(0)
 		if err != nil {
@@ -111,7 +138,19 @@ func executeChat(args []string) {
 			os.Exit(1)
 		}
 		natsURL = url
-		defer cleanup()
+		natsCleanup = cleanup
+	}
+
+	// Connect to NATS once for the entire session
+	natsConn, err := bus.ConnectToBus(natsURL)
+	if err != nil {
+		log.Printf("[WARN] NATS connection failed (events disabled): %v", err)
+	}
+	if natsConn != nil {
+		defer natsConn.Close()
+	}
+	if natsCleanup != nil {
+		defer natsCleanup()
 	}
 
 	// 3. Register agents and providers
@@ -191,21 +230,37 @@ func executeChat(args []string) {
 	// 8. Set up action registry (empty for chat mode)
 	actionReg := action.NewRegistry()
 
-	// 9. Build chat context
-	cc := &chatContext{
-		router:     rtr,
-		sessMgr:    sessMgr,
-		cfg:        cfg,
-		providers:  provReg,
-		ctxBuilder: ctxBuilder,
-		toolExec:   toolExec,
-		toolPolicy: toolPolicy,
-		eventLog:   &runtrack.EventLogger{},
-		cancelReg:  runtrack.NewCancelRegistry(),
-		actionReg:  actionReg,
+	// 9. Set up task store and delegation engine
+	var taskStore *task.Store
+	var delegEngine *delegation.Engine
+	taskStore, taskErr := task.NewStore(filepath.Join(cfg.Prism.DataDir, "tasks.db"))
+	if taskErr != nil {
+		log.Printf("[WARN] task store failed: %v (delegation disabled)", taskErr)
+	} else {
+		delegEngine = delegation.NewEngine(taskStore, natsConn)
 	}
 
-	// 10. Create or resume session
+	// 10. Build chat context
+	cc := &chatContext{
+		router:       rtr,
+		sessMgr:      sessMgr,
+		cfg:          cfg,
+		providers:    provReg,
+		ctxBuilder:   ctxBuilder,
+		toolExec:     toolExec,
+		toolPolicy:   toolPolicy,
+		eventLog:     &runtrack.EventLogger{},
+		cancelReg:    runtrack.NewCancelRegistry(),
+		actionReg:    actionReg,
+		taskStore:    taskStore,
+		delegEngine: delegEngine,
+		natsConn:     natsConn,
+		natsURL:      natsURL,
+		natsCleanup:  natsCleanup,
+		rateLimiter: &chatRateLimit{minDelay: 500 * time.Millisecond}, // 2 msg/s max
+	}
+
+	// 11. Create or resume session
 	sess, err := sessMgr.FindActive("cli", "terminal", "local-user")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error finding session: %v\n", err)
@@ -225,21 +280,31 @@ func executeChat(args []string) {
 	fmt.Println("Type /reset to start a new session, /tools to list available tools.")
 	fmt.Println()
 
-	// 11. Check if ChatProvider is available
-	_, chatAvailableErr := provReg.GetChatProvider(agentCfg.Model)
-	chatAvailable := chatAvailableErr == nil
-
-	// 12. Enter chat loop
+	// 12. Enter chat loop with graceful shutdown
 	scanner := bufio.NewScanner(os.Stdin)
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max input line
+
+	done := make(chan struct{})
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-signalChan
-		fmt.Println("\nGoodbye! ✨")
-		os.Exit(0)
+		select {
+		case <-sigChan:
+			fmt.Println("\nGoodbye! ✨")
+			close(done)
+		case <-done:
+			// Normal exit
+		}
 	}()
 
+LOOP:
 	for {
+		select {
+		case <-done:
+			break LOOP
+		default:
+		}
+
 		fmt.Print("\n> ")
 		if !scanner.Scan() {
 			break // EOF
@@ -253,7 +318,7 @@ func executeChat(args []string) {
 		switch {
 		case input == "/quit" || input == "/exit":
 			fmt.Println("Goodbye! ✨")
-			return
+			return // deferred cleanup will run
 		case input == "/reset":
 			sess, err = sessMgr.Create(agentID, "cli", "terminal", "local-user")
 			if err != nil {
@@ -281,6 +346,12 @@ func executeChat(args []string) {
 			continue
 		}
 
+		// Rate limiting
+		if !cc.rateLimiter.Allow() {
+			fmt.Println("⚠️ Slow down! Please wait a moment between messages.")
+			continue
+		}
+
 		// Security: prompt injection defense (same as Discord pipeline)
 		injectionCheck := safety.CheckPromptInjection(input)
 		if injectionCheck.Severity == "critical" {
@@ -301,9 +372,14 @@ func executeChat(args []string) {
 		// Process through the pipeline
 		fmt.Println() // blank line before response
 
-		responseText, err := cc.processMessage(ctxcontext.Background(), sess, agentCfg, sanitizedInput, chatAvailable)
+		responseText, err := cc.processMessage(ctxcontext.Background(), sess, agentCfg, sanitizedInput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			// User-friendly timeout message
+			if errors.Is(err, ctxcontext.DeadlineExceeded) || strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "context deadline") {
+				fmt.Fprintf(os.Stderr, "⏱️ Request timed out. The model took too long to respond. Please try again.\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
 			continue
 		}
 
@@ -323,25 +399,28 @@ func (cc *chatContext) processMessage(
 	sess *session.Session,
 	agentCfg *orchestrator.AgentConfig,
 	userInput string,
-	chatAvailable bool,
 ) (string, error) {
 	// 1. Route message
 	result := cc.router.Route(userInput)
 
-	// 2. Look up provider
+	// 2. Determine provider path — check ChatProvider availability per-call
+	_, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
+	chatAvailable := chatErr == nil
+
+	// 3. Look up provider
 	llmProvider, err := cc.providers.Get(agentCfg.Model)
 	if err != nil {
 		return "", fmt.Errorf("no provider for model %s: %w", agentCfg.Model, err)
 	}
 
-	// 3. Set up run context with timeout
+	// 4. Set up run context with timeout
 	runCtx, runCancel := ctxcontext.WithTimeout(parentCtx, 2*time.Minute)
 	defer runCancel()
 
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
 	run.Cancel = runCancel
 
-	// 4. Branch on ChatProvider vs text-based
+	// 5. Branch on ChatProvider vs text-based
 	if chatAvailable {
 		return cc.processWithChatProvider(runCtx, sess, agentCfg, userInput)
 	}
@@ -379,13 +458,20 @@ func (cc *chatContext) processWithChatProvider(
 		return "", fmt.Errorf("tool loop failed: %w", toolErr)
 	}
 
-	// Display tool call summaries
+	// Save tool interactions to session and display summaries
 	for _, ts := range toolSummaries {
 		status := "✓"
 		if ts.Status == "error" {
 			status = "✗"
 		}
 		fmt.Printf("  [Tool: %s] %s\n", ts.Tool, status)
+
+		// Persist tool call to session history
+		toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
+		if ts.Error != "" {
+			toolMsg += " — " + ts.Error
+		}
+		cc.sessMgr.AddMessage(sess.ID, "tool", toolMsg, ts.Tool)
 	}
 
 	return finalResponse, nil
@@ -403,29 +489,27 @@ func (cc *chatContext) processWithTextProvider(
 	// Build the full prompt (same as Discord pipeline)
 	prompt := cc.buildChatPrompt(sess, agentCfg)
 
-	// Set up NATS for event pipeline
-	natsConn, err := bus.ConnectToBus(cc.cfg.Prism.NATSURL)
-	if err != nil {
-		// Event pipeline is optional for CLI chat
-		log.Printf("[WARN] NATS connection failed (events disabled): %v", err)
-	}
-	if natsConn != nil {
-		defer natsConn.Close()
-	}
-
+	// Set up NATS for event pipeline (using persistent connection)
 	var natsAdapter *natsPublisherAdapter
-	if natsConn != nil {
-		natsAdapter = &natsPublisherAdapter{conn: natsConn}
+	if cc.natsConn != nil {
+		natsAdapter = &natsPublisherAdapter{conn: cc.natsConn}
 	}
 
-	// Build pipeline stages
+	// Build pipeline stages — include DelegationStage like the serve path
 	pipelineStages := []stage.Stage{
 		&stage.LLMStage{},
 	}
+	if cc.delegEngine != nil {
+		pipelineStages = append(pipelineStages, &stage.DelegationStage{
+			Engine:      cc.delegEngine,
+			StripMarkers: true,
+			AgentConfigs: cc.buildAgentConfigMap(),
+		})
+	}
 	if natsAdapter != nil {
 		pipelineStages = append(pipelineStages,
-			&stage.PersistenceStage{BusURL: cc.cfg.Prism.NATSURL},
-			&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.cfg.Prism.NATSURL},
+			&stage.PersistenceStage{BusURL: cc.natsURL},
+			&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.natsURL},
 		)
 	}
 	pipeline := stage.NewPipeline(pipelineStages...)
@@ -465,17 +549,34 @@ func (cc *chatContext) processWithTextProvider(
 			if finalResponse != "" {
 				responseText = finalResponse
 			}
+
+			// Save tool interactions to session and display summaries
 			for _, ts := range toolSummaries {
 				status := "✓"
 				if ts.Status == "error" {
 					status = "✗"
 				}
 				fmt.Printf("  [Tool: %s] %s\n", ts.Tool, status)
+
+				toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
+				if ts.Error != "" {
+					toolMsg += " — " + ts.Error
+				}
+				cc.sessMgr.AddMessage(sess.ID, "tool", toolMsg, ts.Tool)
 			}
 		}
 	}
 
 	return responseText, nil
+}
+
+// buildAgentConfigMap creates a map of agent configs for the DelegationStage.
+func (cc *chatContext) buildAgentConfigMap() map[string]*orchestrator.AgentConfig {
+	m := make(map[string]*orchestrator.AgentConfig)
+	for i := range cc.cfg.Agents {
+		m[cc.cfg.Agents[i].ID] = &cc.cfg.Agents[i]
+	}
+	return m
 }
 
 // --- Helper methods (mirrors conversationContext methods for chat CLI) ---
