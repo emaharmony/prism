@@ -540,6 +540,8 @@ func main() {
 		}
 	case "search":
 		searchCmd(os.Args[2:])
+	case "chat":
+		executeChat(os.Args[2:])
 	case "serve":
 		executeServe(os.Args[2:])
 	case "status":
@@ -558,6 +560,7 @@ func printUsage() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  prism run --task <description> [options]    Run a task lifecycle")
+	fmt.Println("  prism chat [--config prism.yaml] [--agent <name>]  Interactive terminal chat")
 	fmt.Println("  prism tool list                               List available tools")
 	fmt.Println("  prism tool run <name> --input '{...}'         Run a tool directly")
 	fmt.Println("  prism validation list                         List validation profiles")

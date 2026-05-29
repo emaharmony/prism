@@ -1,0 +1,857 @@
+// Package main implements the `prism chat` subcommand — an interactive
+// terminal chat that connects to an LLM agent with full tool support,
+// context injection, and session management.
+//
+// Usage:
+//
+//	prism chat [--config prism.yaml] [--agent <name>]
+//
+// The chat command:
+//  1. Loads prism.yaml configuration
+//  2. Registers agents and providers
+//  3. Creates a session for the terminal user
+//  4. Enters a readline loop: user input → pipeline → response
+//  5. Supports native tool calling (ChatProvider) and text-based fallback
+//  6. Persists session history to the same DB as Discord sessions
+package main
+
+import (
+	"bufio"
+	ctxcontext "context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/emaharmony/prism/internal/action"
+	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/context"
+	"github.com/emaharmony/prism/internal/delegation"
+	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/router"
+	"github.com/emaharmony/prism/internal/runtrack"
+	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/stage"
+	"github.com/emaharmony/prism/internal/task"
+	"github.com/emaharmony/prism/internal/tool"
+)
+
+// chatContext holds all dependencies for the interactive chat loop.
+// It mirrors conversationContext but without Discord-specific fields.
+type chatContext struct {
+	router      *router.Router
+	sessMgr     *session.Manager
+	cfg         *orchestrator.Config
+	providers   *provider.ProviderRegistry
+	ctxBuilder  *context.Builder
+	toolExec    *tool.Executor
+	toolPolicy  tool.PolicyConfig
+	eventLog    *runtrack.EventLogger
+	cancelReg   *runtrack.CancelRegistry
+	actionReg   *action.Registry
+	taskStore   *task.Store
+	delegEngine *delegation.Engine
+}
+
+func executeChat(args []string) {
+	chatCmd := flag.NewFlagSet("chat", flag.ExitOnError)
+	configPath := chatCmd.String("config", "prism.yaml", "Path to prism.yaml configuration file")
+	agentName := chatCmd.String("agent", "", "Agent to chat with (defaults to primary agent)")
+
+	chatCmd.Parse(args)
+
+	fmt.Println("🔮 Prism Chat")
+	fmt.Println()
+
+	// 1. Load configuration
+	cfg, err := orchestrator.LoadConfig(*configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: config file %q not found. Create one with 'prism init' or specify --config\n", *configPath)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Resolve agent
+	agentID := *agentName
+	if agentID == "" {
+		agentID = primaryName(cfg)
+	}
+	if agentID == "" {
+		fmt.Fprintln(os.Stderr, "Error: no agent specified and no primary agent in config")
+		os.Exit(1)
+	}
+
+	agentCfg := findAgentConfig(cfg, agentID)
+	if agentCfg == nil {
+		fmt.Fprintf(os.Stderr, "Error: agent %q not found in config\n", agentID)
+		os.Exit(1)
+	}
+
+	fmt.Printf("  Agent: %s (%s)\n", agentCfg.ID, agentCfg.Role)
+	fmt.Printf("  Model: %s (%s)\n", agentCfg.Model, agentCfg.Provider)
+
+	// 2. Start embedded NATS (for event pipeline)
+	natsURL := cfg.Prism.NATSURL
+	if natsURL == "" {
+		url, cleanup, err := bus.StartEmbeddedBus(0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting embedded bus: %v\n", err)
+			os.Exit(1)
+		}
+		natsURL = url
+		defer cleanup()
+	}
+
+	// 3. Register agents and providers
+	agentReg := agent.NewRegistry()
+	if err := cfg.RegisterAgents(agentReg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error registering agents: %v\n", err)
+		os.Exit(1)
+	}
+
+	provReg := provider.NewProviderRegistry()
+	if err := registerProviders(cfg, provReg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error registering providers: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 4. Start session manager
+	if err := os.MkdirAll(cfg.Prism.DataDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
+		os.Exit(1)
+	}
+	dbPath := cfg.Prism.DataDir + "/sessions.db"
+	sessMgr, err := session.NewManager(
+		dbPath,
+		cfg.Sessions.MaxContextMessages,
+		time.Duration(cfg.Sessions.IdleTimeoutMinutes)*time.Minute,
+		cfg.Sessions.DailyResetHour,
+		cfg.Sessions.CompactionStrategy,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting session manager: %v\n", err)
+		os.Exit(1)
+	}
+	defer sessMgr.Close()
+
+	// 5. Set up router
+	rtr := router.New(agentReg, cfg)
+
+	// 6. Set up tools
+	registry := tool.NewRegistry()
+
+	// Resolve workspace root
+	workspaceRoot := cfg.Prism.Workspace
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+
+	// V30: Resolve allowed paths to absolute
+	allowedPaths := make([]string, 0, len(cfg.Prism.AllowedPaths))
+	for _, p := range cfg.Prism.AllowedPaths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			log.Printf("[WARN] invalid allowed_path %q: %v", p, err)
+			continue
+		}
+		allowedPaths = append(allowedPaths, abs)
+	}
+
+	tool.RegisterBuiltins(registry, workspaceRoot, 10*1024*1024, allowedPaths...)
+	registry.Register(&tool.GitAddTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&tool.GitCommitTool{WorkspaceRoot: workspaceRoot})
+	registry.Register(&tool.GitPushTool{WorkspaceRoot: workspaceRoot})
+
+	toolPolicy := tool.DefaultPolicyConfig()
+	toolPolicy.MaxFileSize = 10 * 1024 * 1024
+	toolPolicy.WorkspaceRoot = workspaceRoot
+	toolPolicy.AllowedPaths = allowedPaths
+	toolExec := tool.NewExecutor(registry, toolPolicy)
+
+	// 7. Set up context builder
+	var ctxBuilder *context.Builder
+	if cfg.Prism.Workspace != "" {
+		ctxBuilder = context.NewBuilder(cfg.Prism.Workspace)
+	} else {
+		ctxBuilder = context.NewBuilder(filepath.Join(os.Getenv("HOME"), ".openclaw", "workspace"))
+	}
+
+	// 8. Set up action registry (empty for chat mode)
+	actionReg := action.NewRegistry()
+
+	// 9. Build chat context
+	cc := &chatContext{
+		router:     rtr,
+		sessMgr:    sessMgr,
+		cfg:        cfg,
+		providers:  provReg,
+		ctxBuilder: ctxBuilder,
+		toolExec:   toolExec,
+		toolPolicy: toolPolicy,
+		eventLog:   &runtrack.EventLogger{},
+		cancelReg:  runtrack.NewCancelRegistry(),
+		actionReg:  actionReg,
+	}
+
+	// 10. Create or resume session
+	sess, err := sessMgr.FindActive("cli", "terminal", "local-user")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error finding session: %v\n", err)
+		os.Exit(1)
+	}
+	if sess == nil {
+		sess, err = sessMgr.Create(agentID, "cli", "terminal", "local-user")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	fmt.Printf("  Session: %s\n", sess.ID[:8])
+	fmt.Println()
+	fmt.Println("Type your message and press Enter. Type /quit or Ctrl+C to exit.")
+	fmt.Println("Type /reset to start a new session, /tools to list available tools.")
+	fmt.Println()
+
+	// 11. Check if ChatProvider is available
+	_, chatAvailableErr := provReg.GetChatProvider(agentCfg.Model)
+	chatAvailable := chatAvailableErr == nil
+
+	// 12. Enter chat loop
+	scanner := bufio.NewScanner(os.Stdin)
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-signalChan
+		fmt.Println("\nGoodbye! ✨")
+		os.Exit(0)
+	}()
+
+	for {
+		fmt.Print("\n> ")
+		if !scanner.Scan() {
+			break // EOF
+		}
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		// Handle commands
+		switch {
+		case input == "/quit" || input == "/exit":
+			fmt.Println("Goodbye! ✨")
+			return
+		case input == "/reset":
+			sess, err = sessMgr.Create(agentID, "cli", "terminal", "local-user")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
+				continue
+			}
+			fmt.Printf("New session: %s\n\n", sess.ID[:8])
+			continue
+		case input == "/tools":
+			toolInfos := toolExec.Registry.ListWithDescriptions()
+			fmt.Printf("Available tools (%d):\n", len(toolInfos))
+			for _, ti := range toolInfos {
+				fmt.Printf("  %-20s %s\n", ti.Name, ti.Description)
+			}
+			continue
+		case input == "/help":
+			fmt.Println("Commands:")
+			fmt.Println("  /quit, /exit  — Exit chat")
+			fmt.Println("  /reset        — Start new session")
+			fmt.Println("  /tools        — List available tools")
+			fmt.Println("  /help         — Show this help")
+			continue
+		case strings.HasPrefix(input, "/"):
+			fmt.Printf("Unknown command: %s (type /help for commands)\n", input)
+			continue
+		}
+
+		// Security: prompt injection defense (same as Discord pipeline)
+		injectionCheck := safety.CheckPromptInjection(input)
+		if injectionCheck.Severity == "critical" {
+			fmt.Println("⚠️ That message contains potentially dangerous content and was blocked for safety.")
+			continue
+		}
+		sanitizedInput := input
+		if injectionCheck.Severity == "high" {
+			sanitizedInput = safety.SanitizeInput(input)
+		}
+
+		// Add user message to session
+		if _, err := sessMgr.AddMessage(sess.ID, "user", sanitizedInput, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving message: %v\n", err)
+			continue
+		}
+
+		// Process through the pipeline
+		fmt.Println() // blank line before response
+
+		responseText, err := cc.processMessage(ctxcontext.Background(), sess, agentCfg, sanitizedInput, chatAvailable)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			continue
+		}
+
+		// Save agent response to session
+		if _, err := sessMgr.AddMessage(sess.ID, "agent", responseText, agentCfg.ID); err != nil {
+			log.Printf("[WARN] failed to save agent message: %v", err)
+		}
+
+		// Display response
+		fmt.Printf("%s: %s\n", agentCfg.ID, responseText)
+	}
+}
+
+// processMessage runs the full pipeline for a user message and returns the response.
+func (cc *chatContext) processMessage(
+	parentCtx ctxcontext.Context,
+	sess *session.Session,
+	agentCfg *orchestrator.AgentConfig,
+	userInput string,
+	chatAvailable bool,
+) (string, error) {
+	// 1. Route message
+	result := cc.router.Route(userInput)
+
+	// 2. Look up provider
+	llmProvider, err := cc.providers.Get(agentCfg.Model)
+	if err != nil {
+		return "", fmt.Errorf("no provider for model %s: %w", agentCfg.Model, err)
+	}
+
+	// 3. Set up run context with timeout
+	runCtx, runCancel := ctxcontext.WithTimeout(parentCtx, 2*time.Minute)
+	defer runCancel()
+
+	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
+	run.Cancel = runCancel
+
+	// 4. Branch on ChatProvider vs text-based
+	if chatAvailable {
+		return cc.processWithChatProvider(runCtx, sess, agentCfg, userInput)
+	}
+
+	// Text-based fallback path
+	return cc.processWithTextProvider(runCtx, sess, agentCfg, userInput, llmProvider, run)
+}
+
+// processWithChatProvider uses the native ChatProvider interface for tool calling.
+func (cc *chatContext) processWithChatProvider(
+	ctx ctxcontext.Context,
+	sess *session.Session,
+	agentCfg *orchestrator.AgentConfig,
+	userInput string,
+) (string, error) {
+	chatProv, err := cc.providers.GetChatProvider(agentCfg.Model)
+	if err != nil {
+		return "", fmt.Errorf("chat provider unavailable: %w", err)
+	}
+
+	// Build messages from session
+	messages := cc.buildChatMessages(sess, agentCfg)
+	chatTools := cc.buildChatToolDefs()
+
+	log.Printf("[CHAT-CLI] entering native tool loop with %d tools", len(chatTools))
+
+	finalResponse, toolSummaries, toolErr := cc.runChatToolLoop(
+		ctx,
+		messages,
+		chatTools,
+		chatProv,
+		agentCfg,
+	)
+	if toolErr != nil {
+		return "", fmt.Errorf("tool loop failed: %w", toolErr)
+	}
+
+	// Display tool call summaries
+	for _, ts := range toolSummaries {
+		status := "✓"
+		if ts.Status == "error" {
+			status = "✗"
+		}
+		fmt.Printf("  [Tool: %s] %s\n", ts.Tool, status)
+	}
+
+	return finalResponse, nil
+}
+
+// processWithTextProvider uses the text-based Provider interface (fallback).
+func (cc *chatContext) processWithTextProvider(
+	ctx ctxcontext.Context,
+	sess *session.Session,
+	agentCfg *orchestrator.AgentConfig,
+	userInput string,
+	llmProvider provider.Provider,
+	run *runtrack.Run,
+) (string, error) {
+	// Build the full prompt (same as Discord pipeline)
+	prompt := cc.buildChatPrompt(sess, agentCfg)
+
+	// Set up NATS for event pipeline
+	natsConn, err := bus.ConnectToBus(cc.cfg.Prism.NATSURL)
+	if err != nil {
+		// Event pipeline is optional for CLI chat
+		log.Printf("[WARN] NATS connection failed (events disabled): %v", err)
+	}
+	if natsConn != nil {
+		defer natsConn.Close()
+	}
+
+	var natsAdapter *natsPublisherAdapter
+	if natsConn != nil {
+		natsAdapter = &natsPublisherAdapter{conn: natsConn}
+	}
+
+	// Build pipeline stages
+	pipelineStages := []stage.Stage{
+		&stage.LLMStage{},
+	}
+	if natsAdapter != nil {
+		pipelineStages = append(pipelineStages,
+			&stage.PersistenceStage{BusURL: cc.cfg.Prism.NATSURL},
+			&stage.EventPublishStage{Publisher: natsAdapter, BusURL: cc.cfg.Prism.NATSURL},
+		)
+	}
+	pipeline := stage.NewPipeline(pipelineStages...)
+
+	rc := &stage.RunContext{
+		RunID:          run.ID,
+		Task:           prompt,
+		Agent:          agentCfg.ID,
+		Provider:       llmProvider,
+		ProviderName:   agentCfg.Provider,
+		Model:          agentCfg.Model,
+		SessionID:      sess.ID,
+		CleanedContent: strings.TrimSpace(userInput),
+		RouteMethod:    "cli-chat",
+	}
+
+	finalRC, err := pipeline.Run(ctx, rc)
+	if err != nil {
+		return "", fmt.Errorf("pipeline failed: %w", err)
+	}
+
+	responseText := finalRC.LLMResponse
+
+	// Check for text-based tool calls
+	if cc.toolExec != nil {
+		parsed := agent.ParseAgentOutput(responseText)
+		if parsed.Type == agent.ResponseToolRequest {
+			log.Printf("[CHAT-CLI] LLM requested tool %q, entering text tool loop", parsed.ToolName)
+			finalResponse, toolSummaries, toolErr := cc.runTextToolLoop(
+				ctx,
+				prompt,
+				agentCfg,
+			)
+			if toolErr != nil {
+				return "", fmt.Errorf("text tool loop failed: %w", toolErr)
+			}
+			if finalResponse != "" {
+				responseText = finalResponse
+			}
+			for _, ts := range toolSummaries {
+				status := "✓"
+				if ts.Status == "error" {
+					status = "✗"
+				}
+				fmt.Printf("  [Tool: %s] %s\n", ts.Tool, status)
+			}
+		}
+	}
+
+	return responseText, nil
+}
+
+// --- Helper methods (mirrors conversationContext methods for chat CLI) ---
+
+// buildChatPrompt builds a flat string prompt (for text-based providers).
+func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+
+	// Workspace context injection
+	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
+		budget := cc.cfg.Prism.ContextTokenBudget
+		if budget <= 0 {
+			budget = 4000
+		}
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+			WithNamedContexts(agentCfg.Context).
+			WithTokenBudget(budget)
+		injected, err := builder.Build()
+		if err == nil && injected.FormattedString != "" {
+			sb.WriteString("\n" + injected.FormattedString)
+		}
+	}
+
+	// Session awareness
+	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
+	sessionMsgCount := len(sess.Messages)
+	sb.WriteString(fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
+
+	// Conversation postfix
+	postfix := agentCfg.ConversationPostfix
+	if postfix == "" {
+		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
+			"Don't wrap things up unless the topic is genuinely resolved. " +
+			"Be warm, curious, and engaged — not a transactional Q&A machine."
+	}
+	sb.WriteString("\n" + postfix + "\n\n")
+
+	// Tool instructions
+	if cc.toolExec != nil {
+		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		if len(toolInfos) > 0 {
+			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot))
+		}
+	}
+
+	// History
+	for _, msg := range sess.Messages {
+		switch msg.Role {
+		case "user":
+			sb.WriteString(fmt.Sprintf("User: %s\n", msg.Content))
+		case "agent":
+			sb.WriteString(fmt.Sprintf("%s: %s\n", msg.AgentID, msg.Content))
+		case "system":
+			sb.WriteString(fmt.Sprintf("System: %s\n", msg.Content))
+		}
+	}
+	sb.WriteString(fmt.Sprintf("%s:", agentCfg.ID))
+	return sb.String()
+}
+
+// buildChatMessages builds structured ChatMessage array (for ChatProvider).
+func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orchestrator.AgentConfig) []provider.ChatMessage {
+	var messages []provider.ChatMessage
+
+	// System message
+	var systemContent string
+	systemContent += fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role)
+
+	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
+		budget := cc.cfg.Prism.ContextTokenBudget
+		if budget <= 0 {
+			budget = 4000
+		}
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+			WithNamedContexts(agentCfg.Context).
+			WithTokenBudget(budget)
+		injected, err := builder.Build()
+		if err == nil && injected.FormattedString != "" {
+			systemContent += "\n" + injected.FormattedString
+		}
+	}
+
+	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
+	sessionMsgCount := len(sess.Messages)
+	systemContent += fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge)
+
+	postfix := agentCfg.ConversationPostfix
+	if postfix == "" {
+		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
+			"Don't wrap things up unless the topic is genuinely resolved. " +
+			"Be warm, curious, and engaged — not a transactional Q&A machine."
+	}
+	systemContent += "\n" + postfix + "\n"
+	systemContent += "\n## Tool Usage\n" + toolUsageGuidance + "\n"
+
+	messages = append(messages, provider.ChatMessage{
+		Role:    "system",
+		Content: systemContent,
+	})
+
+	// History
+	for _, msg := range sess.Messages {
+		switch msg.Role {
+		case "user":
+			messages = append(messages, provider.ChatMessage{
+				Role:    "user",
+				Content: msg.Content,
+			})
+		case "agent":
+			messages = append(messages, provider.ChatMessage{
+				Role:    "assistant",
+				Content: msg.Content,
+			})
+		case "system":
+			messages = append(messages, provider.ChatMessage{
+				Role:    "system",
+				Content: msg.Content,
+			})
+		}
+	}
+
+	return messages
+}
+
+// buildChatToolDefs converts tool registry to ChatTool format.
+func (cc *chatContext) buildChatToolDefs() []provider.ChatTool {
+	toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+	chatTools := make([]provider.ChatTool, 0, len(toolInfos))
+
+	for _, ti := range toolInfos {
+		params := map[string]any{
+			"type":       "object",
+			"properties": make(map[string]any),
+		}
+		required := make([]string, 0)
+
+		for pname, spec := range ti.Schema.Input {
+			props := map[string]any{
+				"type":        spec.Type,
+				"description": spec.Description,
+			}
+			params["properties"].(map[string]any)[pname] = props
+			if spec.Required {
+				required = append(required, pname)
+			}
+		}
+		if len(required) > 0 {
+			params["required"] = required
+		}
+
+		chatTools = append(chatTools, provider.ChatTool{
+			Type: "function",
+			Function: provider.FunctionDef{
+				Name:        ti.Name,
+				Description: ti.Description,
+				Parameters:  params,
+			},
+		})
+	}
+
+	return chatTools
+}
+
+// runChatToolLoop is the CLI version of runToolLoopChat.
+// It mirrors the Discord tool loop but prints to terminal instead of editing Discord messages.
+func (cc *chatContext) runChatToolLoop(
+	parentCtx ctxcontext.Context,
+	messages []provider.ChatMessage,
+	chatTools []provider.ChatTool,
+	chatProv provider.ChatProvider,
+	agentCfg *orchestrator.AgentConfig,
+) (string, []toolCallSummary, error) {
+	ctx, cancel := ctxcontext.WithTimeout(parentCtx, chatToolLoopTimeout)
+	defer cancel()
+
+	var summaries []toolCallSummary
+	currentMessages := make([]provider.ChatMessage, len(messages))
+	copy(currentMessages, messages)
+
+	nudgeInjected := false
+	var lastContent string
+
+	for i := 0; i < maxChatToolIterations; i++ {
+		log.Printf("[CHAT-CLI] iteration %d/%d", i+1, maxChatToolIterations)
+
+		if i >= 3 && !nudgeInjected {
+			currentMessages = append(currentMessages, provider.ChatMessage{
+				Role:    "system",
+				Content: "You have already used several tools. Please provide your final answer now based on the information you have gathered. Do not call any more tools.",
+			})
+			nudgeInjected = true
+		}
+
+		toolsForThisIteration := chatTools
+		if i >= 6 {
+			toolsForThisIteration = []provider.ChatTool{}
+			log.Printf("[CHAT-CLI] iteration %d: removing tools to force final answer", i+1)
+		}
+
+		// Call the ChatProvider
+		req := provider.ChatGenerateRequest{
+			RunID:     fmt.Sprintf("chat-%d", i),
+			Agent:     agentCfg.ID,
+			Model:     agentCfg.Model,
+			Messages:  currentMessages,
+			Tools:     toolsForThisIteration,
+		}
+		response, err := chatProv.ChatGenerate(ctx, req)
+		if err != nil {
+			return "", summaries, fmt.Errorf("LLM call failed iteration %d: %w", i+1, err)
+		}
+
+		if response.Content != "" {
+			lastContent = response.Content
+		}
+
+		if !response.HasToolCalls() {
+			log.Printf("[CHAT-CLI] iteration %d: final response (%d chars)", i+1, len(response.Content))
+			return response.Content, summaries, nil
+		}
+
+		log.Printf("[CHAT-CLI] iteration %d: model requests %d tool calls", i+1, len(response.ToolCalls))
+
+		currentMessages = append(currentMessages, provider.ChatMessage{
+			Role:      "assistant",
+			Content:   response.Content,
+			ToolCalls: response.ToolCalls,
+		})
+
+		for _, tc := range response.ToolCalls {
+			// Format tool call arguments for display
+			argsJSON, _ := json.Marshal(tc.Function.Arguments)
+			fmt.Printf("  🔧 %s(%s)\n", tc.Function.Name, string(argsJSON))
+			toolResult, summary := cc.executeChatToolCLI(ctx, tc, agentCfg)
+			fmt.Printf("     → %s\n", truncateStr(toolResult, 200))
+
+			currentMessages = append(currentMessages, provider.ChatMessage{
+				Role:    "tool",
+				Content: toolResult,
+				ToolID:  tc.ID,
+			})
+			summaries = append(summaries, summary)
+		}
+	}
+
+	log.Printf("[CHAT-CLI] max iterations (%d) reached", maxChatToolIterations)
+	if lastContent != "" {
+		return lastContent, summaries, nil
+	}
+	return "I gathered information but couldn't form a complete response. Please try again.", summaries, nil
+}
+
+// executeChatToolCLI executes a tool call and returns the result (CLI version).
+func (cc *chatContext) executeChatToolCLI(
+	ctx ctxcontext.Context,
+	tc provider.ToolCall,
+	agentCfg *orchestrator.AgentConfig,
+) (string, toolCallSummary) {
+	// tc.Function.Arguments is already map[string]any from the ChatProvider
+	input := tc.Function.Arguments
+
+	result, err := cc.toolExec.ExecuteWithPolicy(ctx, tc.Function.Name, agentCfg.ID, "prism", "cli-chat", input)
+	if err != nil {
+		summary := toolCallSummary{
+			Tool:   tc.Function.Name,
+			Status: "error",
+			Error:  err.Error(),
+		}
+		return fmt.Sprintf("Error executing tool: %v", err), summary
+	}
+
+	if !result.Success {
+		summary := toolCallSummary{
+			Tool:   tc.Function.Name,
+			Status: "error",
+			Error:  result.Error,
+		}
+		return fmt.Sprintf("Tool error: %s", result.Error), summary
+	}
+
+	resultJSON, _ := json.Marshal(result.Output)
+	summary := toolCallSummary{
+		Tool:   tc.Function.Name,
+		Status: "success",
+		Result: string(resultJSON),
+	}
+	return string(resultJSON), summary
+}
+
+// runTextToolLoop is the CLI version of runToolLoop for text-based providers.
+func (cc *chatContext) runTextToolLoop(
+	parentCtx ctxcontext.Context,
+	prompt string,
+	agentCfg *orchestrator.AgentConfig,
+) (string, []toolCallSummary, error) {
+	ctx, cancel := ctxcontext.WithTimeout(parentCtx, chatToolLoopTimeout)
+	defer cancel()
+
+	llmProvider, err := cc.providers.Get(agentCfg.Model)
+	if err != nil {
+		return "", nil, fmt.Errorf("no provider for model %s: %w", agentCfg.Model, err)
+	}
+
+	currentPrompt := prompt
+	var summaries []toolCallSummary
+	nudgeInjected := false
+
+	for i := 0; i < maxToolIterations; i++ {
+		log.Printf("[CHAT-CLI-TEXT] iteration %d/%d", i+1, maxToolIterations)
+
+		if i >= 3 && !nudgeInjected {
+			currentPrompt += "\n\n[System: You have already used several tools. Please provide your final answer now based on the information you have gathered. Do not call any more tools.]"
+			nudgeInjected = true
+		}
+
+		genResp, err := llmProvider.Generate(ctx, provider.GenerateRequest{
+			RunID:   fmt.Sprintf("chat-text-%d", i),
+			Agent:   agentCfg.ID,
+			Model:   agentCfg.Model,
+			Prompt:  currentPrompt,
+		})
+		if err != nil {
+			return "", summaries, fmt.Errorf("LLM call failed iteration %d: %w", i+1, err)
+		}
+
+		responseText := genResp.Text
+		parsed := agent.ParseAgentOutput(responseText)
+		if parsed.Type != agent.ResponseToolRequest {
+			return responseText, summaries, nil
+		}
+
+		log.Printf("[CHAT-CLI-TEXT] iteration %d: tool %q requested", i+1, parsed.ToolName)
+
+		var toolInput map[string]any
+		if parsed.ToolInput != nil {
+			toolInput = parsed.ToolInput
+		} else {
+			toolInput = map[string]any{}
+		}
+
+		result, err := cc.toolExec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "prism", "cli-chat", toolInput)
+		var resultStr string
+		summary := toolCallSummary{Tool: parsed.ToolName}
+
+		if err != nil {
+			resultStr = fmt.Sprintf("Error executing tool: %v", err)
+			summary.Status = "error"
+			summary.Error = err.Error()
+		} else if !result.Success {
+			resultStr = fmt.Sprintf("Tool error: %s", result.Error)
+			summary.Status = "error"
+			summary.Error = result.Error
+		} else {
+			resultJSON, _ := json.Marshal(result.Output)
+			resultStr = string(resultJSON)
+			summary.Status = "success"
+			summary.Result = resultStr
+		}
+
+		fmt.Printf("  🔧 %s → %s\n", parsed.ToolName, truncateStr(resultStr, 200))
+		summaries = append(summaries, summary)
+
+		currentPrompt += fmt.Sprintf("\n\n[Tool Result for %s]: %s\n\n%s:", parsed.ToolName, resultStr, agentCfg.ID)
+	}
+
+	return "", summaries, fmt.Errorf("max tool iterations (%d) reached", maxToolIterations)
+}
+
+// findAgentConfig finds an agent config by ID.
+func findAgentConfig(cfg *orchestrator.Config, agentID string) *orchestrator.AgentConfig {
+	for i := range cfg.Agents {
+		if cfg.Agents[i].ID == agentID {
+			return &cfg.Agents[i]
+		}
+	}
+	return nil
+}
