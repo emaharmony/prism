@@ -67,6 +67,12 @@ type chatContext struct {
 	natsURL      string                // NATS URL (embedded or external)
 	natsCleanup  func()                // Cleanup for embedded NATS
 	rateLimiter  *chatRateLimit        // Per-message rate limiting for CLI
+
+	// Cached static system content — built once, reused every message.
+	// Includes: agent identity, workspace context, postfix, tool instructions.
+	// Does NOT include: session age/count (dynamic per message).
+	staticSystemText    string // For text-based provider path
+	staticSystemChat    string // For ChatProvider path (includes toolUsageGuidance)
 }
 
 // chatRateLimit provides simple rate limiting for CLI chat.
@@ -260,7 +266,8 @@ func executeChat(args []string) {
 		rateLimiter: &chatRateLimit{minDelay: 500 * time.Millisecond}, // 2 msg/s max
 	}
 
-	// 11. Create or resume session
+	// 10.5. Pre-build static system content (only needs to be done once)
+	cc.buildStaticSystemContent(agentCfg)
 	sess, err := sessMgr.FindActive("cli", "terminal", "local-user")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error finding session: %v\n", err)
@@ -583,10 +590,14 @@ func (cc *chatContext) buildAgentConfigMap() map[string]*orchestrator.AgentConfi
 
 // --- Helper methods (mirrors conversationContext methods for chat CLI) ---
 
-// buildChatPrompt builds a flat string prompt (for text-based providers).
-func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+// buildStaticSystemContent pre-builds the static portion of the system prompt.
+// This includes agent identity, workspace context, conversation postfix, and tool instructions.
+// It does NOT include dynamic session info (age, message count) which changes per message.
+// Called once at startup. The result is reused for every message in the session.
+func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConfig) {
 	var sb strings.Builder
 
+	// Agent identity
 	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
 
 	// Workspace context injection
@@ -604,11 +615,6 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 		}
 	}
 
-	// Session awareness
-	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
-	sessionMsgCount := len(sess.Messages)
-	sb.WriteString(fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
-
 	// Conversation postfix
 	postfix := agentCfg.ConversationPostfix
 	if postfix == "" {
@@ -616,15 +622,54 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 			"Don't wrap things up unless the topic is genuinely resolved. " +
 			"Be warm, curious, and engaged — not a transactional Q&A machine."
 	}
-	sb.WriteString("\n" + postfix + "\n\n")
+	sb.WriteString("\n" + postfix + "\n")
 
-	// Tool instructions
+	// Tool instructions (for text path)
 	if cc.toolExec != nil {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		if len(toolInfos) > 0 {
-			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot))
+			sb.WriteString("\n" + agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot))
 		}
 	}
+
+	cc.staticSystemText = sb.String()
+
+	// For ChatProvider path: same content but with toolUsageGuidance instead of full tool prompt
+	var sbChat strings.Builder
+	sbChat.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+
+	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
+		budget := cc.cfg.Prism.ContextTokenBudget
+		if budget <= 0 {
+			budget = 4000
+		}
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+			WithNamedContexts(agentCfg.Context).
+			WithTokenBudget(budget)
+		injected, err := builder.BuildCached()
+		if err == nil && injected.FormattedString != "" {
+			sbChat.WriteString("\n" + injected.FormattedString)
+		}
+	}
+
+	sbChat.WriteString("\n" + postfix + "\n")
+	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
+
+	cc.staticSystemChat = sbChat.String()
+}
+
+// buildChatPrompt builds a flat string prompt (for text-based providers).
+// Uses pre-built static system content + dynamic session info + conversation history.
+func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+	var sb strings.Builder
+
+	// Static system content (cached, built once at startup)
+	sb.WriteString(cc.staticSystemText)
+
+	// Dynamic session awareness
+	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
+	sessionMsgCount := len(sess.Messages)
+	sb.WriteString(fmt.Sprintf("\n[Session: %d messages, started %v ago]\n\n", sessionMsgCount, sessionAge))
 
 	// History
 	for _, msg := range sess.Messages {
@@ -646,35 +691,14 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 	var messages []provider.ChatMessage
 
 	// System message
+	// Static system content (cached, built once at startup)
 	var systemContent string
-	systemContent += fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role)
+	systemContent += cc.staticSystemChat
 
-	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
-		budget := cc.cfg.Prism.ContextTokenBudget
-		if budget <= 0 {
-			budget = 4000
-		}
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(budget)
-		injected, err := builder.BuildCached()
-		if err == nil && injected.FormattedString != "" {
-			systemContent += "\n" + injected.FormattedString
-		}
-	}
-
+	// Dynamic session awareness
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
 	sessionMsgCount := len(sess.Messages)
 	systemContent += fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge)
-
-	postfix := agentCfg.ConversationPostfix
-	if postfix == "" {
-		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
-			"Don't wrap things up unless the topic is genuinely resolved. " +
-			"Be warm, curious, and engaged — not a transactional Q&A machine."
-	}
-	systemContent += "\n" + postfix + "\n"
-	systemContent += "\n## Tool Usage\n" + toolUsageGuidance + "\n"
 
 	messages = append(messages, provider.ChatMessage{
 		Role:    "system",

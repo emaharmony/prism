@@ -100,6 +100,10 @@ type conversationContext struct {
 	toolExec    *tool.Executor        // V27: Tool executor for file system access
 	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
 	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
+
+	// Cached static system content — built once, reused every message.
+	staticSystemText    string // For text-based provider path
+	staticSystemChat    string // For ChatProvider path (includes toolUsageGuidance)
 }
 
 func executeServe(args []string) {
@@ -351,6 +355,11 @@ func executeServe(args []string) {
 					60,   // global max 60 concurrent requests
 					10,   // global refill 10 tokens/sec
 				),
+			}
+
+			// Pre-build static system content for all agents
+			for _, a := range cfg.Agents {
+				convCtx.rebuildStaticSystemContent(&a)
 			}
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
 				convCtx.handleDiscordMessage(msg)
@@ -973,52 +982,31 @@ func (cc *conversationContext) findAgentConfig(agentID string) *orchestrator.Age
 	return nil
 }
 
-// buildPrompt constructs the LLM prompt from session history and injected context.
-// V21: System prompt is built from:
-//   1. Agent identity (role + name)
-//   2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
-//   3. Session awareness (message count, recency, session duration)
-//   4. Conversation postfix (configurable behavior shaping)
-//   5. Conversation history
-func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+// rebuildStaticSystemContent pre-builds the static portion of the system prompt
+// for the given agent. This includes agent identity, workspace context, postfix,
+// and tool instructions. Called once at startup and cached for reuse.
+func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator.AgentConfig) {
 	var sb strings.Builder
 
-	// --- System prompt: Agent identity ---
+	// Agent identity
 	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
 
-	// --- System prompt: Workspace context injection (V21) ---
-	// The agent's `context` field in prism.yaml controls which sources to inject.
-	// Example: context: [soul, agents, user] → inject SOUL.md, AGENTS.md, USER.md
+	// Workspace context injection
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
-		// Use configurable token budget from PrismConfig (default: 4000)
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
 			budget = 4000
 		}
-
 		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
 			WithNamedContexts(agentCfg.Context).
 			WithTokenBudget(budget)
-
 		injected, err := builder.BuildCached()
 		if err == nil && injected.FormattedString != "" {
-			sb.WriteString("\n")
-			sb.WriteString(injected.FormattedString)
-			log.Printf("[CONTEXT] Injected %d tokens from %d sources (hash: %s)",
-				injected.TotalTokens, len(injected.Files), injected.ContentHash[:12])
+			sb.WriteString("\n" + injected.FormattedString)
 		}
 	}
 
-	// --- Session awareness (V29) ---
-	// Gives the model situational awareness about the conversation state
-	// so it can modulate tone and engagement based on session context.
-	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
-	sessionMsgCount := len(sess.Messages)
-	sb.WriteString(fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
-
-	// --- Conversation postfix (V29) ---
-	// Configurable behavior shaping appended after all context but before history.
-	// Defaults to warmth/continuation if not set in config.
+	// Conversation postfix
 	postfix := agentCfg.ConversationPostfix
 	if postfix == "" {
 		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
@@ -1027,8 +1015,52 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	}
 	sb.WriteString("\n" + postfix + "\n\n")
 
-	// --- Tool usage guidance (V30) ---
+	// Tool usage guidance (for text-based path)
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
+
+	cc.staticSystemText = sb.String()
+
+	// For ChatProvider path: same content format
+	var sbChat strings.Builder
+	sbChat.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+
+	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
+		budget := cc.cfg.Prism.ContextTokenBudget
+		if budget <= 0 {
+			budget = 4000
+		}
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+			WithNamedContexts(agentCfg.Context).
+			WithTokenBudget(budget)
+		injected, err := builder.BuildCached()
+		if err == nil && injected.FormattedString != "" {
+			sbChat.WriteString("\n" + injected.FormattedString)
+		}
+	}
+
+	sbChat.WriteString("\n" + postfix + "\n")
+	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
+
+	cc.staticSystemChat = sbChat.String()
+}
+
+// buildPrompt constructs the LLM prompt from session history and injected context.
+// V31: Uses pre-built static system content + dynamic session info + conversation history.
+//   1. Agent identity (role + name)
+//   2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
+//   3. Session awareness (message count, recency, session duration)
+//   4. Conversation postfix (configurable behavior shaping)
+//   5. Conversation history
+func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+	var sb strings.Builder
+
+	// Static system content (cached, built once at startup)
+	sb.WriteString(cc.staticSystemText)
+
+	// --- Session awareness (V29) ---
+	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
+	sessionMsgCount := len(sess.Messages)
+	sb.WriteString(fmt.Sprintf("[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
 
 	// --- Conversation history ---
 	for _, msg := range sess.Messages {
