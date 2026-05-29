@@ -113,20 +113,47 @@ class MetadataStore:
         self.conn.commit()
 
     def ensure_project(self, project_id: str) -> None:
-        """Auto-create a project row if it doesn't exist, so FK constraints pass."""
+        """Auto-create a project row if it doesn't exist, so FK constraints pass.
+
+        Uses INSERT OR IGNORE to avoid conflicts with existing rows.
+        Raises RuntimeError if the insert fails for a reason other than
+        a duplicate key (e.g., schema mismatch, type error)."""
         now = datetime.now(timezone.utc).isoformat()
-        self.conn.execute(
+        cursor = self.conn.execute(
             """INSERT OR IGNORE INTO projects (id, name, description, root_path, created_at, updated_at)
                VALUES (?, ?, ?, '', ?, ?)""",
             (project_id, project_id, f"Auto-created project: {project_id}", now, now),
         )
+        # If rowcount is 0 and no rows were changed, it means the project already existed.
+        # If rowcount is 0 but we expected a new row, something is wrong.
+        if cursor.rowcount == 0:
+            # Verify the project actually exists
+            row = self.conn.execute(
+                "SELECT id FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"ensure_project failed: project {project_id!r} was not created and does not exist"
+                )
+        self.conn.commit()
+
+    def ensure_user(self, user_id: str) -> None:
+        """Auto-create a user row if it doesn't exist, so FK constraints pass."""
+        now = datetime.now(timezone.utc).isoformat()
+        self.conn.execute(
+            """INSERT OR IGNORE INTO users (id, display_name, role, created_at, updated_at)
+               VALUES (?, ?, 'system', ?, ?)""",
+            (user_id, user_id, now, now),
+        )
         self.conn.commit()
 
     def store_memory(self, memory: Memory) -> Memory:
-        """Insert a memory into the store. Auto-creates the project if missing."""
-        # Auto-create project to satisfy FK constraint
+        """Insert a memory into the store. Auto-creates project and user if missing."""
+        # Auto-create project and user to satisfy FK constraints
         if memory.project_id:
             self.ensure_project(memory.project_id)
+        if memory.user_id:
+            self.ensure_user(memory.user_id)
 
         self.conn.execute(
             """INSERT INTO memories
