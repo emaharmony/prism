@@ -371,8 +371,10 @@ LOOP:
 
 		// Process through the pipeline
 		fmt.Println() // blank line before response
+		fmt.Print("Thinking...") // Show thinking indicator
 
 		responseText, err := cc.processMessage(ctxcontext.Background(), sess, agentCfg, sanitizedInput)
+		fmt.Print("\r") // Clear thinking indicator
 		if err != nil {
 			// User-friendly timeout message
 			if errors.Is(err, ctxcontext.DeadlineExceeded) || strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "context deadline") {
