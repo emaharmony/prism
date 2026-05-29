@@ -209,8 +209,8 @@ func (c *Client) Capture(text, source, category, tier string) (map[string]any, e
 		"category":           "conversation",
 		"title":              "auto-captured",
 		"summary":             truncate(text, 200),
-		"source_type":         source, // e.g. "prism:lumi"
-		"source_agent":        source,  // same identifier for agent attribution
+		"source_type":         "agent", // always "agent" for auto-captured conversations
+		"source_agent":        source,    // e.g. "prism:lumi" for agent attribution
 		"scope":               "project",
 		"importance_score":    0.5,
 		"project_id":          "prism", // default project for auto-captured conversations

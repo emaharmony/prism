@@ -55,7 +55,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 	}
 
 	// Resolve search directory against allowed paths
-	searchDirResolved, resolveErr := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, searchDir)
+	searchDirResolved, resolveErr := FuzzyResolvePath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, searchDir)
 	if resolveErr != nil {
 		return ToolResult{Success: false, Error: resolveErr.Error()}, nil
 	}
@@ -174,7 +174,7 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 	}
 
 	// Resolve project directory against allowed paths
-	absProjectDir, err := ResolveToolPath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, projectPath)
+	absProjectDir, err := FuzzyResolvePath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, projectPath)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}, nil
 	}

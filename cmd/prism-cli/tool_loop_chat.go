@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -128,10 +129,51 @@ func (cc *conversationContext) runToolLoopChat(
 		}
 	}
 
-	// Max iterations reached — use partial content if available, otherwise build fallback
-	log.Printf("[TOOL-CHAT] max iterations (%d) reached", maxChatToolIterations)
+	// Max iterations reached — synthesize a final answer from gathered data.
+	// Instead of returning raw tool results, make one final LLM call
+	// with no tools available, asking the model to synthesize what it found.
+	log.Printf("[TOOL-CHAT] max iterations (%d) reached, synthesizing final answer", maxChatToolIterations)
+
+	// Build a synthesis prompt from the tool summaries
+	var summaryTexts []string
+	for _, s := range summaries {
+		if s.Status == "success" {
+			summaryTexts = append(summaryTexts, fmt.Sprintf("- %s: %s", s.Tool, s.Result))
+		} else {
+			summaryTexts = append(summaryTexts, fmt.Sprintf("- %s: (error: %s)", s.Tool, s.Error))
+		}
+	}
+
+	if len(summaryTexts) == 0 {
+		return "", summaries, fmt.Errorf("chat tool loop exceeded max iterations (%d) with no successful tool results", maxChatToolIterations)
+	}
+
+	synthesisPrompt := fmt.Sprintf("You have gathered the following information using tools but reached the iteration limit. " +
+		"Please provide a comprehensive answer based on this data:\n\n%s", strings.Join(summaryTexts, "\n"))
+
+	// Make a final LLM call with no tools
+	synthesisMessages := append(currentMessages, provider.ChatMessage{
+		Role:    "system",
+		Content: synthesisPrompt,
+	})
+
+	synthesisResp, err := cc.callChatLLM(ctx, synthesisMessages, []provider.ChatTool{}, agentCfg)
+	if err != nil {
+		log.Printf("[TOOL-CHAT] synthesis call failed: %v", err)
+		// Fall back to lastContent if synthesis fails
+		if lastContent != "" {
+			return lastContent, summaries, nil
+		}
+		return "", summaries, fmt.Errorf("chat tool loop exceeded max iterations (%d) and synthesis failed", maxChatToolIterations)
+	}
+
+	if synthesisResp.Content != "" {
+		log.Printf("[TOOL-CHAT] synthesis produced %d chars", len(synthesisResp.Content))
+		return synthesisResp.Content, summaries, nil
+	}
+
+	// Synthesis produced no content — use lastContent
 	if lastContent != "" {
-		log.Printf("[TOOL-CHAT] returning partial content (%d chars)", len(lastContent))
 		return lastContent, summaries, nil
 	}
 	return "", summaries, fmt.Errorf("chat tool loop exceeded max iterations (%d)", maxChatToolIterations)
