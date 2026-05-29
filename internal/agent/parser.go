@@ -107,10 +107,18 @@ func extractJSON(text string) string {
 // V28: Includes tool descriptions and parameter schemas so the model knows how to call them.
 // V29: Stronger emphasis on actually USING tools instead of just talking about them.
 // V29b: Includes workspace root path so the model knows where files are.
-func BuildToolPromptSuffix(toolInfos []tool.ToolInfo, workspaceRoot string) string {
+func BuildToolPromptSuffix(toolInfos []tool.ToolInfo, workspaceRoot string, allowedPaths ...string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Tool Instructions\n")
-	sb.WriteString(fmt.Sprintf("Your workspace root is: %s\n\n", workspaceRoot))
+	sb.WriteString(fmt.Sprintf("Your workspace root is: %s\n", workspaceRoot))
+	if len(allowedPaths) > 0 {
+		sb.WriteString("You also have access to these directories:\n")
+		for _, p := range allowedPaths {
+			sb.WriteString(fmt.Sprintf("  - %s\n", p))
+		}
+		sb.WriteString("Use absolute paths from these directories when accessing projects outside your workspace.\n")
+	}
+	sb.WriteString("\n")
 	sb.WriteString("You have access to the following tools:\n\n")
 	for _, ti := range toolInfos {
 		sb.WriteString(fmt.Sprintf("- **%s**: %s", ti.Name, ti.Description))

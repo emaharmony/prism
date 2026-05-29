@@ -628,7 +628,7 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	if cc.toolExec != nil {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		if len(toolInfos) > 0 {
-			sb.WriteString("\n" + agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot))
+			sb.WriteString("\n" + agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...))
 		}
 	}
 
