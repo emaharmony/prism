@@ -10,6 +10,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Prism.LogLevel != "info" {
 		t.Errorf("expected default log level 'info', got %q", cfg.Prism.LogLevel)
 	}
+	if cfg.Prism.OllamaURL != "http://localhost:11434" {
+		t.Errorf("expected default Ollama URL 'http://localhost:11434', got %q", cfg.Prism.OllamaURL)
+	}
+	if cfg.Prism.LLMTimeoutSeconds != 300 {
+		t.Errorf("expected default LLM timeout 300, got %d", cfg.Prism.LLMTimeoutSeconds)
+	}
 	if cfg.Sessions.IdleTimeoutMinutes != 30 {
 		t.Errorf("expected default idle timeout 30, got %d", cfg.Sessions.IdleTimeoutMinutes)
 	}
@@ -163,6 +169,14 @@ func TestValidateSessionConfig(t *testing.T) {
 	}
 }
 
+func TestValidateLLMTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Prism.LLMTimeoutSeconds = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative llm_timeout_seconds")
+	}
+}
+
 func TestPrimaryAgent(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Agents = []AgentConfig{
@@ -231,7 +245,7 @@ func TestValidAgentIDs(t *testing.T) {
 }
 func TestAgentSubscriptions(t *testing.T) {
 	cfg := &Config{
-		Prism: PrismConfig{DataDir: "/tmp/prism"},
+		Prism:    PrismConfig{DataDir: "/tmp/prism"},
 		Sessions: SessionConfig{MaxContextMessages: 100, IdleTimeoutMinutes: 30, CompactionStrategy: "truncate"},
 		Agents: []AgentConfig{
 			{
@@ -269,7 +283,7 @@ func TestAgentSubscriptions(t *testing.T) {
 
 func TestAgentSubscriptions_Empty(t *testing.T) {
 	cfg := &Config{
-		Prism: PrismConfig{DataDir: "/tmp/prism"},
+		Prism:    PrismConfig{DataDir: "/tmp/prism"},
 		Sessions: SessionConfig{MaxContextMessages: 100, IdleTimeoutMinutes: 30, CompactionStrategy: "truncate"},
 		Agents: []AgentConfig{
 			{ID: "lumi", Role: "lead", Provider: "ollama", Model: "glm-5.1:cloud", Primary: true},

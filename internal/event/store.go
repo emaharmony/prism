@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
+	"github.com/emaharmony/prism/internal/sqlite"
 )
 
 // EventStore persists and queries events with ACID guarantees.
@@ -43,8 +43,8 @@ type EventFilter struct {
 	Type      string     // Filter by event type (prefix match)
 	AfterID   string     // Events after this ID (cursor-based pagination)
 	Limit     int        // Maximum events to return (default 100)
-	StartTime *time.Time  // Events after this time
-	EndTime   *time.Time  // Events before this time
+	StartTime *time.Time // Events after this time
+	EndTime   *time.Time // Events before this time
 }
 
 // SQLiteEventStore implements EventStore using SQLite in WAL mode.
@@ -63,9 +63,14 @@ func NewSQLiteEventStore(dbPath string) (*SQLiteEventStore, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open(sqlite.DriverName, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("event store: open: %w", err)
+	}
+
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("event store: set busy timeout: %w", err)
 	}
 
 	// Enable WAL mode for concurrent reads

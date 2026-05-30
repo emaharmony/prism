@@ -15,7 +15,20 @@ import (
 
 func TestOllamaProviderImplementsInterface(t *testing.T) {
 	var _ provider.Provider = ollama.New("")
+	var _ provider.NamedProvider = ollama.New("")
+	var _ provider.TieredProvider = ollama.New("")
 	var _ provider.Provider = ollama.New("http://custom:1234")
+}
+
+func TestOllamaProviderNameAndTier(t *testing.T) {
+	p := ollama.New("")
+
+	if p.Name() != ollama.Name {
+		t.Errorf("expected name %q, got %q", ollama.Name, p.Name())
+	}
+	if p.Tier() != provider.TierFree {
+		t.Errorf("expected tier %q, got %q", provider.TierFree, p.Tier())
+	}
 }
 
 func TestOllamaProviderConnectionRefused(t *testing.T) {
@@ -45,6 +58,15 @@ func TestOllamaProviderSuccess(t *testing.T) {
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
+		}
+		var req struct {
+			Think *bool `json:"think,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Think == nil || *req.Think {
+			t.Errorf("expected think=false in request, got %v", req.Think)
 		}
 
 		resp := map[string]any{

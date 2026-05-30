@@ -11,6 +11,8 @@ import (
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/provider/ollama"
+	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
 )
 
@@ -123,7 +125,7 @@ func TestBuildPrompt_EmptyContextList(t *testing.T) {
 
 	ctxBuilder := context.NewBuilder(workspace)
 	convCtx := &conversationContext{
-		cfg:       &orchestrator.Config{},
+		cfg:        &orchestrator.Config{},
 		ctxBuilder: ctxBuilder,
 	}
 
@@ -155,7 +157,7 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 	ctxBuilder := context.NewBuilder(workspace)
 
 	convCtx := &conversationContext{
-		cfg:       &orchestrator.Config{},
+		cfg:        &orchestrator.Config{},
 		ctxBuilder: ctxBuilder,
 	}
 
@@ -175,6 +177,35 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 	// Should still work — missing files are skipped gracefully
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
 		t.Error("prompt should contain agent identity even with missing workspace files")
+	}
+}
+
+func TestConversationLLMTimeout(t *testing.T) {
+	cc := &conversationContext{
+		cfg: &orchestrator.Config{
+			Prism: orchestrator.PrismConfig{LLMTimeoutSeconds: 180},
+		},
+	}
+	if got := cc.llmTimeout(); got != 180*time.Second {
+		t.Errorf("llmTimeout() = %v, want 180s", got)
+	}
+}
+
+func TestConversationLLMTimeoutDefault(t *testing.T) {
+	cc := &conversationContext{cfg: &orchestrator.Config{}}
+	if got := cc.llmTimeout(); got != runtrack.DefaultTimeout {
+		t.Errorf("llmTimeout() = %v, want %v", got, runtrack.DefaultTimeout)
+	}
+}
+
+func TestDiscordEditContentTruncates(t *testing.T) {
+	content := strings.Repeat("a", 2100)
+	got := discordEditContent(content)
+	if len(got) > 2000 {
+		t.Fatalf("discordEditContent length = %d, want <= 2000", len(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Error("discordEditContent should add ellipsis when truncating")
 	}
 }
 
@@ -465,4 +496,50 @@ func TestPublishEvent_NilPayload(t *testing.T) {
 
 	// Should not panic
 	cc.publishEvent("test.subject", nil)
+}
+
+func TestCreateProvider_OllamaUsesConfiguredURL(t *testing.T) {
+	p, info, err := createProvider(orchestrator.AgentConfig{
+		ID:       "lumi",
+		Role:     "lead",
+		Provider: "ollama",
+		Model:    "qwen3.5:9b",
+	}, "http://127.0.0.1:11435/")
+	if err != nil {
+		t.Fatalf("createProvider returned error: %v", err)
+	}
+
+	op, ok := p.(*ollama.Provider)
+	if !ok {
+		t.Fatalf("expected *ollama.Provider, got %T", p)
+	}
+	if op.BaseURL != "http://127.0.0.1:11435" {
+		t.Errorf("expected configured Ollama URL without trailing slash, got %q", op.BaseURL)
+	}
+	if info.ID != "qwen3.5:9b" {
+		t.Errorf("expected model info ID qwen3.5:9b, got %q", info.ID)
+	}
+	if info.ProviderName != "ollama" {
+		t.Errorf("expected provider name ollama, got %q", info.ProviderName)
+	}
+}
+
+func TestCreateProvider_OllamaDefaultURL(t *testing.T) {
+	p, _, err := createProvider(orchestrator.AgentConfig{
+		ID:       "lumi",
+		Role:     "lead",
+		Provider: "ollama",
+		Model:    "qwen3.5:9b",
+	}, "")
+	if err != nil {
+		t.Fatalf("createProvider returned error: %v", err)
+	}
+
+	op, ok := p.(*ollama.Provider)
+	if !ok {
+		t.Fatalf("expected *ollama.Provider, got %T", p)
+	}
+	if op.BaseURL != ollama.DefaultBaseURL {
+		t.Errorf("expected default Ollama URL %q, got %q", ollama.DefaultBaseURL, op.BaseURL)
+	}
 }
