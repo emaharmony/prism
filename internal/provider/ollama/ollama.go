@@ -51,9 +51,10 @@ func New(baseURL string) *Provider {
 // ---------- request / response types for /api/generate ----------
 
 type generateRequest struct {
-	Model   string         `json:"model"`
-	Prompt  string         `json:"prompt"`
-	Stream  bool           `json:"stream"`
+	Model   string          `json:"model"`
+	Prompt  string          `json:"prompt"`
+	Stream  bool            `json:"stream"`
+	Think   *bool           `json:"think,omitempty"`
 	Options generateOptions `json:"options,omitempty"`
 }
 
@@ -77,11 +78,13 @@ type generateResponse struct {
 // Generate sends a completion request to Ollama and returns the result.
 func (o *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (provider.GenerateResponse, error) {
 	start := time.Now()
+	think := false
 
 	body := generateRequest{
 		Model:  req.Model,
 		Prompt: req.Prompt,
 		Stream: false,
+		Think:  &think,
 		Options: generateOptions{
 			Temperature: req.Temperature,
 			NumPredict:  req.MaxTokens,
@@ -149,5 +152,17 @@ func (o *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	}, nil
 }
 
+// Name returns the provider name for diagnostics and provider chains.
+func (o *Provider) Name() string {
+	return Name
+}
+
+// Tier returns free because Ollama runs locally by default.
+func (o *Provider) Tier() provider.ProviderTier {
+	return provider.TierFree
+}
+
 // Compile-time interface check.
 var _ provider.Provider = (*Provider)(nil)
+var _ provider.NamedProvider = (*Provider)(nil)
+var _ provider.TieredProvider = (*Provider)(nil)

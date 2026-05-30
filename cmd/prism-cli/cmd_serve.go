@@ -21,8 +21,8 @@
 package main
 
 import (
-	stdctx "context"
 	ctxcontext "context"
+	stdctx "context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -38,14 +38,13 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/action"
-	"github.com/emaharmony/prism/internal/api"
-	"github.com/emaharmony/prism/internal/context"
-	"github.com/emaharmony/prism/internal/delegation"
-	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/api"
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/debounce"
+	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/anthropic"
@@ -57,6 +56,7 @@ import (
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
+	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 
 	"github.com/nats-io/nats.go"
@@ -88,16 +88,16 @@ type conversationContext struct {
 	eventLog    *runtrack.EventLogger
 	cancelReg   *runtrack.CancelRegistry
 	ctxBuilder  *context.Builder    // V21: workspace context injection
-	natsConn    *nats.Conn           // V21: NATS bus connection for event publishing
+	natsConn    *nats.Conn          // V21: NATS bus connection for event publishing
 	natsURL     string              // V21: NATS bus URL
-	actionReg   *action.Registry     // V21: action registry for event-triggered actions
-	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
-	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
-	remCache    *remembranceCache     // V26: TTL cache for BuildContext results
-	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
-	taskStore   *task.Store           // V22: Task store for delegation tracking
-	toolExec    *tool.Executor        // V27: Tool executor for file system access
-	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
+	actionReg   *action.Registry    // V21: action registry for event-triggered actions
+	remClient   *remembrance.Client // V21: Remembrance client for memory auto-save
+	remSem      chan struct{}       // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
+	remCache    *remembranceCache   // V26: TTL cache for BuildContext results
+	delegEngine *delegation.Engine  // V22: Delegation engine for agent-to-agent task delegation
+	taskStore   *task.Store         // V22: Task store for delegation tracking
+	toolExec    *tool.Executor      // V27: Tool executor for file system access
+	toolPolicy  tool.PolicyConfig   // V27: Tool policy configuration
 }
 
 func executeServe(args []string) {
@@ -141,6 +141,11 @@ func executeServe(args []string) {
 		cfg.Sessions.IdleTimeoutMinutes,
 		cfg.Sessions.CompactionStrategy,
 	)
+	llmTimeoutSeconds := cfg.Prism.LLMTimeoutSeconds
+	if llmTimeoutSeconds <= 0 {
+		llmTimeoutSeconds = int(runtrack.DefaultTimeout / time.Second)
+	}
+	fmt.Printf("  LLM timeout: %ds\n", llmTimeoutSeconds)
 
 	// 2. Start embedded NATS
 	natsURL := cfg.Prism.NATSURL
@@ -292,16 +297,16 @@ func executeServe(args []string) {
 			}
 
 			// V27: Set up tool executor for file system access
-		toolReg := tool.NewRegistry()
-		toolReg.Register(&tool.EchoTool{})
-		toolReg.Register(&tool.ListDirTool{WorkspaceRoot: "."})
-		toolReg.Register(&tool.ReadFileTool{WorkspaceRoot: "."})
-		toolPolicy := tool.DefaultPolicyConfig()
-		// Write operations require approval
-		toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
-		toolExec := tool.NewExecutor(toolReg, toolPolicy)
+			toolReg := tool.NewRegistry()
+			toolReg.Register(&tool.EchoTool{})
+			toolReg.Register(&tool.ListDirTool{WorkspaceRoot: "."})
+			toolReg.Register(&tool.ReadFileTool{WorkspaceRoot: "."})
+			toolPolicy := tool.DefaultPolicyConfig()
+			// Write operations require approval
+			toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
+			toolExec := tool.NewExecutor(toolReg, toolPolicy)
 
-		convCtx := &conversationContext{
+			convCtx := &conversationContext{
 				router:      rtr,
 				sessMgr:     sessMgr,
 				cfg:         cfg,
@@ -407,8 +412,8 @@ func executeServe(args []string) {
 // concerns (debounce, typing, session management, Discord delivery) while
 // delegating the domain-agnostic core to the stage pipeline:
 //
-//  Pipeline: LLMStage → PersistenceStage → EventPublishStage
-//  Handler: debounce, session, typing, prompt build, StreamCallback, Remembrance
+//	Pipeline: LLMStage → PersistenceStage → EventPublishStage
+//	Handler: debounce, session, typing, prompt build, StreamCallback, Remembrance
 //
 // The StreamCallback bridges LLMStage streaming to Discord:
 // LLMStage calls callback(token) → callback sends to Discord via placeholder + edits.
@@ -471,8 +476,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	// Step 5: Create a run with proper context for cancellation and timeout
-	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 60*time.Second)
+	runTimeout := cc.llmTimeout()
+	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), runTimeout)
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
+	run.Deadline = run.StartedAt.Add(runTimeout)
 	run.Cancel = runCancel
 	cc.cancelReg.Register(sess.ID, runCancel)
 	defer func() {
@@ -556,13 +563,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 		lastEditTime = now
 		content := accumulatedText
-		if len(content) > 2000 {
-			runes := []rune(content)
-			for len(runes) > 1 && len(string(runes))+3 > 2000 {
-				runes = runes[:len(runes)-1]
-			}
-			content = string(runes) + "..."
-		}
+		content = discordEditContent(content)
 
 		return cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, content)
 	}
@@ -643,7 +644,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			for _, ts := range toolSummaries {
 				toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
 				if ts.Error != "" {
-				toolMsg += " — " + ts.Error
+					toolMsg += " — " + ts.Error
 				}
 				cc.sessMgr.AddMessage(sess.ID, "tool", toolMsg, ts.Tool)
 			}
@@ -656,11 +657,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, stageResult.Error)
 			switch stageName {
 			case "routing":
-				cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+				cc.deliverRunError(msg.ChannelID, placeholderMsgID, "I'm not configured properly. Please contact the administrator.")
 			case "llm":
-				cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+				cc.deliverRunError(msg.ChannelID, placeholderMsgID, "I'm having trouble thinking right now. Please try again in a moment.")
 			default:
-				cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
+				cc.deliverRunError(msg.ChannelID, placeholderMsgID, "Something went wrong processing your message. Please try again.")
 			}
 			return
 		}
@@ -669,7 +670,20 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 10: Post-pipeline — handle response delivery and session save
 	responseText := finalRC.LLMResponse
 
-	// If we got a response but no streaming placeholder, send it directly
+	// If the provider was synchronous, the stream callback never edited the
+	// placeholder. Replace it with the completed response.
+	if placeholderMsgID != "" && responseText != "" {
+		streamMu.Lock()
+		usedStreaming := accumulatedText != ""
+		streamMu.Unlock()
+		if !usedStreaming {
+			if err := cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, discordEditContent(responseText)); err != nil {
+				log.Printf("[ERROR] failed to edit Discord placeholder: %v", err)
+			}
+		}
+	}
+
+	// If we got a response but no placeholder, send it directly.
 	if placeholderMsgID == "" && responseText != "" {
 		err := cc.bot.Send(&discordbot.OutboundMessage{
 			ChannelID: msg.ChannelID,
@@ -758,7 +772,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
-}// sendError sends a user-friendly error message to a Discord channel.
+} // sendError sends a user-friendly error message to a Discord channel.
 func (cc *conversationContext) sendError(channelID, message string) {
 	err := cc.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
@@ -767,6 +781,35 @@ func (cc *conversationContext) sendError(channelID, message string) {
 	if err != nil {
 		log.Printf("[ERROR] failed to send error message to Discord: %v", err)
 	}
+}
+
+func (cc *conversationContext) deliverRunError(channelID, placeholderMsgID, message string) {
+	if placeholderMsgID != "" {
+		if err := cc.bot.EditMessage(channelID, placeholderMsgID, "Warning: "+message); err != nil {
+			log.Printf("[ERROR] failed to edit Discord placeholder with error: %v", err)
+			cc.sendError(channelID, message)
+		}
+		return
+	}
+	cc.sendError(channelID, message)
+}
+
+func (cc *conversationContext) llmTimeout() time.Duration {
+	if cc == nil || cc.cfg == nil || cc.cfg.Prism.LLMTimeoutSeconds <= 0 {
+		return runtrack.DefaultTimeout
+	}
+	return time.Duration(cc.cfg.Prism.LLMTimeoutSeconds) * time.Second
+}
+
+func discordEditContent(content string) string {
+	if len(content) <= 2000 {
+		return content
+	}
+	runes := []rune(content)
+	for len(runes) > 1 && len(string(runes))+3 > 2000 {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "..."
 }
 
 // publishEvent publishes an event to the NATS bus.
@@ -823,9 +866,9 @@ func (cc *conversationContext) findAgentConfig(agentID string) *orchestrator.Age
 
 // buildPrompt constructs the LLM prompt from session history and injected context.
 // V21: System prompt is built from:
-//   1. Agent identity (role + name)
-//   2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
-//   3. Conversation history
+//  1. Agent identity (role + name)
+//  2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
+//  3. Conversation history
 func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
 	var sb strings.Builder
 
@@ -881,7 +924,7 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 	//
 	// V21 will add provider chains, fallbacks, and cost tiers.
 	for _, agentCfg := range cfg.Agents {
-		p, info, err := createProvider(agentCfg)
+		p, info, err := createProvider(agentCfg, cfg.Prism.OllamaURL)
 		if err != nil {
 			return fmt.Errorf("agent %s: %w", agentCfg.ID, err)
 		}
@@ -892,7 +935,7 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 
 // createProvider creates a provider instance for an agent config.
 // V20 supports: ollama, openai, anthropic, gemini.
-func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provider.ModelInfo, error) {
+func createProvider(agentCfg orchestrator.AgentConfig, ollamaURL string) (provider.Provider, provider.ModelInfo, error) {
 	info := provider.ModelInfo{
 		ID:           agentCfg.Model,
 		ProviderName: agentCfg.Provider,
@@ -900,9 +943,7 @@ func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provi
 
 	switch agentCfg.Provider {
 	case "ollama":
-		// V20: Use the Ollama provider with default localhost endpoint.
-		// V21: Read base URL from config.
-		p, err := createOllamaProvider(agentCfg.Model)
+		p, err := createOllamaProvider(ollamaURL)
 		if err != nil {
 			return nil, info, fmt.Errorf("ollama provider: %w", err)
 		}
@@ -935,9 +976,9 @@ func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provi
 }
 
 // createOllamaProvider creates an Ollama provider instance.
-// Uses localhost:11434 by default. V21: configurable base URL.
-func createOllamaProvider(model string) (provider.Provider, error) {
-	p := ollama.New("") // empty = default localhost:11434
+// Empty base URL defaults to localhost:11434.
+func createOllamaProvider(baseURL string) (provider.Provider, error) {
+	p := ollama.New(baseURL)
 	return p, nil
 }
 

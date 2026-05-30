@@ -53,9 +53,17 @@ type PrismConfig struct {
 	// Defaults to $HOME/.openclaw/workspace if empty.
 	Workspace string `yaml:"workspace"`
 
+	// OllamaURL is the base URL for local Ollama-compatible agents.
+	// Default: http://localhost:11434.
+	OllamaURL string `yaml:"ollama_url"`
+
 	// ContextTokenBudget is the max tokens for workspace context injection.
 	// Default: 4000. Higher = more context but less room for conversation.
 	ContextTokenBudget int `yaml:"context_token_budget"`
+
+	// LLMTimeoutSeconds is the serve-mode timeout for each live LLM call.
+	// Default: 300 seconds. Direct `prism run` keeps using its --timeout flag.
+	LLMTimeoutSeconds int `yaml:"llm_timeout_seconds"`
 
 	// Port is the health check server port. Default 8321.
 	Port int `yaml:"port"`
@@ -152,11 +160,13 @@ type RemembranceConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Prism: PrismConfig{
-			NATSURL:  "",
-		Port:     8321,
-			DataDir:  filepath.Join(os.Getenv("HOME"), ".prism", "data"),
-			LogLevel: "info",
-		ContextTokenBudget: 4000,
+			NATSURL:            "",
+			Port:               8321,
+			DataDir:            filepath.Join(os.Getenv("HOME"), ".prism", "data"),
+			OllamaURL:          "http://localhost:11434",
+			LogLevel:           "info",
+			ContextTokenBudget: 4000,
+			LLMTimeoutSeconds:  300,
 		},
 		Sessions: SessionConfig{
 			IdleTimeoutMinutes: 30,
@@ -229,6 +239,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Sessions.CompactionStrategy != "truncate" && c.Sessions.CompactionStrategy != "summarize" {
 		return fmt.Errorf("config: compaction_strategy must be 'truncate' or 'summarize'")
+	}
+	if c.Prism.LLMTimeoutSeconds < 0 {
+		return fmt.Errorf("config: llm_timeout_seconds must be >= 0")
 	}
 
 	return nil
