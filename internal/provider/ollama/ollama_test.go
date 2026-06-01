@@ -210,3 +210,17 @@ func TestOllamaProviderTokenFallback(t *testing.T) {
 		t.Error("expected positive output tokens from fallback")
 	}
 }
+
+func TestOllamaProviderNameMethod(t *testing.T) {
+	p := ollama.New("http://localhost:11434")
+	if p.Name() != ollama.Name {
+		t.Errorf("expected Name() = %q, got %q", ollama.Name, p.Name())
+	}
+}
+
+func TestOllamaProviderTierMethod(t *testing.T) {
+	p := ollama.New("http://localhost:11434")
+	if p.Tier() != provider.TierFree {
+		t.Errorf("expected Tier() = %q, got %q", provider.TierFree, p.Tier())
+	}
+}
