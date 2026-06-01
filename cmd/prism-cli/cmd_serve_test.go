@@ -11,6 +11,7 @@ import (
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/session"
 )
 
@@ -470,4 +471,40 @@ func TestPublishEvent_NilPayload(t *testing.T) {
 
 	// Should not panic
 	cc.publishEvent("test.subject", nil)
+}
+
+func TestRemembranceTimeout_Config(t *testing.T) {
+	cfg := &orchestrator.Config{
+		Remembrance: orchestrator.RemembranceConfig{
+			TimeoutSeconds: 45,
+		},
+	}
+	got := remembranceTimeout(cfg)
+	if got != 45*time.Second {
+		t.Errorf("expected 45s, got %v", got)
+	}
+}
+
+func TestRemembranceTimeout_Zero(t *testing.T) {
+	cfg := &orchestrator.Config{
+		Remembrance: orchestrator.RemembranceConfig{
+			TimeoutSeconds: 0,
+		},
+	}
+	got := remembranceTimeout(cfg)
+	if got != remembrance.DefaultTimeout {
+		t.Errorf("expected default %v, got %v", remembrance.DefaultTimeout, got)
+	}
+}
+
+func TestRemembranceTimeout_Negative(t *testing.T) {
+	cfg := &orchestrator.Config{
+		Remembrance: orchestrator.RemembranceConfig{
+			TimeoutSeconds: -1,
+		},
+	}
+	got := remembranceTimeout(cfg)
+	if got != remembrance.DefaultTimeout {
+		t.Errorf("expected default %v for negative, got %v", remembrance.DefaultTimeout, got)
+	}
 }
