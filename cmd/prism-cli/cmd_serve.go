@@ -75,6 +75,15 @@ func (n *natsPublisherAdapter) Publish(subject string, data []byte) error {
 	return n.conn.Publish(subject, data)
 }
 
+// discordBotClient abstracts the Discord operations needed by the handler,
+// making it testable without a real Discord connection.
+type discordBotClient interface {
+	Typing(channelID string) error
+	Send(msg *discordbot.OutboundMessage) error
+	SendPlaceholder(channelID, content string) (string, error)
+	EditMessage(channelID, messageID, content string) error
+}
+
 // conversationContext holds all the dependencies needed to process a
 // Discord message through the full pipeline. It's closed over by the
 // OnMessage handler so each message has access to routing, sessions,
@@ -84,15 +93,15 @@ type conversationContext struct {
 	sessMgr     *session.Manager
 	cfg         *orchestrator.Config
 	providers   *provider.ProviderRegistry
-	bot         *discordbot.BotAdapter
+	bot         discordBotClient
 	debounce    *debounce.Tracker
 	eventLog    *runtrack.EventLogger
 	cancelReg   *runtrack.CancelRegistry
-	ctxBuilder  *context.Builder    // V21: workspace context injection
-	natsConn    *nats.Conn           // V21: NATS bus connection for event publishing
-	natsURL     string              // V21: NATS bus URL
-	actionReg   *action.Registry     // V21: action registry for event-triggered actions
-	remClient   *remembrance.Client   // V21: Remembrance client for memory auto-save
+	ctxBuilder  *context.Builder   // V21: workspace context injection
+	natsConn    *nats.Conn        // V21: NATS bus connection for event publishing
+	natsURL     string            // V21: NATS bus URL
+	actionReg   *action.Registry  // V21: action registry for event-triggered actions
+	remClient   *remembrance.Client // V21: Remembrance client for memory auto-save
 	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
 	remCache    *remembranceCache     // V26: TTL cache for BuildContext results
 	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
@@ -260,7 +269,10 @@ func executeServe(args []string) {
 
 			// V21: Create Remembrance client if enabled
 			if cfg.Remembrance.Enabled {
-				remClient = remembrance.NewClient(cfg.Remembrance.URL)
+				remClient = remembrance.NewClientWithTimeout(
+					cfg.Remembrance.URL,
+					remembranceTimeout(cfg),
+				)
 				if remClient.IsAvailable() {
 					fmt.Println("  Remembrance: connected")
 				} else {
@@ -1215,4 +1227,13 @@ func primaryName(cfg *orchestrator.Config) string {
 		return "(none)"
 	}
 	return p.ID
+}
+
+// remembranceTimeout returns the configured Remembrance timeout duration,
+// falling back to the default if not set.
+func remembranceTimeout(cfg *orchestrator.Config) time.Duration {
+	if cfg.Remembrance.TimeoutSeconds > 0 {
+		return time.Duration(cfg.Remembrance.TimeoutSeconds) * time.Second
+	}
+	return remembrance.DefaultTimeout
 }

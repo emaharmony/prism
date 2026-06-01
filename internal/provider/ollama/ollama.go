@@ -28,7 +28,7 @@ const DefaultBaseURL = "http://localhost:11434"
 
 // DefaultHTTPTimeout is the timeout for individual HTTP calls.
 // Local inference can be slow, especially for large models.
-const DefaultHTTPTimeout = 5 * time.Minute
+const DefaultHTTPTimeout = 20 * time.Minute
 
 // Provider generates completions via a local Ollama instance.
 // It also embeds ChatProvider for native tool calling support (V30).
@@ -59,9 +59,10 @@ func New(baseURL string) *Provider {
 // ---------- request / response types for /api/generate ----------
 
 type generateRequest struct {
-	Model   string         `json:"model"`
-	Prompt  string         `json:"prompt"`
-	Stream  bool           `json:"stream"`
+	Model   string          `json:"model"`
+	Prompt  string          `json:"prompt"`
+	Stream  bool            `json:"stream"`
+	Think   *bool           `json:"think,omitempty"`
 	Options generateOptions `json:"options,omitempty"`
 }
 
@@ -89,7 +90,8 @@ func (o *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	body := generateRequest{
 		Model:  req.Model,
 		Prompt: req.Prompt,
-		Stream: false,
+		Stream:  false,
+		Think:   boolPtr(false), // disable thinking for simple generate calls
 		Options: generateOptions{
 			Temperature: req.Temperature,
 			NumPredict:  req.MaxTokens,
@@ -164,6 +166,23 @@ func (o *Provider) ChatGenerate(ctx context.Context, req provider.ChatGenerateRe
 	return o.chat.ChatGenerate(ctx, req)
 }
 
+// Name returns the provider name for diagnostics and provider chains.
+func (o *Provider) Name() string {
+	return Name
+}
+
+// Tier returns free because Ollama runs locally by default.
+func (o *Provider) Tier() provider.ProviderTier {
+	return provider.TierFree
+}
+
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 // Compile-time interface checks.
 var _ provider.Provider = (*Provider)(nil)
 var _ provider.ChatProvider = (*Provider)(nil)
+var _ provider.NamedProvider = (*Provider)(nil)
+var _ provider.TieredProvider = (*Provider)(nil)
