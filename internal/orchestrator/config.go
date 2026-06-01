@@ -53,9 +53,17 @@ type PrismConfig struct {
 	// Defaults to $HOME/.openclaw/workspace if empty.
 	Workspace string `yaml:"workspace"`
 
+	// OllamaURL is the base URL for local Ollama-compatible agents.
+	// Default: http://localhost:11434.
+	OllamaURL string `yaml:"ollama_url"`
+
 	// ContextTokenBudget is the max tokens for workspace context injection.
 	// Default: 4000. Higher = more context but less room for conversation.
 	ContextTokenBudget int `yaml:"context_token_budget"`
+
+	// LLMTimeoutSeconds is the serve-mode timeout for each live LLM call.
+	// Default: 1200 seconds (20 minutes). Local inference can be slow.
+	LLMTimeoutSeconds int `yaml:"llm_timeout_seconds"`
 
 	// Port is the health check server port. Default 8321.
 	Port int `yaml:"port"`
@@ -157,17 +165,23 @@ type RemembranceConfig struct {
 
 	// URL is the Remembrance service URL.
 	URL string `yaml:"url"`
+
+	// TimeoutSeconds is the HTTP timeout for Remembrance requests.
+	// Default: 60 seconds. Capture may run synchronous extraction before returning.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
 		Prism: PrismConfig{
-			NATSURL:  "",
-		Port:     8321,
-			DataDir:  filepath.Join(os.Getenv("HOME"), ".prism", "data"),
-			LogLevel: "info",
-		ContextTokenBudget: 4000,
+			NATSURL:            "",
+			Port:               8321,
+			DataDir:            filepath.Join(os.Getenv("HOME"), ".prism", "data"),
+			OllamaURL:          "http://localhost:11434",
+			LogLevel:           "info",
+			ContextTokenBudget: 4000,
+			LLMTimeoutSeconds:  1200,
 		},
 		Sessions: SessionConfig{
 			IdleTimeoutMinutes: 30,
@@ -176,8 +190,9 @@ func DefaultConfig() *Config {
 			CompactionStrategy: "truncate",
 		},
 		Remembrance: RemembranceConfig{
-			Enabled: false,
-			URL:     "http://localhost:18790",
+			Enabled:        false,
+			URL:            "http://localhost:18790",
+			TimeoutSeconds: 60,
 		},
 	}
 }
@@ -240,6 +255,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Sessions.CompactionStrategy != "truncate" && c.Sessions.CompactionStrategy != "summarize" {
 		return fmt.Errorf("config: compaction_strategy must be 'truncate' or 'summarize'")
+	}
+	if c.Prism.LLMTimeoutSeconds < 0 {
+		return fmt.Errorf("config: llm_timeout_seconds must be >= 0")
+	}
+	if c.Remembrance.TimeoutSeconds < 0 {
+		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
 	}
 
 	return nil
