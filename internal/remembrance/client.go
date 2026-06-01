@@ -140,9 +140,13 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+// DefaultTimeout is the default HTTP timeout for Remembrance requests.
+// Capture may run synchronous extraction and graph wiring before returning.
+const DefaultTimeout = 60 * time.Second
+
 // NewClient creates a new Remembrance client with default timeout.
 func NewClient(baseURL string) *Client {
-	return NewClientWithTimeout(baseURL, 30*time.Second)
+	return NewClientWithTimeout(baseURL, DefaultTimeout)
 }
 
 // NewClientWithTimeout creates a new Remembrance client with custom timeout.
