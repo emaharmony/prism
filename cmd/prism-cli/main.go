@@ -56,9 +56,9 @@ import (
 
 	"github.com/emaharmony/prism/internal/config"
 	"github.com/emaharmony/prism/internal/provider"
-	"github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/provider/anthropic"
 	"github.com/emaharmony/prism/internal/provider/gemini"
+	"github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/provider/ollama"
 	"github.com/emaharmony/prism/internal/provider/openai"
 )
@@ -80,7 +80,7 @@ func main() {
 	modelFlag := runCmd.String("model", "mock-model", "Model name")
 	temperatureFlag := runCmd.Float64("temperature", 0.2, "LLM temperature")
 	maxTokensFlag := runCmd.Int("max-tokens", 2048, "Max output tokens")
-	timeoutFlag := runCmd.Duration("timeout", 60*time.Second, "LLM request timeout")
+	timeoutFlag := runCmd.Duration("timeout", 20*time.Minute, "LLM request timeout")
 	dryRunPrompt := runCmd.Bool("dry-run-prompt", false, "Build prompt and artifacts but skip LLM call")
 	ollamaURL := runCmd.String("ollama-url", "http://localhost:11434", "Ollama base URL")
 
@@ -180,21 +180,21 @@ func main() {
 		_ = *runWorkspaceRoot
 
 		executeRun(runConfig{
-			Task:           *taskFlag,
-			Project:        *projectFlag,
-			Agent:          *agentFlag,
-			BusURL:         *busURL,
-			MemoryEnabled:  *memoryEnabled,
-			RequireMemory:  *requireMemory,
-			MemoryURL:      *memoryURL,
-			RunDir:         *runDir,
-			Provider:       p,
-			ProviderName:   providerName,
-			Model:          model,
-			Temperature:    *temperatureFlag,
-			MaxTokens:      *maxTokensFlag,
-			Timeout:        *timeoutFlag,
-			DryRunPrompt:   *dryRunPrompt,
+			Task:          *taskFlag,
+			Project:       *projectFlag,
+			Agent:         *agentFlag,
+			BusURL:        *busURL,
+			MemoryEnabled: *memoryEnabled,
+			RequireMemory: *requireMemory,
+			MemoryURL:     *memoryURL,
+			RunDir:        *runDir,
+			Provider:      p,
+			ProviderName:  providerName,
+			Model:         model,
+			Temperature:   *temperatureFlag,
+			MaxTokens:     *maxTokensFlag,
+			Timeout:       *timeoutFlag,
+			DryRunPrompt:  *dryRunPrompt,
 		})
 	case "tool":
 		if len(os.Args) < 3 {
@@ -552,7 +552,6 @@ func main() {
 	}
 }
 
-
 func printUsage() {
 	fmt.Println("Prism — Event-Native AI Agent Platform")
 	fmt.Println()
@@ -602,7 +601,7 @@ func printUsage() {
 	fmt.Println("  --model <string>       Model name (default: mock-model)")
 	fmt.Println("  --temperature <float>  LLM temperature (default: 0.2)")
 	fmt.Println("  --max-tokens <int>     Max output tokens (default: 2048)")
-	fmt.Println("  --timeout <duration>   LLM request timeout (default: 60s)")
+	fmt.Println("  --timeout <duration>   LLM request timeout (default: 20m)")
 	fmt.Println("  --dry-run-prompt       Build prompt and artifacts but skip LLM call")
 	fmt.Println("  --ollama-url <string>  Ollama base URL (default: http://localhost:11434)")
 	fmt.Println()
@@ -630,4 +629,3 @@ func printUsage() {
 	fmt.Println("  prism health")
 	fmt.Println("  prism approval approve appr_xxx --by ema --run run_xxx --validate")
 }
-

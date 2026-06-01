@@ -19,7 +19,7 @@ prism:
   # Local Ollama base URL used by serve-mode Ollama agents.
   ollama_url: "http://localhost:11434"
   # Serve-mode LLM timeout in seconds. Local models often need more than 60s.
-  llm_timeout_seconds: 300
+  llm_timeout_seconds: 1200
   # Log level: debug, info, warn, error
   log_level: "info"
 
@@ -97,3 +97,4 @@ sessions:
 remembrance:
   enabled: false
   url: "http://localhost:18790"
+  timeout_seconds: 60

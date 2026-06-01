@@ -39,7 +39,7 @@ type Config struct {
 	// BaseURL is the Remembrance service URL (default: http://localhost:8788)
 	BaseURL string `json:"base_url" yaml:"base_url"`
 
-	// Timeout is the HTTP request timeout (default: 10s)
+	// Timeout is the HTTP request timeout (default: 60s)
 	Timeout time.Duration `json:"timeout" yaml:"timeout"`
 }
 
@@ -47,7 +47,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		BaseURL: "http://localhost:8788",
-		Timeout: 10 * time.Second,
+		Timeout: remcli.DefaultTimeout,
 	}
 }
 
@@ -57,10 +57,10 @@ func NewAdapter(cfg Config) *Adapter {
 		cfg.BaseURL = "http://localhost:8788"
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 10 * time.Second
+		cfg.Timeout = remcli.DefaultTimeout
 	}
 	return &Adapter{
-	client: remcli.NewClientWithTimeout(cfg.BaseURL, cfg.Timeout),
+		client: remcli.NewClientWithTimeout(cfg.BaseURL, cfg.Timeout),
 	}
 }
 
@@ -80,7 +80,7 @@ func (a *Adapter) Capabilities() []adapter.Capability {
 				"text":     map[string]string{"type": "string", "description": "Text to capture"},
 				"source":   map[string]string{"type": "string", "description": "Source (discord, cli, api, etc.)"},
 				"category": map[string]string{"type": "string", "description": "Category override (optional)"},
-				"tier":      map[string]string{"type": "string", "description": "Tier override: cold/active/persist"},
+				"tier":     map[string]string{"type": "string", "description": "Tier override: cold/active/persist"},
 			},
 		},
 		{
@@ -90,7 +90,7 @@ func (a *Adapter) Capabilities() []adapter.Capability {
 				"query":    map[string]string{"type": "string", "description": "Search query"},
 				"mode":     map[string]string{"type": "string", "description": "Search mode: keyword/vector/balanced/deep"},
 				"category": map[string]string{"type": "string", "description": "Category filter (optional)"},
-				"tier":      map[string]string{"type": "string", "description": "Tier filter (optional)"},
+				"tier":     map[string]string{"type": "string", "description": "Tier filter (optional)"},
 				"limit":    map[string]string{"type": "integer", "description": "Max results (default: 10)"},
 			},
 		},
@@ -302,6 +302,7 @@ func (a *Adapter) executeDream(ctx context.Context, input map[string]any) (*adap
 	}
 	return &adapter.Result{Success: true, Output: resultToMap(resp)}, nil
 }
+
 // resultToMap converts any value to map[string]any via JSON round-trip.
 // This handles both map[string]any values returned directly from the client
 // and typed structs.

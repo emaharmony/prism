@@ -74,6 +74,13 @@ func (n *natsPublisherAdapter) Publish(subject string, data []byte) error {
 	return n.conn.Publish(subject, data)
 }
 
+type discordBotClient interface {
+	Typing(channelID string) error
+	Send(msg *discordbot.OutboundMessage) error
+	SendPlaceholder(channelID, content string) (string, error)
+	EditMessage(channelID, messageID, content string) error
+}
+
 // conversationContext holds all the dependencies needed to process a
 // Discord message through the full pipeline. It's closed over by the
 // OnMessage handler so each message has access to routing, sessions,
@@ -83,7 +90,7 @@ type conversationContext struct {
 	sessMgr     *session.Manager
 	cfg         *orchestrator.Config
 	providers   *provider.ProviderRegistry
-	bot         *discordbot.BotAdapter
+	bot         discordBotClient
 	debounce    *debounce.Tracker
 	eventLog    *runtrack.EventLogger
 	cancelReg   *runtrack.CancelRegistry
@@ -259,7 +266,10 @@ func executeServe(args []string) {
 
 			// V21: Create Remembrance client if enabled
 			if cfg.Remembrance.Enabled {
-				remClient = remembrance.NewClient(cfg.Remembrance.URL)
+				remClient = remembrance.NewClientWithTimeout(
+					cfg.Remembrance.URL,
+					remembranceTimeout(cfg),
+				)
 				if remClient.IsAvailable() {
 					fmt.Println("  Remembrance: connected")
 				} else {
@@ -599,7 +609,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		if placeholderMsgID != "" {
 			streamMu.Lock()
 			if accumulatedText != "" {
-				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, accumulatedText+"\n\n⚠️ Canceled.")
+				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, discordEditContent(accumulatedText+"\n\n⚠️ Canceled."))
 			} else {
 				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ Canceled.")
 			}
@@ -670,27 +680,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 10: Post-pipeline — handle response delivery and session save
 	responseText := finalRC.LLMResponse
 
-	// If the provider was synchronous, the stream callback never edited the
-	// placeholder. Replace it with the completed response.
-	if placeholderMsgID != "" && responseText != "" {
-		streamMu.Lock()
-		usedStreaming := accumulatedText != ""
-		streamMu.Unlock()
-		if !usedStreaming {
-			if err := cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, discordEditContent(responseText)); err != nil {
-				log.Printf("[ERROR] failed to edit Discord placeholder: %v", err)
-			}
-		}
-	}
-
-	// If we got a response but no placeholder, send it directly.
-	if placeholderMsgID == "" && responseText != "" {
-		err := cc.bot.Send(&discordbot.OutboundMessage{
-			ChannelID: msg.ChannelID,
-			Content:   responseText,
-		})
-		if err != nil {
-			log.Printf("[ERROR] failed to send Discord response: %v", err)
+	if responseText != "" {
+		if err := cc.deliverDiscordResponse(msg.ChannelID, placeholderMsgID, responseText); err != nil {
+			log.Printf("[ERROR] failed to deliver Discord response: %v", err)
 		}
 	}
 
@@ -783,6 +775,41 @@ func (cc *conversationContext) sendError(channelID, message string) {
 	}
 }
 
+func (cc *conversationContext) deliverDiscordResponse(channelID, placeholderMsgID, responseText string) error {
+	if responseText == "" {
+		return nil
+	}
+	if placeholderMsgID == "" {
+		return cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: channelID,
+			Content:   responseText,
+		})
+	}
+
+	chunks := discordbot.SplitMessage(responseText, discordbot.MessageChunkLimit)
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	if err := cc.bot.EditMessage(channelID, placeholderMsgID, chunks[0]); err != nil {
+		// If the placeholder disappeared or edit failed, send the full response
+		// so the user still receives the complete answer.
+		return cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: channelID,
+			Content:   responseText,
+		})
+	}
+	for i, chunk := range chunks[1:] {
+		if err := cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: channelID,
+			Content:   chunk,
+		}); err != nil {
+			return fmt.Errorf("send overflow chunk %d: %w", i+2, err)
+		}
+	}
+	return nil
+}
+
 func (cc *conversationContext) deliverRunError(channelID, placeholderMsgID, message string) {
 	if placeholderMsgID != "" {
 		if err := cc.bot.EditMessage(channelID, placeholderMsgID, "Warning: "+message); err != nil {
@@ -801,12 +828,19 @@ func (cc *conversationContext) llmTimeout() time.Duration {
 	return time.Duration(cc.cfg.Prism.LLMTimeoutSeconds) * time.Second
 }
 
+func remembranceTimeout(cfg *orchestrator.Config) time.Duration {
+	if cfg == nil || cfg.Remembrance.TimeoutSeconds <= 0 {
+		return remembrance.DefaultTimeout
+	}
+	return time.Duration(cfg.Remembrance.TimeoutSeconds) * time.Second
+}
+
 func discordEditContent(content string) string {
-	if len(content) <= 2000 {
+	if len(content) <= discordbot.MessageLimit {
 		return content
 	}
 	runes := []rune(content)
-	for len(runes) > 1 && len(string(runes))+3 > 2000 {
+	for len(runes) > 1 && len(string(runes))+3 > discordbot.MessageLimit {
 		runes = runes[:len(runes)-1]
 	}
 	return string(runes) + "..."

@@ -13,8 +13,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Prism.OllamaURL != "http://localhost:11434" {
 		t.Errorf("expected default Ollama URL 'http://localhost:11434', got %q", cfg.Prism.OllamaURL)
 	}
-	if cfg.Prism.LLMTimeoutSeconds != 300 {
-		t.Errorf("expected default LLM timeout 300, got %d", cfg.Prism.LLMTimeoutSeconds)
+	if cfg.Prism.LLMTimeoutSeconds != 1200 {
+		t.Errorf("expected default LLM timeout 1200, got %d", cfg.Prism.LLMTimeoutSeconds)
 	}
 	if cfg.Sessions.IdleTimeoutMinutes != 30 {
 		t.Errorf("expected default idle timeout 30, got %d", cfg.Sessions.IdleTimeoutMinutes)
@@ -30,6 +30,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Remembrance.Enabled != false {
 		t.Error("expected remembrance disabled by default")
+	}
+	if cfg.Remembrance.TimeoutSeconds != 60 {
+		t.Errorf("expected default remembrance timeout 60, got %d", cfg.Remembrance.TimeoutSeconds)
 	}
 }
 
@@ -174,6 +177,14 @@ func TestValidateLLMTimeout(t *testing.T) {
 	cfg.Prism.LLMTimeoutSeconds = -1
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected error for negative llm_timeout_seconds")
+	}
+}
+
+func TestValidateRemembranceTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Remembrance.TimeoutSeconds = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for negative remembrance.timeout_seconds")
 	}
 }
 

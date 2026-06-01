@@ -63,42 +63,42 @@ type SearchResponse struct {
 
 // EntityResponse represents an entity with compiled truth and timeline.
 type EntityResponse struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Type          string   `json:"type"`
-	Aliases       []string `json:"aliases"`
-	CompiledTruth string   `json:"compiled_truth"`
-	Timeline      string   `json:"timeline"`
-	Tier          string   `json:"tier"`
-	CreatedAt     float64  `json:"created_at"`
-	UpdatedAt     float64  `json:"updated_at"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Type          string         `json:"type"`
+	Aliases       []string       `json:"aliases"`
+	CompiledTruth string         `json:"compiled_truth"`
+	Timeline      string         `json:"timeline"`
+	Tier          string         `json:"tier"`
+	CreatedAt     float64        `json:"created_at"`
+	UpdatedAt     float64        `json:"updated_at"`
 	Edges         []EdgeResponse `json:"edges,omitempty"`
 }
 
 // EdgeResponse represents a typed relationship between entities.
 type EdgeResponse struct {
-	SourceID  string  `json:"source_id"`
-	TargetID  string  `json:"target_id"`
-	EdgeType  string  `json:"edge_type"`
-	SinceDate float64 `json:"since_date"`
+	SourceID   string  `json:"source_id"`
+	TargetID   string  `json:"target_id"`
+	EdgeType   string  `json:"edge_type"`
+	SinceDate  float64 `json:"since_date"`
 	Confidence float64 `json:"confidence"`
-	Evidence  string  `json:"evidence"`
+	Evidence   string  `json:"evidence"`
 }
 
 // GraphResponse represents a graph traversal result.
 type GraphResponse struct {
-	Center    string           `json:"center"`
-	Entities  []EntityResponse `json:"entities"`
-	Edges     []EdgeResponse   `json:"edges"`
+	Center   string           `json:"center"`
+	Entities []EntityResponse `json:"entities"`
+	Edges    []EdgeResponse   `json:"edges"`
 }
 
 // DreamResponse represents the result of a dream cycle run.
 type DreamResponse struct {
-	LogID       string `json:"log_id"`
-	Status      string `json:"status"`
-	DurationMs  int    `json:"duration_ms"`
-	Phases      []any  `json:"phases"`
-	Totals      map[string]any `json:"totals"`
+	LogID      string         `json:"log_id"`
+	Status     string         `json:"status"`
+	DurationMs int            `json:"duration_ms"`
+	Phases     []any          `json:"phases"`
+	Totals     map[string]any `json:"totals"`
 }
 
 // ContextBuildResponse represents the full context for a task.
@@ -120,9 +120,13 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+// DefaultTimeout is the default HTTP timeout for Remembrance requests.
+// Capture may run synchronous extraction and graph wiring before returning.
+const DefaultTimeout = 60 * time.Second
+
 // NewClient creates a new Remembrance client with default timeout.
 func NewClient(baseURL string) *Client {
-	return NewClientWithTimeout(baseURL, 10*time.Second)
+	return NewClientWithTimeout(baseURL, DefaultTimeout)
 }
 
 // NewClientWithTimeout creates a new Remembrance client with custom timeout.
