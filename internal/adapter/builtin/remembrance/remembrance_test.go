@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	remcli "github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/adapter"
+	remcli "github.com/emaharmony/prism/internal/remembrance"
 )
 
 func TestAdapterName(t *testing.T) {
@@ -18,6 +18,13 @@ func TestAdapterName(t *testing.T) {
 	}
 	if a.Version() != "2.0.0" {
 		t.Errorf("expected version '2.0.0', got %q", a.Version())
+	}
+}
+
+func TestDefaultConfigTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Timeout != remcli.DefaultTimeout {
+		t.Errorf("DefaultConfig timeout = %v, want %v", cfg.Timeout, remcli.DefaultTimeout)
 	}
 }
 
@@ -79,15 +86,15 @@ func TestAdapterExecuteCapture(t *testing.T) {
 		if r.Method == "POST" && r.URL.Path == "/capture" {
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{
-				"id":             "mem_123",
-				"decision":       "PERSIST",
-				"confidence":     0.92,
-				"category":       "project",
-				"tier":           "persist",
-				"summary":        "Ema decided Prism stays domain-agnostic",
-				"entities":       []string{"ema", "prism"},
-				"new_entities":   []string{"prism"},
-				"edges_created":  2,
+				"id":            "mem_123",
+				"decision":      "PERSIST",
+				"confidence":    0.92,
+				"category":      "project",
+				"tier":          "persist",
+				"summary":       "Ema decided Prism stays domain-agnostic",
+				"entities":      []string{"ema", "prism"},
+				"new_entities":  []string{"prism"},
+				"edges_created": 2,
 			})
 		}
 	}))

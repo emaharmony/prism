@@ -62,7 +62,7 @@ type PrismConfig struct {
 	ContextTokenBudget int `yaml:"context_token_budget"`
 
 	// LLMTimeoutSeconds is the serve-mode timeout for each live LLM call.
-	// Default: 300 seconds. Direct `prism run` keeps using its --timeout flag.
+	// Default: 1200 seconds. Direct `prism run` keeps using its --timeout flag.
 	LLMTimeoutSeconds int `yaml:"llm_timeout_seconds"`
 
 	// Port is the health check server port. Default 8321.
@@ -154,6 +154,10 @@ type RemembranceConfig struct {
 
 	// URL is the Remembrance service URL.
 	URL string `yaml:"url"`
+
+	// TimeoutSeconds is the HTTP timeout for Remembrance requests.
+	// Default: 60 seconds.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -166,7 +170,7 @@ func DefaultConfig() *Config {
 			OllamaURL:          "http://localhost:11434",
 			LogLevel:           "info",
 			ContextTokenBudget: 4000,
-			LLMTimeoutSeconds:  300,
+			LLMTimeoutSeconds:  1200,
 		},
 		Sessions: SessionConfig{
 			IdleTimeoutMinutes: 30,
@@ -175,8 +179,9 @@ func DefaultConfig() *Config {
 			CompactionStrategy: "truncate",
 		},
 		Remembrance: RemembranceConfig{
-			Enabled: false,
-			URL:     "http://localhost:18790",
+			Enabled:        false,
+			URL:            "http://localhost:18790",
+			TimeoutSeconds: 60,
 		},
 	}
 }
@@ -242,6 +247,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Prism.LLMTimeoutSeconds < 0 {
 		return fmt.Errorf("config: llm_timeout_seconds must be >= 0")
+	}
+	if c.Remembrance.TimeoutSeconds < 0 {
+		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
 	}
 
 	return nil

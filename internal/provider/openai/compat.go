@@ -61,9 +61,9 @@ const ollamaOpenAIBaseURL = "http://localhost:11434/v1"
 // For the native Ollama provider, use the ollama package instead.
 func NewOllamaCompatProvider() *Provider {
 	return &Provider{
-		APIKey:  "ollama", // Ollama doesn't require an API key
-		BaseURL: ollamaOpenAIBaseURL,
-		HTTPClient: &http.Client{Timeout: 300 * time.Second, Transport: DefaultTransport}, // Local inference can be slow
+		APIKey:     "ollama", // Ollama doesn't require an API key
+		BaseURL:    ollamaOpenAIBaseURL,
+		HTTPClient: &http.Client{Timeout: 20 * time.Minute, Transport: DefaultTransport}, // Local inference can be slow
 		TierVal:    provider.TierFree,
 	}
 }

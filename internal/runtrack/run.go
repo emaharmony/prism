@@ -20,7 +20,7 @@ import (
 )
 
 // DefaultTimeout is the maximum duration for a single LLM call.
-const DefaultTimeout = 60 * time.Second
+const DefaultTimeout = 20 * time.Minute
 
 // Run represents a single LLM invocation within a conversation.
 type Run struct {

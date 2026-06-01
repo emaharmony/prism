@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider/ollama"
+	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
 )
@@ -198,6 +200,21 @@ func TestConversationLLMTimeoutDefault(t *testing.T) {
 	}
 }
 
+func TestRemembranceTimeout(t *testing.T) {
+	cfg := &orchestrator.Config{
+		Remembrance: orchestrator.RemembranceConfig{TimeoutSeconds: 90},
+	}
+	if got := remembranceTimeout(cfg); got != 90*time.Second {
+		t.Errorf("remembranceTimeout() = %v, want 90s", got)
+	}
+}
+
+func TestRemembranceTimeoutDefault(t *testing.T) {
+	if got := remembranceTimeout(&orchestrator.Config{}); got != remembrance.DefaultTimeout {
+		t.Errorf("remembranceTimeout() = %v, want %v", got, remembrance.DefaultTimeout)
+	}
+}
+
 func TestDiscordEditContentTruncates(t *testing.T) {
 	content := strings.Repeat("a", 2100)
 	got := discordEditContent(content)
@@ -207,6 +224,70 @@ func TestDiscordEditContentTruncates(t *testing.T) {
 	if !strings.HasSuffix(got, "...") {
 		t.Error("discordEditContent should add ellipsis when truncating")
 	}
+}
+
+func TestDeliverDiscordResponseLongPlaceholderSendsOverflow(t *testing.T) {
+	bot := &fakeDiscordBot{}
+	cc := &conversationContext{bot: bot}
+	response := strings.Repeat("line content here\n", 200)
+
+	if err := cc.deliverDiscordResponse("channel-1", "msg-123", response); err != nil {
+		t.Fatalf("deliverDiscordResponse returned error: %v", err)
+	}
+	if len(bot.edits) != 1 {
+		t.Fatalf("expected 1 placeholder edit, got %d", len(bot.edits))
+	}
+	if len(bot.sends) == 0 {
+		t.Fatal("expected overflow chunks to be sent")
+	}
+
+	delivered := append([]string{bot.edits[0]}, bot.sends...)
+	if strings.Join(delivered, "") != response {
+		t.Error("delivered Discord chunks do not preserve the full response")
+	}
+	for i, chunk := range delivered {
+		if len(chunk) > discordbot.MessageChunkLimit {
+			t.Errorf("chunk %d is %d bytes, exceeds %d", i, len(chunk), discordbot.MessageChunkLimit)
+		}
+	}
+}
+
+func TestDeliverDiscordResponseShortPlaceholderOnlyEdits(t *testing.T) {
+	bot := &fakeDiscordBot{}
+	cc := &conversationContext{bot: bot}
+
+	if err := cc.deliverDiscordResponse("channel-1", "msg-123", "short response"); err != nil {
+		t.Fatalf("deliverDiscordResponse returned error: %v", err)
+	}
+	if len(bot.edits) != 1 || bot.edits[0] != "short response" {
+		t.Fatalf("expected one edit with short response, got %#v", bot.edits)
+	}
+	if len(bot.sends) != 0 {
+		t.Fatalf("expected no overflow sends, got %d", len(bot.sends))
+	}
+}
+
+type fakeDiscordBot struct {
+	sends []string
+	edits []string
+}
+
+func (f *fakeDiscordBot) Typing(channelID string) error {
+	return nil
+}
+
+func (f *fakeDiscordBot) Send(msg *discordbot.OutboundMessage) error {
+	f.sends = append(f.sends, msg.Content)
+	return nil
+}
+
+func (f *fakeDiscordBot) SendPlaceholder(channelID, content string) (string, error) {
+	return "msg-123", nil
+}
+
+func (f *fakeDiscordBot) EditMessage(channelID, messageID, content string) error {
+	f.edits = append(f.edits, content)
+	return nil
 }
 
 // --- NATS Event Publishing Tests ---

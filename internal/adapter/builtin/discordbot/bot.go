@@ -17,8 +17,17 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
+)
+
+const (
+	// MessageLimit is Discord's maximum plain message/edit size.
+	MessageLimit = 2000
+	// MessageChunkLimit leaves room for future prefixes/suffixes and avoids
+	// sending chunks right at Discord's hard limit.
+	MessageChunkLimit = 1900
 )
 
 // BotAdapter connects Prism to Discord as a bot for bidirectional messaging.
@@ -127,12 +136,12 @@ func (b *BotAdapter) Send(msg *OutboundMessage) error {
 
 	// Discord message length limit is 2000 characters
 	// Split long messages into multiple sends
-	if len(content) <= 2000 {
+	if len(content) <= MessageLimit {
 		return b.sendMessage(msg.ChannelID, content, msg)
 	}
 
-	// Split at the last newline before 2000 chars
-	chunks := splitMessage(content, 1900) // leave some margin
+	// Split at the last newline before the chunk limit.
+	chunks := splitMessage(content, MessageChunkLimit)
 	for i, chunk := range chunks {
 		if err := b.sendMessage(msg.ChannelID, chunk, msg); err != nil {
 			return fmt.Errorf("discord-bot: send chunk %d: %w", i, err)
@@ -237,18 +246,29 @@ func (b *BotAdapter) IsReady() bool {
 	return b.ready
 }
 
-// splitMessage splits a long message into chunks at the last newline
-// before maxLen characters. If there are no newlines, splits at maxLen.
+// SplitMessage splits a long message into chunks at the last newline before
+// maxLen bytes. If there are no newlines, it splits at maxLen without cutting a
+// UTF-8 rune.
+func SplitMessage(content string, maxLen int) []string {
+	return splitMessage(content, maxLen)
+}
+
+// splitMessage splits a long message into chunks at the last newline before
+// maxLen bytes. If there are no newlines, it splits at maxLen without cutting a
+// UTF-8 rune.
 func splitMessage(content string, maxLen int) []string {
+	if maxLen <= 0 {
+		maxLen = MessageChunkLimit
+	}
 	if len(content) <= maxLen {
 		return []string{content}
 	}
 
 	var chunks []string
 	for len(content) > maxLen {
-		// Find the last newline before maxLen
-		splitAt := maxLen
-		lastNewline := strings.LastIndex(content[:maxLen], "\n")
+		// Find the last newline before maxLen, using a UTF-8-safe boundary.
+		splitAt := safeSplitIndex(content, maxLen)
+		lastNewline := strings.LastIndex(content[:splitAt], "\n")
 		if lastNewline > 0 {
 			splitAt = lastNewline + 1
 		}
@@ -259,4 +279,21 @@ func splitMessage(content string, maxLen int) []string {
 		chunks = append(chunks, content)
 	}
 	return chunks
+}
+
+func safeSplitIndex(content string, maxLen int) int {
+	if maxLen >= len(content) {
+		return len(content)
+	}
+
+	splitAt := maxLen
+	for splitAt > 0 && !utf8.RuneStart(content[splitAt]) {
+		splitAt--
+	}
+	if splitAt > 0 {
+		return splitAt
+	}
+
+	_, size := utf8.DecodeRuneInString(content)
+	return size
 }

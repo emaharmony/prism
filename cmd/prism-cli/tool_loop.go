@@ -36,7 +36,7 @@ func (cc *conversationContext) runToolLoop(
 	placeholderMsgID string,
 ) (string, []toolCallSummary, error) {
 	// Create a fresh context with its own timeout for the tool loop.
-	// This avoids sharing the 60s pipeline timeout.
+	// This avoids sharing the main pipeline timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), toolLoopTimeout)
 	defer cancel()
 

@@ -28,7 +28,7 @@ const DefaultBaseURL = "http://localhost:11434"
 
 // DefaultHTTPTimeout is the timeout for individual HTTP calls.
 // Local inference can be slow, especially for large models.
-const DefaultHTTPTimeout = 5 * time.Minute
+const DefaultHTTPTimeout = 20 * time.Minute
 
 // Provider generates completions via a local Ollama instance.
 type Provider struct {

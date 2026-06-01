@@ -173,7 +173,7 @@ func (r *Runner) Run() (*RunResult, error) {
 		r.config.MaxTokens = 2048
 	}
 	if r.config.Timeout == 0 {
-		r.config.Timeout = 60 * time.Second
+		r.config.Timeout = 20 * time.Minute
 	}
 
 	// V3: Wire tool executor event emitter into the runner's event system
