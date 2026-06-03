@@ -53,6 +53,7 @@ type InboundMessage struct {
 	Content   string // Message content
 	GuildID   string // Discord server ID (empty for DMs)
 	IsDM      bool   // True if this is a direct message
+	IsBot     bool   // True if this message is from another bot
 	MessageID string // Discord message ID (for replies)
 }
 
@@ -191,6 +192,7 @@ func (b *BotAdapter) onMessageCreate(s *discordgo.Session, m *discordgo.MessageC
 		Content:   content,
 		GuildID:   m.GuildID,
 		IsDM:      m.GuildID == "",
+		IsBot:     m.Author.Bot,
 		MessageID: m.ID,
 	}
 
@@ -215,17 +217,22 @@ func (b *BotAdapter) Typing(channelID string) error {
 }
 
 // SendPlaceholder sends an initial message that can be edited later.
-// Returns the message ID of the sent message for subsequent EditMessage calls.
-// Used for streaming: send placeholder → edit as tokens arrive.
+// SendPlaceholder sends a typing indicator and returns an empty message ID.
+// Previously sent a visible placeholder message ("✧ ..."), but this caused issues
+// where other bots and users would see and respond to the placeholder before it was edited.
+// Now we only show the Discord "typing..." indicator, then send the complete response
+// as a new message when ready.
 func (b *BotAdapter) SendPlaceholder(channelID, content string) (string, error) {
 	if b.session == nil {
 		return "", fmt.Errorf("discord-bot: not connected")
 	}
-	msg, err := b.session.ChannelMessageSend(channelID, content)
-	if err != nil {
-		return "", err
+	// Send typing indicator instead of a placeholder message
+	if err := b.session.ChannelTyping(channelID); err != nil {
+		log.Printf("[WARN] typing indicator failed: %v", err)
 	}
-	return msg.ID, nil
+	// Return empty string so all EditMessage calls become no-ops
+	// and the response is sent as a new message via Send()
+	return "", nil
 }
 
 // EditMessage edits an existing Discord message with new content.

@@ -114,6 +114,12 @@ type AgentConfig struct {
 	// for receiving delegated tasks and results.
 	// e.g., "mango.task.created" — Mango receives tasks from Lumi.
 	Subscriptions []string `yaml:"subscriptions"`
+
+	// ListenToAgents lists bot user IDs that this agent should respond to.
+	// By default, Prism ignores messages from other bots. Adding a bot ID here
+	// tells Prism to treat messages from that bot as agent-to-agent communication.
+	// The message is processed with a modified prompt that frames it as peer input.
+	ListenToAgents []string `yaml:"listen_to_agents"`
 }
 
 // ChannelConfig defines a messaging channel connection.
