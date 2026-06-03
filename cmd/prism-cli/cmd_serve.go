@@ -470,6 +470,18 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
+	// Step 0b: Handle messages from other bots (agent-to-agent communication)
+	if msg.IsBot {
+		if !isAgentBot(cc.cfg.Agents, msg.UserID) {
+			log.Printf("[AGENT] ignoring bot message from %s (%s) — not in listen_to_agents", msg.UserName, msg.UserID)
+			return
+		}
+		log.Printf("[AGENT] received agent message from %s (%s)", msg.UserName, msg.UserID)
+		// Agent messages skip injection defense and rate limiting — they're trusted peers
+		cc.handleAgentMessage(msg)
+		return
+	}
+
 	// Step 1: Debounce — drop rapid-fire messages from the same user
 	debounceKey := msg.UserID + ":" + msg.ChannelID
 	if !cc.debounce.Allow(debounceKey) {
@@ -618,43 +630,42 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	// Step 8: Set up streaming — create placeholder and StreamCallback
-	var placeholderMsgID string
+	// Send a typing indicator instead of a placeholder message.
+	// Placeholders ("✧ ...") were visible to other bots and caused false responses.
+	// Now we show only the Discord "typing..." indicator and send the complete
+	// response as a new message when the LLM is done.
+	var placeholderMsgID string // Always empty — SendPlaceholder now returns ""
 	var streamMu sync.Mutex
 	var accumulatedText string
-	var lastEditTime time.Time
+	var lastTypingTime time.Time
 
-	placeholderMsgID, placeholderErr := cc.bot.SendPlaceholder(msg.ChannelID, "✧ ...")
+	cc.bot.Typing(msg.ChannelID) // Initial typing indicator
+
+	_, placeholderErr := cc.bot.SendPlaceholder(msg.ChannelID, "")
 	if placeholderErr != nil {
-		log.Printf("[STREAM] placeholder failed: %v, will use sync delivery", placeholderErr)
+		log.Printf("[STREAM] placeholder/typing failed: %v", placeholderErr)
 	}
 
 	streamCallback := func(token string, index int, finished bool) error {
-		if placeholderMsgID == "" {
-			return nil // No placeholder — can't stream edits
-		}
-
 		streamMu.Lock()
 		defer streamMu.Unlock()
 
 		accumulatedText += token
 		now := time.Now()
 
-		// Batch edits: flush every 900ms to respect Discord rate limits (5 edits/5s)
-		if now.Sub(lastEditTime) < 900*time.Millisecond && !finished {
-			return nil // Defer this edit
+		// Refresh typing indicator every 8 seconds (Discord shows it for ~10s)
+		if now.Sub(lastTypingTime) >= 8*time.Second {
+			lastTypingTime = now
+			go func() {
+				if err := cc.bot.Typing(msg.ChannelID); err != nil {
+					log.Printf("[STREAM] typing refresh failed: %v", err)
+				}
+			}()
 		}
 
-		lastEditTime = now
-		content := accumulatedText
-		if len(content) > 2000 {
-			runes := []rune(content)
-			for len(runes) > 1 && len(string(runes))+3 > 2000 {
-				runes = runes[:len(runes)-1]
-			}
-			content = string(runes) + "..."
-		}
-
-		return cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, content)
+		// No placeholder to edit — streaming tokens accumulate in memory
+		// and are sent as a complete message after the LLM finishes
+		return nil
 	}
 
 	// Step 9: Construct and run the stage pipeline
@@ -683,19 +694,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	finalRC, err := pipeline.Run(runCtx, rc)
 	if err != nil {
 		log.Printf("[ERROR] pipeline failed (run %s): %v", run.ID, err)
-
-		// Flush any accumulated text to placeholder before sending error
-		if placeholderMsgID != "" {
-			streamMu.Lock()
-			if accumulatedText != "" {
-				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, accumulatedText+"\n\n⚠️ Canceled.")
-			} else {
-				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ Canceled.")
-			}
-			streamMu.Unlock()
-		} else {
-			cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
-		}
+		cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
 		return
 	}
 
@@ -782,25 +781,13 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	for stageName, stageResult := range finalRC.Results {
 		if stageResult != nil && !stageResult.Success {
 			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, stageResult.Error)
-			// Clean up placeholder before sending error
-			if placeholderMsgID != "" {
-				errMsg := "Something went wrong processing your message. Please try again."
-				switch stageName {
-				case "routing":
-					errMsg = "I'm not configured properly. Please contact the administrator."
-				case "llm":
-					errMsg = "I'm having trouble thinking right now. Please try again in a moment."
-				}
-				cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ "+errMsg)
-			} else {
-				switch stageName {
-				case "routing":
-					cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
-				case "llm":
-					cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
-				default:
-					cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
-				}
+			switch stageName {
+			case "routing":
+				cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+			case "llm":
+				cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+			default:
+				cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
 			}
 			return
 		}
@@ -809,41 +796,18 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 10: Post-pipeline — handle response delivery and session save
 	responseText := finalRC.LLMResponse
 
-	// Deliver the response to Discord
-	if placeholderMsgID != "" {
+	// Use accumulated text from streaming if the final response is empty
+	if responseText == "" {
 		streamMu.Lock()
-		if responseText != "" {
-			// Edit the placeholder with the final response
-			// (sync path: placeholder still shows "✧ ..."; streaming path: may already be up to date)
-			if accumulatedText != responseText {
-				content := responseText
-				if len(content) > 2000 {
-					runes := []rune(content)
-					for len(runes) > 1 && len(string(runes))+3 > 2000 {
-						runes = runes[:len(runes)-1]
-					}
-					content = string(runes) + "..."
-				}
-				if err := cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, content); err != nil {
-					log.Printf("[ERROR] failed to edit placeholder (run %s): %v", run.ID, err)
-					// Fallback: send as new message so the user still gets the response
-					if sendErr := cc.bot.Send(&discordbot.OutboundMessage{
-						ChannelID: msg.ChannelID,
-						Content:   content,
-					}); sendErr != nil {
-						log.Printf("[ERROR] fallback send also failed (run %s): %v", run.ID, sendErr)
-					}
-				}
-			}
-		} else {
-			// Empty response — clean up the placeholder so "✧ ..." doesn't linger
-			if err := cc.bot.EditMessage(msg.ChannelID, placeholderMsgID, "⚠️ No response generated."); err != nil {
-				log.Printf("[WARN] failed to clean up placeholder on empty response (run %s): %v", run.ID, err)
-			}
+		if accumulatedText != "" {
+			responseText = accumulatedText
 		}
 		streamMu.Unlock()
-	} else if responseText != "" {
-		// No placeholder — send as new message
+	}
+
+	// Deliver the response to Discord as a new message
+	// (typing-only approach: no placeholder message, just send the complete response)
+	if responseText != "" {
 		err := cc.bot.Send(&discordbot.OutboundMessage{
 			ChannelID: msg.ChannelID,
 			Content:   responseText,
@@ -942,7 +906,6 @@ func (cc *conversationContext) sendError(channelID, message string) {
 	}
 }
 
-// publishEvent publishes an event to the NATS bus.
 // V21: Events use per-agent namespace prefixes (<agent-id>.*).
 // System events use the prism.* namespace.
 // buildAgentConfigMap creates a map of agent ID → AgentConfig for the
