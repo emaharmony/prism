@@ -356,7 +356,7 @@ See [docs/](./docs/) for detailed design documents for each version.
 ## Dependencies
 
 **Direct (6):**
-- `github.com/mattn/go-sqlite3` — SQLite driver
+- `modernc.org/sqlite` — pure-Go SQLite driver
 - `github.com/gofrs/flock` — File locking
 - `github.com/nats-io/nats-server/v2` — Embedded NATS
 - `github.com/nats-io/nats.go` — NATS client
