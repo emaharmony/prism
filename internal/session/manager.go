@@ -14,18 +14,19 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Session represents an active conversation between a user and an agent.
 type Session struct {
 	ID          string    `json:"id"`
 	AgentID     string    `json:"agent_id"`
-	Channel     string    `json:"channel"`     // discord, telegram, webchat
-	ChannelID   string    `json:"channel_id"`  // e.g., Discord channel ID
-	UserID      string    `json:"user_id"`     // e.g., Discord user ID
+	Channel     string    `json:"channel"`    // discord, telegram, webchat
+	ChannelID   string    `json:"channel_id"` // e.g., Discord channel ID
+	UserID      string    `json:"user_id"`    // e.g., Discord user ID
 	StartedAt   time.Time `json:"started_at"`
 	LastActive  time.Time `json:"last_active"`
 	CompactedAt time.Time `json:"compacted_at,omitempty"`
@@ -37,9 +38,9 @@ type Session struct {
 // Message is a single message within a session.
 type Message struct {
 	ID        string    `json:"id"`
-	Role      string    `json:"role"`       // "user", "agent", "system"
+	Role      string    `json:"role"` // "user", "agent", "system"
 	Content   string    `json:"content"`
-	AgentID   string    `json:"agent_id"`   // which agent sent this (for agent role)
+	AgentID   string    `json:"agent_id"` // which agent sent this (for agent role)
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -56,9 +57,11 @@ type Manager struct {
 	compactionStrategy string // "truncate" (V20) or "summarize" (V21)
 }
 
+var idCounter atomic.Uint64
+
 // NewManager creates a session manager with the given configuration.
 func NewManager(dbPath string, maxContextMessages int, idleTimeout time.Duration, dailyResetHour int, compactionStrategy string) (*Manager, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, fmt.Errorf("session: open db: %w", err)
 	}
@@ -378,10 +381,10 @@ func (m *Manager) List() []string {
 
 // generateSessionID creates a unique session ID.
 func generateSessionID() string {
-	return fmt.Sprintf("ses_%d", time.Now().UnixNano())
+	return fmt.Sprintf("ses_%d_%d", time.Now().UnixNano(), idCounter.Add(1))
 }
 
 // generateMessageID creates a unique message ID.
 func generateMessageID() string {
-	return fmt.Sprintf("msg_%d", time.Now().UnixNano())
+	return fmt.Sprintf("msg_%d_%d", time.Now().UnixNano(), idCounter.Add(1))
 }

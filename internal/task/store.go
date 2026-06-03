@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Status represents the lifecycle state of a task.
@@ -90,7 +90,7 @@ type Store struct {
 // NewStore creates a new task store backed by the given SQLite database path.
 // It initializes the schema if it doesn't exist.
 func NewStore(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, fmt.Errorf("task: open database: %w", err)
 	}

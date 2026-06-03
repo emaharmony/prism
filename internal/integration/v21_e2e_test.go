@@ -27,6 +27,7 @@ func TestE2E_FullConversationPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create session manager: %v", err)
 	}
+	defer sessMgr.Close()
 
 	// 3. Create a session for the conversation
 	sess, err := sessMgr.Create("lumi", "discord", "channel-123", "user-456")
@@ -167,6 +168,7 @@ func TestE2E_SessionConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create session manager: %v", err)
 	}
+	defer sessMgr.Close()
 
 	// Create session and simulate first message
 	sess, err := sessMgr.Create("lumi", "discord", "channel-789", "user-123")
