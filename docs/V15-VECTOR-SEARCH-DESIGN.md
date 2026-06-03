@@ -142,8 +142,9 @@ The vector store integrates with existing Prism systems:
 
 ## Risk Assessment
 
-- **sqlite-vss CGO dependency**: Requires CGO and SQLite compilation. 
-  We already have CGO enabled for go-sqlite3. Low risk.
+- **sqlite-vss CGO dependency**: Requires CGO and SQLite compilation.
+  Prism's core SQLite stores use a pure-Go driver, so sqlite-vss would need
+  explicit CGO build support if this design is implemented.
 - **Embedding dimension consistency**: Must enforce consistent dimensions.
   VectorStore.ValidateDimension() handles this.
 - **Performance**: Vector search on <1M entries is sub-millisecond. 
