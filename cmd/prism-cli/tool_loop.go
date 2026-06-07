@@ -210,14 +210,20 @@ func formatToolResult(result tool.ToolResult) string {
 		return fmt.Sprintf("Error: %s", result.Error)
 	}
 	// Extract text output from the map
-	// Priority: content > output > result > body > first string value
+	// Priority: content > output > result > text > message > body
+	// Handles both string values and non-string values (JSON-encoded)
 	outputStr := ""
 	if result.Output != nil {
-		contentKeys := []string{"content", "output", "result", "body"}
+		contentKeys := []string{"content", "output", "result", "text", "message", "body"}
 		for _, key := range contentKeys {
 			if v, exists := result.Output[key]; exists {
 				if s, ok := v.(string); ok && s != "" {
 					outputStr = s
+					break
+				}
+				// Handle non-string values (structs, numbers, bytes) by JSON-encoding
+				if b, jsonErr := json.Marshal(v); jsonErr == nil {
+					outputStr = string(b)
 					break
 				}
 			}
