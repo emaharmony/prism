@@ -623,8 +623,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+	// P-008: Evaluate tool relevance gate BEFORE building the prompt
+	// This determines whether to include tools in the LLM request
+	toolNames := cc.toolExec.Registry.List()
+	gateResult := cc.toolGate.Evaluate(msg.Content, toolNames)
+	log.Printf("[TOOL-GATE] decision=%d reason=%q tools=%v", gateResult.Decision, gateResult.Reason, gateResult.ToolFilter)
+
 	// Step 7c: Append tool instructions to prompt so the LLM knows it has tools
-	if cc.toolExec != nil {
+	// Skip tool instructions if the gate excluded tools for this message
+	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		if len(toolInfos) > 0 {
 			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...)
@@ -701,11 +708,6 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 // Step 9b: Tool execution loop — branch on ChatProvider vs text-based
-	// P-008: Tool relevance gate — decide whether to include tools
-	toolNames := cc.toolExec.Registry.List() // []string for gate
-	gateResult := cc.toolGate.Evaluate(msg.Content, toolNames)
-	log.Printf("[TOOL-GATE] decision=%d reason=%q tools=%v", gateResult.Decision, gateResult.Reason, gateResult.ToolFilter)
-
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		// Check if the provider supports native tool calling (ChatProvider)
 		chatProv, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
@@ -756,8 +758,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			}
 		} else {
 			// Text-based tool calling path (fallback for providers without ChatProvider)
+			// P-008: Skip tool loop if gate excluded tools for this message
 			parsed := agent.ParseAgentOutput(finalRC.LLMResponse)
-			if parsed.Type == agent.ResponseToolRequest {
+			if parsed.Type == agent.ResponseToolRequest && gateResult.Decision != stage.ToolDecisionExclude {
 				log.Printf("[TOOL] LLM requested tool %q, entering tool loop", parsed.ToolName)
 
 				finalResponse, toolSummaries, toolErr := cc.runToolLoop(
