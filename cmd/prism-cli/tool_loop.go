@@ -17,10 +17,12 @@ const maxToolIterations = 10
 
 // toolUsageGuidance is shared between the chat and text-based tool loops.
 // This prevents duplication — both paths must present the same guidance to the model.
-const toolUsageGuidance = "You have tools available. Use them when you need information you don't have. " +
-	"After receiving tool results, prefer to give your final answer directly rather than calling more tools. " +
-	"Do not call tools repeatedly without making progress. " +
-	"If a tool returns an error, explain the error to the user instead of retrying the same tool."
+const toolUsageGuidance = "You have tools available for reading files, searching code, and inspecting projects. " +
+	"Use them ONLY when the user's request requires information from files, code, git, or the filesystem. " +
+	"Do NOT use tools for simple conversational responses (greetings, opinions, chat, explaining concepts). " +
+	"If you can answer from your own knowledge, respond directly without tools. " +
+	"After receiving tool results, give your final answer rather than calling more tools. " +
+	"If a tool returns an error, explain the error instead of retrying."
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.
@@ -207,12 +209,20 @@ func formatToolResult(result tool.ToolResult) string {
 		return fmt.Sprintf("Error: %s", result.Error)
 	}
 	// Extract text output from the map
+	// Priority: content > output > result > body > first string value
 	outputStr := ""
 	if result.Output != nil {
-		if text, ok := result.Output["output"].(string); ok {
-			outputStr = text
-		} else {
-			// Fallback: JSON-encode the whole output
+		contentKeys := []string{"content", "output", "result", "body"}
+		for _, key := range contentKeys {
+			if v, exists := result.Output[key]; exists {
+				if s, ok := v.(string); ok && s != "" {
+					outputStr = s
+					break
+				}
+			}
+		}
+		// Fallback: JSON-encode the whole output
+		if outputStr == "" {
 			data, _ := json.Marshal(result.Output)
 			outputStr = string(data)
 		}

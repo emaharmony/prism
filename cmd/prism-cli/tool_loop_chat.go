@@ -223,15 +223,28 @@ func (cc *conversationContext) executeChatTool(
 		resultStr = execErr.Error()
 	} else {
 		// Convert ToolResult.Output to string
+		// IMPORTANT: Check for known content keys first to avoid
+		// Go's random map iteration picking "path" or "size" before "content".
 		if result.Success {
-			for _, v := range result.Output {
-				if s, ok := v.(string); ok {
-					resultStr = s
-					break
+			// Priority: content > output > first string value
+			contentKeys := []string{"content", "output", "result", "body"}
+			for _, key := range contentKeys {
+				if v, exists := result.Output[key]; exists {
+					if s, ok := v.(string); ok && s != "" {
+						resultStr = s
+						break
+					}
+					// Also handle non-string content by JSON-encoding
+					if resultStr == "" {
+						if b, jsonErr := json.Marshal(v); jsonErr == nil {
+							resultStr = string(b)
+							break
+						}
+					}
 				}
 			}
+			// Fallback: if no known content key, JSON-marshal the whole output
 			if resultStr == "" {
-				// resultStr = json.Marshal produces LLM-readable output
 				resultBytes, jsonErr := json.Marshal(result.Output)
 				if jsonErr != nil {
 					resultStr = fmt.Sprintf("%v", result.Output)
