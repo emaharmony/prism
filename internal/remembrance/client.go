@@ -282,7 +282,7 @@ func (c *Client) Dream(phases []string, dryRun bool) (map[string]any, error) {
 		body["phases"] = phases
 	}
 	body["dry_run"] = dryRun
-	return c.doPost(c.BaseURL+"/dream", body)
+	return c.doPost(c.BaseURL+"/v1/dream", body)
 }
 
 // ── HTTP Helpers ─────────────────────────────────────────────────

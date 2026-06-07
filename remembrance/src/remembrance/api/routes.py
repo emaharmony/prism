@@ -13,6 +13,7 @@ from ..models import (
     MemorySearchRequest, MemorySearchResponse,
     BuildContextRequest, ContextPack,
 )
+from ..memory.dream import run_dream_cycle
 from ..stores.metadata_store import MetadataStore
 from ..stores.lancedb_store import LanceDBStore
 from ..embeddings.ollama_provider import OllamaEmbeddingProvider
@@ -112,6 +113,36 @@ async def build_context(request: BuildContextRequest):
 
     context = _builder.build_context(request)
     return context
+
+
+from pydantic import BaseModel
+from typing import Any
+
+
+class DreamRequest(BaseModel):
+    phases: list[str] | None = None
+    dry_run: bool = False
+
+
+@app.post("/v1/dream")
+async def dream(request: DreamRequest):
+    """Run the dream cycle — memory maintenance operations."""
+    if not _metadata or not _vectors or not _embedding:
+        raise HTTPException(status_code=503, detail="Remembrance not initialized")
+
+    result = run_dream_cycle(
+        metadata=_metadata,
+        vectors=_vectors,
+        embedding=_embedding,
+        phases=request.phases,
+        dry_run=request.dry_run,
+    )
+    return {
+        "status": result.status,
+        "phases": result.phases,
+        "details": result.details,
+        "duration_ms": result.duration_ms,
+    }
 
 
 @app.get("/v1/health")
