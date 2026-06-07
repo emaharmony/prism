@@ -18,8 +18,9 @@ const maxToolIterations = 10
 // toolUsageGuidance is shared between the chat and text-based tool loops.
 // This prevents duplication — both paths must present the same guidance to the model.
 const toolUsageGuidance = "You have tools available for reading files, searching code, and inspecting projects. " +
-	"Use them ONLY when the user's request requires information from files, code, git, or the filesystem. " +
+	"Use them ONLY when the user's CURRENT request explicitly needs information from files, code, git, or the filesystem. " +
 	"Do NOT use tools for simple conversational responses (greetings, opinions, chat, explaining concepts). " +
+	"Do NOT call tools just because a topic was discussed earlier — only call tools if THIS specific message asks you to read/search/inspect something. " +
 	"If you can answer from your own knowledge, respond directly without tools. " +
 	"After receiving tool results, give your final answer rather than calling more tools. " +
 	"If a tool returns an error, explain the error instead of retrying."
