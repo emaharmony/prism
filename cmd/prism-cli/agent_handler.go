@@ -23,6 +23,22 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	// Frame the message as coming from a peer agent
 	framedContent := fmt.Sprintf("[Message from agent %s]: %s", msg.UserName, msg.Content)
 
+	// P-009: Agent loop detection — don't respond to error messages
+	// from other agents that would trigger more error responses.
+	content := strings.ToLower(strings.TrimSpace(msg.Content))
+	errorPatterns := []string{
+		"something went wrong",
+		"i tried to use a tool",
+		"had trouble processing",
+		"ai service returned an error",
+	}
+	for _, pattern := range errorPatterns {
+		if strings.Contains(content, pattern) {
+			log.Printf("[AGENT-LOOP] suppressing response to error message from %s (matched %q)", msg.UserName, pattern)
+			return
+		}
+	}
+
 	// Emit agent-to-agent event
 	cc.publishEvent("prism.agent.message_received", map[string]any{
 		"from_agent": msg.UserName,
@@ -140,7 +156,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			)
 			if toolErr != nil {
 				log.Printf("[AGENT-TOOL-CHAT] tool loop failed: %v", toolErr)
-				finalResponse = "I tried to use a tool to help with that, but something went wrong."
+				finalResponse = "I had trouble with that request — the AI service returned an error. Please try again in a moment."
 			}
 			response = finalResponse
 

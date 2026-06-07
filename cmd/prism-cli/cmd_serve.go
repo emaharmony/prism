@@ -738,7 +738,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			)
 			if toolErr != nil {
 				log.Printf("[TOOL-CHAT] tool loop failed: %v", toolErr)
-				finalRC.LLMResponse = "I tried to use a tool to help with that, but something went wrong. Could you rephrase your request?"
+				finalRC.LLMResponse = "I had trouble processing that — the AI service returned an error. Please try again in a moment."
 			} else if finalResponse != "" {
 				finalRC.LLMResponse = finalResponse
 			}
@@ -772,7 +772,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				)
 				if toolErr != nil {
 					log.Printf("[TOOL] tool loop failed: %v", toolErr)
-					finalRC.LLMResponse = "I tried to use a tool to help with that, but something went wrong. Could you rephrase your request?"
+					finalRC.LLMResponse = "I had trouble processing that — the AI service returned an error. Please try again in a moment."
 				}
 
 				for _, ts := range toolSummaries {
