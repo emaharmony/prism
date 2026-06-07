@@ -109,6 +109,7 @@ type conversationContext struct {
 	toolExec    *tool.Executor        // V27: Tool executor for file system access
 	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
 	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
+	toolGate   *stage.ToolRelevanceGate // P-008: Tool relevance gate
 
 	// Cached static system content — built once, reused every message.
 	staticSystemText    string // For text-based provider path
@@ -367,6 +368,7 @@ func executeServe(args []string) {
 					60,   // global max 60 concurrent requests
 					10,   // global refill 10 tokens/sec
 				),
+				toolGate: stage.NewToolRelevanceGate(true), // P-008: enabled by default
 			}
 
 			// Pre-build static system content for all agents
@@ -699,7 +701,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 // Step 9b: Tool execution loop — branch on ChatProvider vs text-based
-	if cc.toolExec != nil {
+	// P-008: Tool relevance gate — decide whether to include tools
+	toolNames := cc.toolExec.Registry.List() // []string for gate
+	gateResult := cc.toolGate.Evaluate(msg.Content, toolNames)
+	log.Printf("[TOOL-GATE] decision=%d reason=%q tools=%v", gateResult.Decision, gateResult.Reason, gateResult.ToolFilter)
+
+	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		// Check if the provider supports native tool calling (ChatProvider)
 		chatProv, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
 		supportsChat := chatErr == nil
@@ -710,6 +717,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			// Build messages array and tools list
 			messages := cc.buildMessages(sess, agentCfg)
 			chatTools := cc.buildChatTools()
+
+			// P-008: Filter tools based on gate result
+			if gateResult.Decision == stage.ToolDecisionSubset && len(gateResult.ToolFilter) > 0 {
+				chatTools = filterChatTools(chatTools, gateResult.ToolFilter)
+				log.Printf("[TOOL-GATE] subset: %d tools after filtering", len(chatTools))
+			}
 
 			log.Printf("[TOOL-CHAT] entering native tool loop with %d tools", len(chatTools))
 
@@ -1199,4 +1212,20 @@ func remembranceTimeout(cfg *orchestrator.Config) time.Duration {
 		return time.Duration(cfg.Remembrance.TimeoutSeconds) * time.Second
 	}
 	return remembrance.DefaultTimeout
+}
+
+// filterChatTools filters a ChatTool slice to only include tools whose names
+// are in the filter list. Used by P-008 ToolRelevanceGate for subset decisions.
+func filterChatTools(tools []provider.ChatTool, filter []string) []provider.ChatTool {
+	filterSet := make(map[string]bool, len(filter))
+	for _, f := range filter {
+		filterSet[f] = true
+	}
+	var filtered []provider.ChatTool
+	for _, t := range tools {
+		if filterSet[t.Function.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
 }
