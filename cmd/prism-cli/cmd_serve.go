@@ -58,6 +58,7 @@ import (
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/tool"
 
 	"github.com/nats-io/nats.go"
@@ -107,6 +108,7 @@ type conversationContext struct {
 	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
 	taskStore   *task.Store           // V22: Task store for delegation tracking
 	toolExec    *tool.Executor        // V27: Tool executor for file system access
+	stateMgr    *state.Manager        // V32: Working state manager for adaptive context
 	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
 	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
 	toolGate   *stage.ToolRelevanceGate // P-008: Tool relevance gate
@@ -334,6 +336,10 @@ func executeServe(args []string) {
 		toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 		toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 		toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+		// V32: State management tools
+		stateMgr := state.NewManager(workspaceRoot)
+		stateMgr.EnsureDir()
+		tool.RegisterStateTools(toolReg, stateMgr)
 
 		toolPolicy := tool.DefaultPolicyConfig()
 		// Mutation operations require approval
@@ -369,6 +375,7 @@ func executeServe(args []string) {
 					10,   // global refill 10 tokens/sec
 				),
 				toolGate: stage.NewToolRelevanceGate(true), // P-008: enabled by default
+				stateMgr: state.NewManager(cfg.Prism.Workspace),   // V32: working state manager
 			}
 
 			// Pre-build static system content for all agents
@@ -1049,6 +1056,17 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 
 	// Static system content (cached, built once at startup)
 	sb.WriteString(cc.staticSystemText)
+
+	// --- V32: Working state injection ---
+	// Inject active task, decisions, blocked items, and working context
+	// BEFORE state actions and session history. This is how the agent
+	// "wakes up knowing what it was doing" instead of guessing from memory.
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			sb.WriteString("\n" + statePrompt + "\n")
+			log.Printf("[STATE] injected working state into prompt")
+		}
+	}
 
 	// --- State action injection ---
 	// Resolve the state action for this context (channel role or "agent")

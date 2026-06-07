@@ -41,6 +41,7 @@ import (
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/task"
@@ -67,6 +68,7 @@ type chatContext struct {
 	natsURL      string                // NATS URL (embedded or external)
 	natsCleanup  func()                // Cleanup for embedded NATS
 	rateLimiter  *chatRateLimit        // Per-message rate limiting for CLI
+	stateMgr     *state.Manager         // V32: Working state manager for adaptive context
 
 	// Cached static system content — built once, reused every message.
 	// Includes: agent identity, workspace context, postfix, tool instructions.
@@ -218,6 +220,10 @@ func executeChat(args []string) {
 	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	// V32: State management tools
+	chatStateMgr := state.NewManager(workspaceRoot)
+	chatStateMgr.EnsureDir()
+	tool.RegisterStateTools(registry, chatStateMgr)
 
 	toolPolicy := tool.DefaultPolicyConfig()
 	toolPolicy.MaxFileSize = 10 * 1024 * 1024
@@ -264,6 +270,7 @@ func executeChat(args []string) {
 		natsURL:      natsURL,
 		natsCleanup:  natsCleanup,
 		rateLimiter: &chatRateLimit{minDelay: 500 * time.Millisecond}, // 2 msg/s max
+		stateMgr:    chatStateMgr,
 	}
 
 	// 10.5. Pre-build static system content (only needs to be done once)
@@ -600,6 +607,13 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	// Agent identity
 	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
 
+	// V32: Working state injection
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			sb.WriteString("\n" + statePrompt + "\n")
+		}
+	}
+
 	// Workspace context injection
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
@@ -637,6 +651,13 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	// For ChatProvider path: same content but with toolUsageGuidance instead of full tool prompt
 	var sbChat strings.Builder
 	sbChat.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+
+	// V32: Working state injection
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			sbChat.WriteString("\n" + statePrompt + "\n")
+		}
+	}
 
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
