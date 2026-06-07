@@ -607,13 +607,6 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	// Agent identity
 	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
 
-	// V32: Working state injection
-	if cc.stateMgr != nil {
-		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
-			sb.WriteString("\n" + statePrompt + "\n")
-		}
-	}
-
 	// Workspace context injection
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
@@ -652,13 +645,6 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	var sbChat strings.Builder
 	sbChat.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
 
-	// V32: Working state injection
-	if cc.stateMgr != nil {
-		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
-			sbChat.WriteString("\n" + statePrompt + "\n")
-		}
-	}
-
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
@@ -686,6 +672,13 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 
 	// Static system content (cached, built once at startup)
 	sb.WriteString(cc.staticSystemText)
+
+	// V32: Working state injection (per-message, fresh state every time)
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			sb.WriteString("\n" + statePrompt + "\n")
+		}
+	}
 
 	// State action injection
 	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
@@ -722,6 +715,13 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 	// Static system content (cached, built once at startup)
 	var systemContent string
 	systemContent += cc.staticSystemChat
+
+	// V32: Working state injection (per-message, fresh state every time)
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			systemContent += "\n" + statePrompt + "\n"
+		}
+	}
 
 	// State action injection
 	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {

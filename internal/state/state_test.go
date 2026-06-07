@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -484,4 +485,70 @@ func TestConcurrentAccess(t *testing.T) {
 	if task == nil {
 		t.Fatal("expected non-nil task after concurrent writes")
 	}
+}
+
+func TestFormatStateForPromptAtomicConsistency(t *testing.T) {
+	// FormatStateForPrompt should produce a consistent snapshot
+	// even under concurrent writes. This tests that the atomic
+	// RLock-based read sees a coherent view.
+	tmpDir := t.TempDir()
+	m := NewManager(tmpDir)
+	m.EnsureDir()
+
+	// Set up initial state
+	m.SaveActiveTask(&ActiveTask{
+		Task:   "Atomic test",
+		Status: "executing",
+	})
+	m.RecordDecision(Decision{
+		Decision: "Use atomic reads",
+		Author:   "mango",
+	})
+	m.AddBlocked(BlockedItem{
+		Item:      "Review pending",
+		WaitingOn: "Ema approval",
+	})
+	m.SaveContext(&WorkingContext{
+		Branch:     "feat/v32-fix",
+		LastAction: "Added atomic read",
+	})
+
+	// Read state atomically
+	result := m.FormatStateForPrompt()
+
+	// All four state components should appear in the same read
+	if !strings.Contains(result, "Atomic test") {
+		t.Error("atomic read should contain active task")
+	}
+	if !strings.Contains(result, "Use atomic reads") {
+		t.Error("atomic read should contain decision")
+	}
+	if !strings.Contains(result, "Review pending") {
+		t.Error("atomic read should contain blocked item")
+	}
+	if !strings.Contains(result, "feat/v32-fix") {
+		t.Error("atomic read should contain context branch")
+	}
+
+	// Concurrent writes should not cause FormatStateForPrompt to panic
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			m.SaveActiveTask(&ActiveTask{
+				Task:   fmt.Sprintf("Concurrent %d", i),
+				Status: "executing",
+			})
+		}(i)
+	}
+	// Read concurrently during writes
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = m.FormatStateForPrompt()
+		}()
+	}
+	wg.Wait()
 }
