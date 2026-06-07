@@ -142,8 +142,9 @@ func BuildToolPromptSuffix(toolInfos []tool.ToolInfo, workspaceRoot string, allo
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n## How to Use Tools\n")
-	sb.WriteString("Use tools ONLY when the user's request requires information from files, code, git, or the filesystem.\n")
+	sb.WriteString("Use tools ONLY when the user's CURRENT request explicitly needs information from files, code, git, or the filesystem.\n")
 	sb.WriteString("Do NOT use tools for simple conversational responses like greetings, opinions, chat, or explaining concepts.\n")
+	sb.WriteString("Do NOT call tools just because a topic was discussed earlier — only call tools if THIS specific message asks you to read/search/inspect something.\n")
 	sb.WriteString("If you can answer from your own knowledge, respond directly with a final JSON.\n")
 	sb.WriteString("When you DO need file/code info, you MUST actually call the tool — do NOT say \"Let me search for that\" in a final response.\n")
 	sb.WriteString("Instead, emit a tool_request JSON and the system will execute it and give you the results.\n")
