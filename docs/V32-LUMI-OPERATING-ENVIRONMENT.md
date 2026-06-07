@@ -327,12 +327,8 @@ remembrance:
 
 ---
 
-## Open Questions
+## Decisions (Ema, 2026-06-07)
 
-1. **Guard rail model:** qwen3.5:9b local, or cloud? Local is faster and cheaper but less capable. Cloud is smarter but adds latency and cost. Recommendation: start local, upgrade if needed.
-
-2. **Auto-PR scope:** Should the guard rail only create PRs for bug fixes, or also for process improvements? Recommendation: start with bug fixes only.
-
-3. **Approval threshold:** What changes require Ema's approval vs. auto-proceed? Recommendation: architecture changes require approval; bug fixes and process improvements auto-proceed with notification.
-
-4. **Self-modification boundary:** Can the guard rail modify its own rules? Recommendation: no. Guard rail rules are config-driven and require Ema's approval to change.
+1. **Guard rail model: local.** qwen3.5:9b on Mac mini. Always faster to respond, no network latency, no cloud cost.
+2. **Auto-PR scope: bugs AND improvements.** This is auto-patching — the system fixes itself and improves itself. Not limited to just bug fixes.
+3. **Approval threshold: only system-breaking or critical architecture/direction changes.** Bug fixes, process improvements, test additions, refactors — auto-proceed with notification. Architecture changes, direction changes, breaking changes — require Ema's approval.
