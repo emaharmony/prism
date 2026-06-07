@@ -6,6 +6,7 @@
 *~
 
 # Prism build artifacts (binaries at repo root only)
+*.exe
 /prism
 /prism-cli
 /prism-bus

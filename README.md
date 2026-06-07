@@ -81,6 +81,51 @@ Prism is a Go event-native AI agent platform that runs as a persistent service. 
 
 ## Quick Start
 
+### Windows Quick Start
+
+These commands are for PowerShell. For the full Windows setup guide, including
+Remembrance and dashboard troubleshooting, see
+[docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP.md).
+
+Install Go 1.26 or newer and Git for Windows, then verify the tools:
+
+```powershell
+go version
+git --version
+python --version  # optional, only needed for Remembrance
+```
+
+Clone and build fresh Windows binaries:
+
+```powershell
+git clone https://github.com/emaharmony/prism.git
+cd prism
+$env:GOTELEMETRY = "off"
+go build -o .\prism-current.exe .\cmd\prism-cli
+go build -o .\prism-bus-current.exe .\cmd\prism-bus
+```
+
+Do not rely on the checked-in root binaries (`prism.exe`, `prism-bus.exe`,
+`prism-agent.exe`) for a fresh setup. They may be older than the current source.
+
+Create a config and start Prism:
+
+```powershell
+Copy-Item .\prism.yaml.example .\prism.yaml
+.\prism-current.exe serve --config .\prism.yaml
+```
+
+Open `http://localhost:8322` for the live API/dashboard entrypoint or
+`http://localhost:8321/health` for the health check.
+
+Windows notes:
+
+- Use `Copy-Item` instead of `cp`.
+- Use `.\prism-current.exe` instead of `./prism`.
+- Avoid `~` in `data_dir`; use `.\\.prism\\data` or an absolute Windows path.
+- Set provider keys with PowerShell syntax, for example
+  `$env:OPENAI_API_KEY = "..."`.
+
 ### Prerequisites
 
 - **Go 1.26+**

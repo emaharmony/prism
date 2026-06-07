@@ -27,5 +27,5 @@ config:
     type: string
   timeout:
     description: "HTTP request timeout"
-    default: "10s"
+    default: "60s"
     type: duration

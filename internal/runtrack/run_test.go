@@ -121,7 +121,7 @@ func TestEventLogger(t *testing.T) {
 }
 
 func TestDefaultTimeout(t *testing.T) {
-	if DefaultTimeout != 60*time.Second {
-		t.Errorf("expected default timeout 60s, got %s", DefaultTimeout)
+	if DefaultTimeout != 20*time.Minute {
+		t.Errorf("expected default timeout 20m, got %s", DefaultTimeout)
 	}
 }
