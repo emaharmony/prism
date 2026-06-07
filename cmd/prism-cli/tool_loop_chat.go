@@ -226,8 +226,8 @@ func (cc *conversationContext) executeChatTool(
 		// IMPORTANT: Check for known content keys first to avoid
 		// Go's random map iteration picking "path" or "size" before "content".
 		if result.Success {
-			// Priority: content > output > first string value
-			contentKeys := []string{"content", "output", "result", "body"}
+			// Priority: content > output > result > text > message > body
+			contentKeys := []string{"content", "output", "result", "text", "message", "body"}
 			for _, key := range contentKeys {
 				if v, exists := result.Output[key]; exists {
 					if s, ok := v.(string); ok && s != "" {
