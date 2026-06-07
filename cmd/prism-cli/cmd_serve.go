@@ -375,7 +375,7 @@ func executeServe(args []string) {
 					10,   // global refill 10 tokens/sec
 				),
 				toolGate: stage.NewToolRelevanceGate(true), // P-008: enabled by default
-				stateMgr: state.NewManager(cfg.Prism.Workspace),   // V32: working state manager
+				stateMgr: stateMgr, // V32: shared state manager (same instance as tools)
 			}
 
 			// Pre-build static system content for all agents

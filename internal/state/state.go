@@ -288,6 +288,12 @@ func (m *Manager) LoadContext() (*WorkingContext, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return m.loadContextLocked()
+}
+
+// loadContextLocked reads context without acquiring the lock.
+// Caller must hold m.mu.
+func (m *Manager) loadContextLocked() (*WorkingContext, error) {
 	data, err := os.ReadFile(filepath.Join(m.stateDir, "context.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -323,28 +329,29 @@ func (m *Manager) SaveContext(ctx *WorkingContext) error {
 // --- Human-Readable Summaries ---
 
 // FormatStateForPrompt loads all state and formats it for injection into an LLM prompt.
+// Uses atomic reads (single RLock) to ensure consistency across all state files.
 // Returns an empty string if no state exists.
 func (m *Manager) FormatStateForPrompt() string {
-	var sb string
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	task, _ := m.LoadActiveTask()
+	task, _ := m.loadActiveTaskLocked()
+	decisions, _ := m.loadDecisionsLocked()
+	blocked, _ := m.loadBlockedLocked()
+	ctx, _ := m.loadContextLocked()
+
+	var sb string
 	if task != nil {
 		sb += FormatActiveTask(task)
 	}
-
-	decisions, _ := m.LoadDecisions()
 	if len(decisions) > 0 {
 		sb += "\n## Recent Decisions\n"
 		sb += FormatDecisions(decisions, 5)
 	}
-
-	blocked, _ := m.LoadBlocked()
 	if len(blocked) > 0 {
 		sb += "\n## Blocked\n"
 		sb += FormatBlocked(blocked)
 	}
-
-	ctx, _ := m.LoadContext()
 	if ctx != nil {
 		sb += "\n" + FormatContext(ctx)
 	}
