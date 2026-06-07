@@ -582,7 +582,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	// Step 7: Build the full prompt (session history + workspace context)
-	prompt := cc.buildPrompt(sess, agentCfg)
+	// Resolve the channel role for state action injection
+	stateActionKey := cc.cfg.ResolveChannelRole(msg.ChannelID)
+	prompt := cc.buildPrompt(sess, agentCfg, stateActionKey)
 
 	// Step 7b: Inject Remembrance context (if available, with 60s TTL cache)
 	// NOTE: This uses the same remembrance.Client as RemembranceStage but applies
@@ -1042,11 +1044,21 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 //   3. Session awareness (message count, recency, session duration)
 //   4. Conversation postfix (configurable behavior shaping)
 //   5. Conversation history
-func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string) string {
 	var sb strings.Builder
 
 	// Static system content (cached, built once at startup)
 	sb.WriteString(cc.staticSystemText)
+
+	// --- State action injection ---
+	// Resolve the state action for this context (channel role or "agent")
+	// and inject its instructions AFTER the static prompt but BEFORE session history.
+	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
+		sb.WriteString("\n## Context\n")
+		sb.WriteString(sa.Inject)
+		sb.WriteString("\n\n")
+		log.Printf("[STATE] injected state action %q for agent %s", stateActionKey, agentCfg.ID)
+	}
 
 	// --- Session awareness (V29) ---
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)

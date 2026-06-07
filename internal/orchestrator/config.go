@@ -39,6 +39,10 @@ type Config struct {
 
 	// Remembrance configures the memory service.
 	Remembrance RemembranceConfig `yaml:"remembrance"`
+
+	// ChannelRoles maps Discord channel IDs to role names that determine
+	// which state action applies. Role names must match state_actions keys.
+	ChannelRoles []ChannelRole `yaml:"channel_roles"`
 }
 
 // PrismConfig holds top-level service settings.
@@ -120,6 +124,30 @@ type AgentConfig struct {
 	// tells Prism to treat messages from that bot as agent-to-agent communication.
 	// The message is processed with a modified prompt that frames it as peer input.
 	ListenToAgents []string `yaml:"listen_to_agents"`
+
+	// StateActions maps context names (channel roles, "agent", etc.) to prompt
+	// instructions that are injected when the agent is in that state.
+	// Key examples: "manager-room", "build-room", "fun", "agent".
+	// The "inject" field is appended to the system prompt after conversation_postfix
+	// but before tool instructions.
+	StateActions map[string]StateAction `yaml:"state_actions"`
+}
+
+// StateAction defines behavior modifiers for a specific context state.
+type StateAction struct {
+	// Inject is the text to append to the system prompt when this state is active.
+	// It is inserted after conversation_postfix and before tool instructions.
+	Inject string `yaml:"inject"`
+}
+
+// ChannelRole maps a Discord channel ID to a role name that determines
+// which state action (if any) applies when the agent is in that channel.
+type ChannelRole struct {
+	// ID is the Discord channel ID.
+	ID string `yaml:"id"`
+
+	// Role is the state action key to activate (e.g., "manager-room", "fun").
+	Role string `yaml:"role"`
 }
 
 // ChannelConfig defines a messaging channel connection.
@@ -132,6 +160,30 @@ type ChannelConfig struct {
 
 	// Channels is a list of channel/room IDs to listen on.
 	Channels []string `yaml:"channels"`
+}
+
+// ResolveChannelRole returns the state action key for a given channel ID.
+// Returns empty string if no role is configured for the channel.
+func (c *Config) ResolveChannelRole(channelID string) string {
+	for _, cr := range c.ChannelRoles {
+		if cr.ID == channelID {
+			return cr.Role
+		}
+	}
+	return ""
+}
+
+// ResolveStateAction returns the StateAction for a given key.
+// It searches all agents (primary first) for a matching state action.
+func (c *Config) ResolveStateAction(agentID, key string) *StateAction {
+	for _, a := range c.Agents {
+		if a.ID == agentID {
+			if sa, ok := a.StateActions[key]; ok {
+				return &sa
+			}
+		}
+	}
+	return nil
 }
 
 // ActionConfig defines an event-triggered action.
@@ -311,6 +363,11 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
+	return LoadConfigFromBytes(data)
+}
+
+// LoadConfigFromBytes parses config from raw bytes (for testing).
+func LoadConfigFromBytes(data []byte) (*Config, error) {
 	cfg := DefaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
