@@ -451,7 +451,7 @@ func (cc *chatContext) processWithChatProvider(
 	}
 
 	// Build messages from session
-	messages := cc.buildChatMessages(sess, agentCfg)
+	messages := cc.buildChatMessages(sess, agentCfg, "")	// CLI chat has no channel context
 	chatTools := cc.buildChatToolDefs()
 
 	log.Printf("[CHAT-CLI] entering native tool loop with %d tools", len(chatTools))
@@ -496,7 +496,7 @@ func (cc *chatContext) processWithTextProvider(
 	run *runtrack.Run,
 ) (string, error) {
 	// Build the full prompt (same as Discord pipeline)
-	prompt := cc.buildChatPrompt(sess, agentCfg)
+	prompt := cc.buildChatPrompt(sess, agentCfg, "")	// CLI chat has no channel context
 
 	// Set up NATS for event pipeline (using persistent connection)
 	var natsAdapter *natsPublisherAdapter
@@ -660,11 +660,18 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 
 // buildChatPrompt builds a flat string prompt (for text-based providers).
 // Uses pre-built static system content + dynamic session info + conversation history.
-func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig) string {
+func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string) string {
 	var sb strings.Builder
 
 	// Static system content (cached, built once at startup)
 	sb.WriteString(cc.staticSystemText)
+
+	// State action injection
+	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
+		sb.WriteString("\n## Context\n")
+		sb.WriteString(sa.Inject)
+		sb.WriteString("\n\n")
+	}
 
 	// Dynamic session awareness
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
@@ -687,13 +694,18 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 }
 
 // buildChatMessages builds structured ChatMessage array (for ChatProvider).
-func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orchestrator.AgentConfig) []provider.ChatMessage {
+func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string) []provider.ChatMessage {
 	var messages []provider.ChatMessage
 
 	// System message
 	// Static system content (cached, built once at startup)
 	var systemContent string
 	systemContent += cc.staticSystemChat
+
+	// State action injection
+	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
+		systemContent += "\n## Context\n" + sa.Inject + "\n\n"
+	}
 
 	// Dynamic session awareness
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)

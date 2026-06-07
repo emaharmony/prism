@@ -52,7 +52,7 @@ func TestBuildPrompt_WithContextInjection(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg)
+	prompt := convCtx.buildPrompt(sess, agentCfg, "")
 
 	// Verify agent identity is in the prompt
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
@@ -100,7 +100,7 @@ func TestBuildPrompt_WithoutContextInjection(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg)
+	prompt := convCtx.buildPrompt(sess, agentCfg, "")
 
 	// Should still have agent identity
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
@@ -142,7 +142,7 @@ func TestBuildPrompt_EmptyContextList(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg)
+	prompt := convCtx.buildPrompt(sess, agentCfg, "")
 
 	// Should have identity but no SOUL.md
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
@@ -175,7 +175,7 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg)
+	prompt := convCtx.buildPrompt(sess, agentCfg, "")
 
 	// Should still work — missing files are skipped gracefully
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
@@ -365,7 +365,7 @@ func TestBuildPrompt_ConfigurableTokenBudget(t *testing.T) {
 
 	sess := &session.Session{ID: "test", Messages: []session.Message{}}
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg)
+	prompt := convCtx.buildPrompt(sess, agentCfg, "")
 
 	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
 		t.Error("prompt should contain agent identity")

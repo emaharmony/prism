@@ -88,8 +88,8 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 		log.Printf("[WARN] typing indicator failed: %v", err)
 	}
 
-	// Build the full prompt
-	prompt := cc.buildPrompt(sess, agentCfg)
+	// Build the full prompt — agent messages always use "agent" state action
+	prompt := cc.buildPrompt(sess, agentCfg, "agent")
 
 	// Inject Remembrance context
 	if cc.remClient != nil {
