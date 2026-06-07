@@ -3,6 +3,7 @@ package discordbot
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSplitMessageShort(t *testing.T) {
@@ -51,6 +52,28 @@ func TestSplitMessageNoNewlines(t *testing.T) {
 	total := strings.Join(chunks, "")
 	if total != content {
 		t.Error("split message content doesn't match original")
+	}
+}
+
+func TestSplitMessageUTF8Safe(t *testing.T) {
+	content := strings.Repeat("\U0001F389", 1000)
+	chunks := SplitMessage(content, 1901)
+
+	if len(chunks) < 2 {
+		t.Errorf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	total := strings.Join(chunks, "")
+	if total != content {
+		t.Error("split message content doesn't match original")
+	}
+	for i, chunk := range chunks {
+		if !utf8.ValidString(chunk) {
+			t.Errorf("chunk %d is not valid UTF-8", i)
+		}
+		if len(chunk) > 1901 {
+			t.Errorf("chunk %d is %d bytes, exceeds 1901", i, len(chunk))
+		}
 	}
 }
 
