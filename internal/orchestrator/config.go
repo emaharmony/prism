@@ -80,6 +80,10 @@ type PrismConfig struct {
 	// The workspace root is always implicitly allowed.
 	// Example: ["/Users/ema/projects/repos", "/tmp/prism-data"]
 	AllowedPaths []string `yaml:"allowed_paths"`
+
+	// Scheduler configures cron-style scheduled tasks that fire NATS events.
+	// V32: Event-driven wake replaces heartbeat babysitting.
+	Scheduler SchedulerConfig `yaml:"scheduler"`
 }
 
 // AgentConfig defines a single agent in prism.yaml.
@@ -138,6 +142,36 @@ type StateAction struct {
 	// Inject is the text to append to the system prompt when this state is active.
 	// It is inserted after conversation_postfix and before tool instructions.
 	Inject string `yaml:"inject"`
+}
+
+// SchedulerConfig configures cron-style scheduled tasks.
+// V32: Event-driven wake replaces heartbeat babysitting.
+type SchedulerConfig struct {
+	// Enabled controls whether the scheduler runs. Default: false.
+	Enabled bool `yaml:"enabled"`
+
+	// Jobs defines the scheduled tasks.
+	Jobs []SchedulerJobConfig `yaml:"jobs"`
+}
+
+// SchedulerJobConfig defines a single scheduled task.
+type SchedulerJobConfig struct {
+	// Name is a human-readable identifier (e.g., "daily-review").
+	Name string `yaml:"name"`
+
+	// Schedule is a cron expression (minute hour dayOfMonth month dayOfWeek).
+	// Example: "0 3 * * *" for daily at 3:00 AM.
+	Schedule string `yaml:"schedule"`
+
+	// Event is the NATS subject to publish when the job fires.
+	// Example: "prism.task.scheduled"
+	Event string `yaml:"event"`
+
+	// Payload is the JSON payload for the event.
+	Payload map[string]any `yaml:"payload"`
+
+	// Enabled controls whether this job is active. Default: true.
+	Enabled bool `yaml:"enabled"`
 }
 
 // ChannelRole maps a Discord channel ID to a role name that determines
