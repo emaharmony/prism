@@ -114,6 +114,7 @@ type conversationContext struct {
 	toolExec    *tool.Executor        // V27: Tool executor for file system access
 	stateMgr    *state.Manager        // V32: Working state manager for adaptive context
 	planMgr     *plan.Manager         // V32: Plan manager for plan-first pipeline
+	improveMgr  *improve.Manager      // V32: Self-improvement loop
 	guardian    *guard.Guard         // V32: Guard rail for plan enforcement
 	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
 	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
@@ -266,6 +267,7 @@ func executeServe(args []string) {
 	var stateMgr *state.Manager
 	var ctxBuildr *context.Builder
 	var planMgr *plan.Manager
+	var improveMgr *improve.Manager
 
 	for _, ch := range cfg.Channels {
 		switch ch.Type {
@@ -358,7 +360,7 @@ func executeServe(args []string) {
 		tool.RegisterPlanTools(toolReg, planMgr)
 
 		// V32: Self-Improvement Loop
-		improveMgr := improve.NewManager(workspaceRoot)
+		improveMgr = improve.NewManager(workspaceRoot)
 		improveMgr.EnsureDir()
 
 		// V32: Guard rail (plan-first enforcement)
@@ -400,6 +402,7 @@ func executeServe(args []string) {
 				toolGate: stage.NewToolRelevanceGate(true), // P-008: enabled by default
 				stateMgr: stateMgr, // V32: shared state manager (same instance as tools)
 				planMgr:  planMgr,  // V32: plan manager
+				improveMgr: improveMgr, // V32: improvement manager
 				guardian: guardian, // V32: guard rail
 			}
 
@@ -499,6 +502,8 @@ func executeServe(args []string) {
 			natsConn,
 			discordBots[0], // use first bot for notifications
 			ctxBuildr,
+			planMgr,
+			improveMgr,
 		)
 		if err := wakeHandler.Start(); err != nil {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
@@ -542,6 +547,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	trimmed := strings.TrimSpace(msg.Content)
 	if trimmed == "" {
 		return
+	}
+
+	// Step 0a: Handle plan approval commands ("approve P-XXX" / "reject P-XXX")
+	if cc.planMgr != nil {
+		if strings.HasPrefix(trimmed, "approve ") || strings.HasPrefix(trimmed, "reject ") {
+			if handled := cc.handlePlanApproval(msg); handled {
+				return
+			}
+		}
 	}
 
 	// Step 0b: Handle messages from other bots (agent-to-agent communication)

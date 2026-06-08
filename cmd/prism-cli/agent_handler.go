@@ -309,3 +309,48 @@ func isAgentBot(agents []orchestrator.AgentConfig, userID string) bool {
 	}
 	return false
 }
+
+// handlePlanApproval processes "approve P-XXX" or "reject P-XXX" commands from Discord.
+// Returns true if the message was handled (was a plan approval/rejection command).
+func (cc *conversationContext) handlePlanApproval(msg *discordbot.InboundMessage) bool {
+	trimmed := strings.TrimSpace(msg.Content)
+	parts := strings.Fields(trimmed)
+	if len(parts) != 2 {
+		return false
+	}
+
+	action := strings.ToLower(parts[0])
+	planID := parts[1]
+
+	// Validate plan ID format
+	if !strings.HasPrefix(planID, "P-") {
+		return false // Not a plan command
+	}
+
+	var resultMsg string
+	switch action {
+	case "approve":
+		if err := cc.planMgr.ApprovePlan(planID, msg.UserName); err != nil {
+			resultMsg = fmt.Sprintf("\u274c Could not approve plan %s: %v", planID, err)
+		} else {
+			resultMsg = fmt.Sprintf("\u2705 Plan %s approved by %s. Proceeding with execution.", planID, msg.UserName)
+		}
+	case "reject":
+		if err := cc.planMgr.AbandonPlan(planID); err != nil {
+			resultMsg = fmt.Sprintf("\u274c Could not reject plan %s: %v", planID, err)
+		} else {
+			resultMsg = fmt.Sprintf("\u274c Plan %s rejected by %s. Will not proceed.", planID, msg.UserName)
+		}
+	default:
+		return false // Not an approval command
+	}
+
+	if cc.bot != nil {
+		cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: msg.ChannelID,
+			Content:   resultMsg,
+		})
+	}
+	log.Printf("[PLAN] %s %s by %s", action, planID, msg.UserName)
+	return true
+}
