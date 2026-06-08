@@ -1417,13 +1417,11 @@ func primaryName(cfg *orchestrator.Config) string {
 
 // filterToolInfosByChannelRole filters ToolInfo slices based on channel role configuration.
 func filterToolInfosByChannelRole(toolInfos []tool.ToolInfo, channelRole *orchestrator.ChannelRole) []tool.ToolInfo {
-	if channelRole == nil {
-		return toolInfos
-	}
-	switch channelRole.Tools {
-	case "none":
+	mode := resolveToolMode(channelRole)
+	switch mode {
+	case ToolModeNone:
 		return nil
-	case "read-only":
+	case ToolModeReadOnly:
 		var filtered []tool.ToolInfo
 		for _, t := range toolInfos {
 			if readOnlyTools[t.Name] {
@@ -1474,16 +1472,38 @@ var readOnlyTools = map[string]bool{
 	"state_get":       true,
 }
 
-// filterChatToolsByChannelRole filters tools based on channel role configuration.
-// "none" → empty list (no tools), "read-only" → only read tools, "" or "all" → all tools.
-func filterChatToolsByChannelRole(tools []provider.ChatTool, channelRole *orchestrator.ChannelRole) []provider.ChatTool {
+// ToolMode represents the tool access level for a channel.
+type ToolMode int
+
+const (
+	ToolModeAll      ToolMode = iota // All tools available
+	ToolModeReadOnly                  // Only read-only tools
+	ToolModeNone                      // No tools at all
+)
+
+// resolveToolMode determines the tool access level from a channel role config.
+func resolveToolMode(channelRole *orchestrator.ChannelRole) ToolMode {
 	if channelRole == nil {
-		return tools
+		return ToolModeAll
 	}
 	switch channelRole.Tools {
 	case "none":
-		return nil
+		return ToolModeNone
 	case "read-only":
+		return ToolModeReadOnly
+	default:
+		return ToolModeAll
+	}
+}
+
+// filterChatToolsByChannelRole filters tools based on channel role configuration.
+// "none" → empty list (no tools), "read-only" → only read tools, "" or "all" → all tools.
+func filterChatToolsByChannelRole(tools []provider.ChatTool, channelRole *orchestrator.ChannelRole) []provider.ChatTool {
+	mode := resolveToolMode(channelRole)
+	switch mode {
+	case ToolModeNone:
+		return nil
+	case ToolModeReadOnly:
 		var filtered []provider.ChatTool
 		for _, t := range tools {
 			if readOnlyTools[t.Function.Name] {
@@ -1491,7 +1511,7 @@ func filterChatToolsByChannelRole(tools []provider.ChatTool, channelRole *orches
 			}
 		}
 		return filtered
-	default: // "all" or empty
+	default:
 		return tools
 	}
 }

@@ -92,18 +92,32 @@ func TestShouldRespond_LowSignal(t *testing.T) {
 }
 
 func TestShouldRespond_ShortImportant(t *testing.T) {
-	// Short but important messages get light responses in unknown channels
+	// Short but important messages get full responses if they match tech intent
 	shortImportant := []string{
 		"yes",
 		"no",
-		"go",
 		"stop",
 		"done",
 	}
 	for _, msg := range shortImportant {
 		result := ShouldRespond(msg, "general")
+		// These are short but don't match tech intent or low-signal, so RespondLightly
 		if result != RespondLightly {
 			t.Errorf("ShouldRespond(%q, general) = %v, want RespondLightly", msg, result)
+		}
+	}
+
+	// Short words that match tech intent get full responses
+	shortTech := []string{
+		"go",
+		"fix",
+		"add",
+		"new",
+	}
+	for _, msg := range shortTech {
+		result := ShouldRespond(msg, "general")
+		if result != RespondFully {
+			t.Errorf("ShouldRespond(%q, general) = %v, want RespondFully", msg, result)
 		}
 	}
 }
@@ -165,6 +179,25 @@ func TestContainsQuestion(t *testing.T) {
 		result := containsQuestion(tt.input)
 		if result != tt.expected {
 			t.Errorf("containsQuestion(%q) = %v, want %v", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestShouldRespond_ShortTechWords(t *testing.T) {
+	// Short tech words should get full responses even at ≤4 chars
+	techWords := []string{
+		"new feature",
+		"add this",
+		"run the test",
+		"fix it",
+		"git status",
+		"log in",
+		"set config",
+	}
+	for _, msg := range techWords {
+		result := ShouldRespond(msg, "general")
+		if result != RespondFully {
+			t.Errorf("ShouldRespond(%q, general) = %v, want RespondFully", msg, result)
 		}
 	}
 }

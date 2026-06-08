@@ -119,3 +119,25 @@ func TestFilterToolInfosByChannelRole(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveToolMode(t *testing.T) {
+	tests := []struct {
+		name   string
+		role   *orchestrator.ChannelRole
+		expect ToolMode
+	}{
+		{name: "nil returns all", role: nil, expect: ToolModeAll},
+		{name: "all returns all", role: &orchestrator.ChannelRole{Tools: "all"}, expect: ToolModeAll},
+		{name: "empty returns all", role: &orchestrator.ChannelRole{Tools: ""}, expect: ToolModeAll},
+		{name: "none returns none", role: &orchestrator.ChannelRole{Tools: "none"}, expect: ToolModeNone},
+		{name: "read-only returns read-only", role: &orchestrator.ChannelRole{Tools: "read-only"}, expect: ToolModeReadOnly},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveToolMode(tt.role)
+			if got != tt.expect {
+				t.Errorf("resolveToolMode() = %v, want %v", got, tt.expect)
+			}
+		})
+	}
+}
