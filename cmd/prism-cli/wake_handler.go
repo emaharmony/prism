@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -47,6 +48,7 @@ type wakeAction struct {
 	Prompt    string // System prompt for the LLM
 	ChannelID string // Discord channel to send results to
 	MaxTokens int    // Max response tokens
+	SkipLLM   bool   // If true, run the action directly without LLM (e.g., gh pr list)
 }
 
 // knownActions maps action names to their prompts and target channels.
@@ -75,15 +77,15 @@ Focus on what matters. Skip trivia.`,
 		MaxTokens: 1024,
 	},
 	"check_prs": {
-		Prompt: `You are checking for open pull requests. Use the git tools to:
-1. List open PRs on the current repository
-2. For each PR, summarize the status (open, review comments, CI status)
-3. Flag any PRs that need attention (stale reviews, failed CI)
-4. Be concise — this is a PR status report
+		Prompt: `You are summarizing PR status for a Discord channel. Take the raw PR data below and format it concisely:
+1. List each PR with number, title, author, review status, and CI status
+2. Flag any PRs that need attention (stale reviews, failed CI, ready to merge)
+3. If no PRs are open, say "No open PRs" and nothing else
 
-If no PRs are open, say "No open PRs" and nothing else.`,
+Be concise — this is a status report, not a novel.`,
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 1024,
+		SkipLLM:   true, // Run gh pr list directly, then optionally summarize
 	},
 	"auto_patch": {
 		Prompt: `You are the auto-patch agent. Your job is to review improvement proposals and create fixes.
@@ -189,6 +191,12 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 			ChannelID: "1491622581348864162",
 			MaxTokens: 1024,
 		}
+	}
+
+	// Handle direct-execution actions (no LLM needed)
+	if actionDef.SkipLLM {
+		wh.handleDirectAction(action, actionDef, firedAt)
+		return
 	}
 
 	// Build the system prompt with state context
@@ -364,7 +372,153 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 	log.Printf("[WAKE] completed action %q (tokens: prompt=%d, completion=%d)", action, promptTokens, completionTokens)
 }
 
-// formatActionName converts snake_case to Title Case for display.
+// handleDirectAction processes actions that don't need LLM inference.
+// Currently only supports check_prs, which runs gh pr list directly.
+func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, firedAt string) {
+	var resultContent string
+
+	switch action {
+	case "check_prs":
+		resultContent = wh.checkPRStatus()
+	default:
+		log.Printf("[WAKE] WARN unknown direct action %q", action)
+		return
+	}
+
+	if resultContent == "" {
+		log.Printf("[WAKE] direct action %q produced no output", action)
+		return
+	}
+
+	// Send result to Discord
+	if wh.bot != nil && actionDef.ChannelID != "" {
+		content := resultContent
+		if len(content) > 1950 {
+			content = content[:1950] + "\n\n...(truncated)"
+		}
+		content = fmt.Sprintf("\U0001F514 **%s**\n\n%s", formatActionName(action), content)
+		wh.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: actionDef.ChannelID,
+			Content:   content,
+		})
+	}
+	log.Printf("[WAKE] completed direct action %q", action)
+}
+
+// checkPRStatus runs gh pr list and formats the results.
+func (wh *WakeHandler) checkPRStatus() string {
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list",
+		"--json", "number,title,author,updatedAt,reviewDecision,statusCheckRollup,labels",
+		"--state", "open",
+		"--limit", "20",
+	)
+	// Run in the workspace directory
+	if wh.ctxBuilder != nil {
+		cmd.Dir = wh.ctxBuilder.WorkspaceRoot
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		// gh might not be installed or no PRs exist
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "No open PRs found."
+		}
+		return fmt.Sprintf("Could not check PRs: %v", err)
+	}
+
+	if len(strings.TrimSpace(string(output))) == 0 {
+		return "No open PRs."
+	}
+
+	return wh.formatPRList(string(output))
+}
+
+// formatPRList formats gh pr list JSON output into a readable Discord message.
+func (wh *WakeHandler) formatPRList(jsonOutput string) string {
+	type PRAuthor struct {
+		Login string `json:"login"`
+	}
+	type PRLabel struct {
+		Name string `json:"name"`
+	}
+	type PRStatusCheck struct {
+		State string `json:"state"`
+		Name  string `json:"name"`
+	}
+	type PR struct {
+		Number          int             `json:"number"`
+		Title           string          `json:"title"`
+		Author          PRAuthor        `json:"author"`
+		UpdatedAt       string          `json:"updatedAt"`
+		ReviewDecision  string          `json:"reviewDecision"`
+		StatusCheckRollup []PRStatusCheck `json:"statusCheckRollup"`
+		Labels          []PRLabel       `json:"labels"`
+	}
+
+	var prs []PR
+	if err := json.Unmarshal([]byte(jsonOutput), &prs); err != nil {
+		// If parsing fails, return the raw output
+		return "PR Status:\n" + jsonOutput
+	}
+
+	if len(prs) == 0 {
+		return "No open PRs."
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("PR Status Report — %d open PRs\n\n", len(prs)))
+
+	for _, pr := range prs {
+		// Format review decision
+		review := pr.ReviewDecision
+		if review == "" {
+			review = "PENDING"
+		}
+		switch review {
+		case "APPROVED":
+			review = "\u2705 Approved"
+		case "CHANGES_REQUESTED":
+			review = "\u26a0\ufe0f Changes Requested"
+		case "REVIEW_REQUIRED":
+			review = "\U0001f50d Review Required"
+		}
+
+		// Format CI status
+		ciStatus := "\u2753 Unknown"
+		if len(pr.StatusCheckRollup) > 0 {
+			allPass := true
+			for _, check := range pr.StatusCheckRollup {
+				if check.State != "success" {
+					allPass = false
+					break
+				}
+			}
+			if allPass {
+				ciStatus = "\u2705 All passing"
+			} else {
+				ciStatus = "\u274c Failing"
+			}
+		}
+
+		// Format labels
+		var labelStr string
+		if len(pr.Labels) > 0 {
+			labels := make([]string, len(pr.Labels))
+			for i, l := range pr.Labels {
+				labels[i] = l.Name
+			}
+			labelStr = " [" + strings.Join(labels, ", ") + "]"
+		}
+
+		sb.WriteString(fmt.Sprintf("**#%d** %s\n", pr.Number, pr.Title))
+		sb.WriteString(fmt.Sprintf("   by @%s • %s • CI: %s%s\n\n", pr.Author.Login, review, ciStatus, labelStr))
+	}
+
+	return sb.String()
+}
 func formatActionName(action string) string {
 	parts := strings.Split(action, "_")
 	for i, p := range parts {
