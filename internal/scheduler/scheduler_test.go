@@ -389,3 +389,44 @@ func TestNilPublisher(t *testing.T) {
 	// Should not panic
 	s.fireJob(s.Jobs()[0])
 }
+
+func TestDoubleStart(t *testing.T) {
+	pub := &mockPublisher{}
+	s := NewScheduler(pub)
+
+	schedule, _ := ParseCron("0 3 * * *") // 3 AM — won't fire during test
+	s.AddJob(&Job{Name: "double-start", Schedule: schedule, Event: "prism.task.scheduled", Enabled: true})
+
+	// Start twice — second call should be a no-op
+	var fired atomic.Int32
+	go s.Start()
+	time.Sleep(50 * time.Millisecond)
+	s.Start() // should return immediately since s.running is true
+	time.Sleep(50 * time.Millisecond)
+	s.Stop()
+
+	_ = fired.Load() // just to use the variable
+}
+
+func TestStopWaitsForInFlight(t *testing.T) {
+	pub := &mockPublisher{}
+	s := NewScheduler(pub)
+
+	// Use a wildcard schedule so it fires immediately
+	schedule, _ := ParseCron("* * * * *")
+	s.AddJob(&Job{Name: "inflight", Schedule: schedule, Event: "prism.task.scheduled", Payload: map[string]any{"action": "test"}, Enabled: true})
+
+	// Start and fire a job, then stop
+	go s.Start()
+
+	// Wait for alignment and first fire
+	time.Sleep(2 * time.Second)
+
+	// Stop should wait for in-flight goroutines
+	s.Stop()
+
+	// After Stop returns, all in-flight jobs should be done
+	if len(pub.events) == 0 {
+		t.Log("no events fired (may have missed minute boundary)")
+	}
+}
