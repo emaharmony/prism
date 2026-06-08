@@ -89,7 +89,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	}
 
 	// Build the full prompt — agent messages always use "agent" state action
-	prompt := cc.buildPrompt(sess, agentCfg, "agent")
+	prompt := cc.buildPrompt(sess, agentCfg, "agent", nil)	// Agent messages have no channel context
 
 	// Inject Remembrance context
 	if cc.remClient != nil {

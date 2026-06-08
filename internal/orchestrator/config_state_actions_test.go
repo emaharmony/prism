@@ -203,12 +203,88 @@ remembrance:
 	if cfg.ChannelRoles[1].ID != "1493297644821283067" || cfg.ChannelRoles[1].Role != "fun" {
 		t.Errorf("channel role 1 = %+v, want {ID: 1493297644821283067, Role: fun}", cfg.ChannelRoles[1])
 	}
-
 	// Test resolution
 	if role := cfg.ResolveChannelRole("1491622581348864162"); role != "manager-room" {
 		t.Errorf("ResolveChannelRole(manager-room) = %q, want %q", role, "manager-room")
 	}
 	if sa := cfg.ResolveStateAction("lumi", "fun"); sa == nil || sa.Inject != "Casual social mode. No tools." {
 		t.Errorf("ResolveStateAction(lumi, fun) = %+v", sa)
+	}
+}
+
+func TestResolveChannelRoleConfig(t *testing.T) {
+	cfg := &Config{
+		ChannelRoles: []ChannelRole{
+			{
+				ID:          "1491622581348864162",
+				Role:        "manager-room",
+				Project:     "prism",
+				Tools:       "all",
+				Personality: "direct",
+				Context:     "You are in #manager-room, a private strategic channel with Ema.",
+			},
+			{
+				ID:          "1493297644821283067",
+				Role:        "fun",
+				Project:     "none",
+				Tools:       "none",
+				Personality: "bubbly",
+				Context:     "You are in #fun, a casual social channel. NO tools, NO code.",
+			},
+		},
+	}
+
+	// Test existing channel
+	cr := cfg.ResolveChannelRoleConfig("1491622581348864162")
+	if cr == nil {
+		t.Fatal("expected ChannelRole, got nil")
+	}
+	if cr.Project != "prism" {
+		t.Errorf("Project = %q, want prism", cr.Project)
+	}
+	if cr.Tools != "all" {
+		t.Errorf("Tools = %q, want all", cr.Tools)
+	}
+	if cr.Personality != "direct" {
+		t.Errorf("Personality = %q, want direct", cr.Personality)
+	}
+
+	// Test fun channel
+	cr2 := cfg.ResolveChannelRoleConfig("1493297644821283067")
+	if cr2 == nil {
+		t.Fatal("expected ChannelRole for fun, got nil")
+	}
+	if cr2.Project != "none" {
+		t.Errorf("Project = %q, want none", cr2.Project)
+	}
+	if cr2.Tools != "none" {
+		t.Errorf("Tools = %q, want none", cr2.Tools)
+	}
+
+	// Test unknown channel
+	cr3 := cfg.ResolveChannelRoleConfig("999999999999999999")
+	if cr3 != nil {
+		t.Errorf("expected nil for unknown channel, got %+v", cr3)
+	}
+
+	// Test backward compatibility — old config with just ID and Role
+	cfgOld := &Config{
+		ChannelRoles: []ChannelRole{
+			{ID: "123", Role: "test"},
+		},
+	}
+	cr4 := cfgOld.ResolveChannelRoleConfig("123")
+	if cr4 == nil {
+		t.Fatal("expected ChannelRole for old config, got nil")
+	}
+	if cr4.Role != "test" {
+		t.Errorf("Role = %q, want test", cr4.Role)
+	}
+	// New fields should be empty (backward compatible)
+	if cr4.Project != "" {
+		t.Errorf("Project = %q, want empty", cr4.Project)
+	}
+	if cr4.Tools != "" {
+		t.Errorf("Tools = %q, want empty", cr4.Tools)
 	}
 }
