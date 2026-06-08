@@ -41,6 +41,7 @@ import (
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/task"
@@ -67,6 +68,7 @@ type chatContext struct {
 	natsURL      string                // NATS URL (embedded or external)
 	natsCleanup  func()                // Cleanup for embedded NATS
 	rateLimiter  *chatRateLimit        // Per-message rate limiting for CLI
+	stateMgr     *state.Manager         // V32: Working state manager for adaptive context
 
 	// Cached static system content — built once, reused every message.
 	// Includes: agent identity, workspace context, postfix, tool instructions.
@@ -218,6 +220,10 @@ func executeChat(args []string) {
 	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	// V32: State management tools
+	chatStateMgr := state.NewManager(workspaceRoot)
+	chatStateMgr.EnsureDir()
+	tool.RegisterStateTools(registry, chatStateMgr)
 
 	toolPolicy := tool.DefaultPolicyConfig()
 	toolPolicy.MaxFileSize = 10 * 1024 * 1024
@@ -264,6 +270,7 @@ func executeChat(args []string) {
 		natsURL:      natsURL,
 		natsCleanup:  natsCleanup,
 		rateLimiter: &chatRateLimit{minDelay: 500 * time.Millisecond}, // 2 msg/s max
+		stateMgr:    chatStateMgr,
 	}
 
 	// 10.5. Pre-build static system content (only needs to be done once)
@@ -666,6 +673,13 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 	// Static system content (cached, built once at startup)
 	sb.WriteString(cc.staticSystemText)
 
+	// V32: Working state injection (per-message, fresh state every time)
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			sb.WriteString("\n" + statePrompt + "\n")
+		}
+	}
+
 	// State action injection
 	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
 		sb.WriteString("\n## Context\n")
@@ -701,6 +715,13 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 	// Static system content (cached, built once at startup)
 	var systemContent string
 	systemContent += cc.staticSystemChat
+
+	// V32: Working state injection (per-message, fresh state every time)
+	if cc.stateMgr != nil {
+		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
+			systemContent += "\n" + statePrompt + "\n"
+		}
+	}
 
 	// State action injection
 	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
