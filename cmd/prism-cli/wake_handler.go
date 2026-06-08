@@ -20,7 +20,9 @@ import (
 
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
+	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/plan"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/state"
@@ -28,14 +30,17 @@ import (
 )
 
 // WakeHandler subscribes to scheduler events and triggers LLM inference.
+// WakeHandler subscribes to scheduler events and triggers LLM inference.
 type WakeHandler struct {
-	cfg        *orchestrator.Config
-	providers  *provider.ProviderRegistry
-	sessMgr    *session.Manager
-	stateMgr   *state.Manager
-	natsConn   *nats.Conn
-	bot        discordBotClient
-	ctxBuilder *contextpkg.Builder
+	cfg         *orchestrator.Config
+	providers   *provider.ProviderRegistry
+	sessMgr     *session.Manager
+	stateMgr    *state.Manager
+	natsConn    *nats.Conn
+	bot         discordBotClient
+	ctxBuilder  *contextpkg.Builder
+	planMgr     *plan.Manager
+	improveMgr  *improve.Manager
 }
 
 // wakeAction defines a scheduled action prompt.
@@ -81,6 +86,39 @@ If no PRs are open, say "No open PRs" and nothing else.`,
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 1024,
 	},
+	"auto_patch": {
+		Prompt: `You are the auto-patch agent. Your job is to review improvement proposals and create fixes.
+
+1. Check the improvement proposals in your workspace state
+2. For each auto-PR-eligible proposal (bug fixes, error patterns, test coverage, doc updates):
+   a. Create a plan using plan_create if one doesn't exist
+   b. Set the plan status to auto_proceed
+   c. Create a git branch with a descriptive name
+   d. Write the fix
+   e. Commit and push
+   f. Open a pull request with a clear description
+3. For proposals that need approval (architecture, process), notify Ema with a clear summary
+4. After creating any PR, update the improvement status to in_progress
+
+Be thorough but fast. Focus on correctness.`,
+		ChannelID: "1491622581348864162", // manager-room
+		MaxTokens: 2048,
+	},
+	"review_improvements": {
+		Prompt: `You are reviewing active improvement proposals.
+
+1. Check the improvement proposals in your workspace state
+2. For each proposed improvement:
+   a. Assess whether it's still relevant
+   b. Check if the underlying error pattern has resolved
+   c. Determine the correct approval level
+   d. If auto-PR eligible, flag it for the next auto_patch cycle
+   e. If it needs Ema's approval, send a clear notification with the details
+3. Dismiss duplicates or stale proposals
+4. Be concise — list proposals with status and recommended action`,
+		ChannelID: "1491622581348864162", // manager-room
+		MaxTokens: 1024,
+	},
 }
 
 // NewWakeHandler creates a wake handler with the given dependencies.
@@ -91,7 +129,9 @@ func NewWakeHandler(
 	stateMgr *state.Manager,
 	natsConn *nats.Conn,
 	bot discordBotClient,
-	ctxBuilder *contextpkg.Builder,
+	ctxBuilder  *contextpkg.Builder,
+	planMgr     *plan.Manager,
+	improveMgr  *improve.Manager,
 ) *WakeHandler {
 	return &WakeHandler{
 		cfg:        cfg,
@@ -101,6 +141,8 @@ func NewWakeHandler(
 		natsConn:   natsConn,
 		bot:        bot,
 		ctxBuilder: ctxBuilder,
+		planMgr:    planMgr,
+		improveMgr: improveMgr,
 	}
 }
 
@@ -164,6 +206,27 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 	if wh.ctxBuilder != nil {
 		if injected, err := wh.ctxBuilder.BuildCached(); err == nil && injected != nil && injected.FormattedString != "" {
 			systemPrompt += "\n\n## Workspace Context\n" + injected.FormattedString
+		}
+	}
+
+	// V32: Inject improvement proposals for auto_patch and review_improvements actions
+	if wh.improveMgr != nil && (action == "auto_patch" || action == "review_improvements") {
+		activeImpr := wh.improveMgr.GetActiveImprovements()
+		if len(activeImpr) > 0 {
+			systemPrompt += "\n\n" + improve.FormatImprovementsForPrompt(activeImpr)
+		}
+		errorPatterns := wh.improveMgr.GetErrorPatterns()
+		if len(errorPatterns) > 0 {
+			systemPrompt += "\n\n" + improve.FormatErrorPatternsForPrompt(errorPatterns)
+		}
+	}
+
+	// V32: Inject active plans for auto_patch action
+	if wh.planMgr != nil && action == "auto_patch" {
+		if plans, err := wh.planMgr.LoadPlans(); err == nil && len(plans) > 0 {
+			if activePlan := plan.ActivePlan(plans); activePlan != nil {
+				systemPrompt += "\n\n" + plan.FormatPlanForPrompt(activePlan)
+			}
 		}
 	}
 
@@ -292,6 +355,11 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 		log.Printf("[WAKE] sent %s result to Discord channel %s", action, actionDef.ChannelID)
 	}
 
+	// V32: After sending result, check for plans that need approval and notify Ema
+	if wh.bot != nil && wh.planMgr != nil {
+		wh.notifyPendingApprovals(actionDef.ChannelID)
+	}
+
 	log.Printf("[WAKE] completed action %q (tokens: prompt=%d, completion=%d)", action, promptTokens, completionTokens)
 }
 
@@ -304,4 +372,47 @@ func formatActionName(action string) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// notifyPendingApprovals checks for plans that need Ema's approval and sends a Discord notification.
+func (wh *WakeHandler) notifyPendingApprovals(channelID string) {
+	plans, err := wh.planMgr.LoadPlans()
+	if err != nil {
+		log.Printf("[WAKE] WARN could not load plans for approval check: %v", err)
+		return
+	}
+
+	var pendingApproval []*plan.Plan
+	for i := range plans {
+		if plans[i].Status == plan.StatusPendingApproval {
+			pendingApproval = append(pendingApproval, &plans[i])
+		}
+	}
+
+	if len(pendingApproval) == 0 {
+		return
+	}
+
+	var msg strings.Builder
+	msg.WriteString("\u26a0\ufe0f **Plans Needing Approval**\n\n")
+	for _, p := range pendingApproval {
+		msg.WriteString(fmt.Sprintf("**%s** (%s)\n", p.Title, p.ID))
+		msg.WriteString(fmt.Sprintf("Approval level: %s\n", p.ApprovalLevel))
+		if p.Description != "" {
+			msg.WriteString(fmt.Sprintf("Description: %s\n", p.Description))
+		}
+		if p.Reasoning != "" {
+			msg.WriteString(fmt.Sprintf("Reasoning: %s\n", p.Reasoning))
+		}
+		msg.WriteString(fmt.Sprintf("Created: %s\n\n", p.CreatedAt.Format("Jan 02 15:04")))
+	}
+	msg.WriteString("Reply with `approve P-XXX` or `reject P-XXX` to act on these plans.")
+
+	if wh.bot != nil {
+		wh.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: channelID,
+			Content:   msg.String(),
+		})
+	}
+	log.Printf("[WAKE] notified %d pending approval plans", len(pendingApproval))
 }
