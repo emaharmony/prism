@@ -176,12 +176,37 @@ type SchedulerJobConfig struct {
 
 // ChannelRole maps a Discord channel ID to a role name that determines
 // which state action (if any) applies when the agent is in that channel.
+// V33: Now includes project scoping, tool filtering, personality, and structured context.
 type ChannelRole struct {
 	// ID is the Discord channel ID.
 	ID string `yaml:"id"`
 
 	// Role is the state action key to activate (e.g., "manager-room", "fun").
 	Role string `yaml:"role"`
+
+	// Project is the project this channel is about (e.g., "prism", "bassbook").
+	// When set, the agent knows which project is relevant and scopes responses accordingly.
+	// When empty, no project scoping is applied.
+	Project string `yaml:"project,omitempty"`
+
+	// Tools controls which tools are available in this channel.
+	// "all" = all tools, "read-only" = only read tools, "none" = no tools.
+	// When empty, defaults to "all".
+	Tools string `yaml:"tools,omitempty"`
+
+	// Personality controls the agent's communication style in this channel.
+	// "direct" = make decisions, push back, no menus
+	// "terse" = structured data, concise, no pleasantries
+	// "bubbly" = exaggerated personality, playful, enthusiastic
+	// "social" = warm, conversational, present
+	// When empty, uses the agent's conversation_postfix.
+	Personality string `yaml:"personality,omitempty"`
+
+	// Context is structured channel context that replaces state_actions.inject.
+	// It provides rich context about where the agent is, who it's talking to,
+	// what's expected, and what project is relevant.
+	// When empty, falls back to state_actions.inject.
+	Context string `yaml:"context,omitempty"`
 }
 
 // ChannelConfig defines a messaging channel connection.
@@ -199,12 +224,22 @@ type ChannelConfig struct {
 // ResolveChannelRole returns the state action key for a given channel ID.
 // Returns empty string if no role is configured for the channel.
 func (c *Config) ResolveChannelRole(channelID string) string {
-	for _, cr := range c.ChannelRoles {
-		if cr.ID == channelID {
-			return cr.Role
-		}
+	cr := c.ResolveChannelRoleConfig(channelID)
+	if cr != nil {
+		return cr.Role
 	}
 	return ""
+}
+
+// ResolveChannelRoleConfig returns the full ChannelRole config for a given channel ID.
+// Returns nil if no role is configured for the channel.
+func (c *Config) ResolveChannelRoleConfig(channelID string) *ChannelRole {
+	for i := range c.ChannelRoles {
+		if c.ChannelRoles[i].ID == channelID {
+			return &c.ChannelRoles[i]
+		}
+	}
+	return nil
 }
 
 // ResolveStateAction returns the StateAction for a given key.

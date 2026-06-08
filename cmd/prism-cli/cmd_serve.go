@@ -656,7 +656,8 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 7: Build the full prompt (session history + workspace context)
 	// Resolve the channel role for state action injection
 	stateActionKey := cc.cfg.ResolveChannelRole(msg.ChannelID)
-	prompt := cc.buildPrompt(sess, agentCfg, stateActionKey)
+	channelRole := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
+	prompt := cc.buildPrompt(sess, agentCfg, stateActionKey, channelRole)
 
 	// Step 7b: Inject Remembrance context (if available, with 60s TTL cache)
 	// NOTE: This uses the same remembrance.Client as RemembranceStage but applies
@@ -1048,84 +1049,142 @@ func (cc *conversationContext) findAgentConfig(agentID string) *orchestrator.Age
 }
 
 // rebuildStaticSystemContent pre-builds the static portion of the system prompt
-// for the given agent. This includes agent identity, workspace context, postfix,
-// and tool instructions. Called once at startup and cached for reuse.
+// for the given agent. V33: Assembles in explicit layers with priority labels.
+// Layers: Identity → Context Files → Postfix → Tools
+// Called once at startup and cached for reuse.
 func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator.AgentConfig) {
 	var sb strings.Builder
 
-	// Agent identity
-	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+	// --- Layer 1: IDENTITY ---
+	// V33: Derive identity from workspace files (SOUL.md, IDENTITY.md) instead of
+	// generic "You are {id}, a {role} assistant". If workspace files have identity
+	// content, use it. Fall back to config id/role only if no identity files exist.
+	identityContent := ""
+	contextIdentity := ""
+	if cc.ctxBuilder != nil {
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).WithNamedContexts([]string{"soul", "identity"})
+		injected, err := builder.Build()
+		if err == nil {
+			for _, f := range injected.Files {
+				if f.Name == "soul" && f.Content != "" {
+					contextIdentity = f.Content
+				}
+			}
+		}
+	}
 
-	// Workspace context injection
+	if contextIdentity != "" {
+		// Use workspace identity content — it's the real source of truth
+		identityContent = contextIdentity
+	} else {
+		// Fall back to config id/role — better than nothing
+		identityContent = fmt.Sprintf("You are %s, a %s assistant.", agentCfg.ID, agentCfg.Role)
+	}
+
+	sb.WriteString("## Who You Are\n")
+	sb.WriteString(identityContent + "\n\n")
+
+	// --- Layer 2: WORKSPACE CONTEXT ---
+	// Full context files (AGENTS.md, USER.md, MEMORY.md, etc.)
+	// Excluding soul and identity which are already in Layer 1
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
 			budget = 4000
 		}
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(budget)
-		injected, err := builder.BuildCached()
-		if err == nil && injected.FormattedString != "" {
-			sb.WriteString("\n" + injected.FormattedString)
+
+		// Build context without soul/identity (already in Layer 1)
+		otherContexts := make([]string, 0, len(agentCfg.Context))
+		for _, c := range agentCfg.Context {
+			if c != "soul" && c != "identity" {
+				otherContexts = append(otherContexts, c)
+			}
+		}
+
+		if len(otherContexts) > 0 {
+			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+				WithNamedContexts(otherContexts).
+				WithTokenBudget(budget)
+			injected, err := builder.BuildCached()
+			if err == nil && injected.FormattedString != "" {
+				sb.WriteString("## Context\n")
+				sb.WriteString(injected.FormattedString + "\n")
+			}
 		}
 	}
 
-	// Conversation postfix
+	// --- Layer 3: BEHAVIOR ---
+	// Conversation postfix (can be overridden by channel context at runtime)
 	postfix := agentCfg.ConversationPostfix
 	if postfix == "" {
 		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
 			"Don't wrap things up in a bow unless the topic is genuinely resolved. " +
 			"Be warm, curious, and engaged — not a transactional Q&A machine."
 	}
-	sb.WriteString("\n" + postfix + "\n\n")
+	sb.WriteString("## How You Respond\n")
+	sb.WriteString(postfix + "\n\n")
 
-	// Tool usage guidance (for text-based path)
+	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
 
 	cc.staticSystemText = sb.String()
 
-	// For ChatProvider path: same content format
+	// --- ChatProvider path: same layered format ---
 	var sbChat strings.Builder
-	sbChat.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+	sbChat.WriteString("## Who You Are\n")
+	sbChat.WriteString(identityContent + "\n\n")
 
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
 			budget = 4000
 		}
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(budget)
-		injected, err := builder.BuildCached()
-		if err == nil && injected.FormattedString != "" {
-			sbChat.WriteString("\n" + injected.FormattedString)
+
+		otherContexts := make([]string, 0, len(agentCfg.Context))
+		for _, c := range agentCfg.Context {
+			if c != "soul" && c != "identity" {
+				otherContexts = append(otherContexts, c)
+			}
+		}
+
+		if len(otherContexts) > 0 {
+			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+				WithNamedContexts(otherContexts).
+				WithTokenBudget(budget)
+			injected, err := builder.BuildCached()
+			if err == nil && injected.FormattedString != "" {
+				sbChat.WriteString("## Context\n")
+				sbChat.WriteString(injected.FormattedString + "\n")
+			}
 		}
 	}
 
-	sbChat.WriteString("\n" + postfix + "\n")
+	sbChat.WriteString("\n## How You Respond\n")
+	sbChat.WriteString(postfix + "\n")
 	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
 
 	cc.staticSystemChat = sbChat.String()
 }
 
 // buildPrompt constructs the LLM prompt from session history and injected context.
-// V31: Uses pre-built static system content + dynamic session info + conversation history.
-//   1. Agent identity (role + name)
-//   2. Workspace context (SOUL.md, AGENTS.md, USER.md, etc.) based on agent's `context` config
-//   3. Session awareness (message count, recency, session duration)
-//   4. Conversation postfix (configurable behavior shaping)
-//   5. Conversation history
-func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string) string {
+// V33: Layered prompt assembly with explicit priority labels.
+//   1. Who You Are (identity from SOUL.md/IDENTITY.md)
+//   2. Context (workspace files, excluding identity)
+//   3. How You Respond (conversation postfix)
+//   4. Tools (tool usage guidance)
+//   5. Working State (active task, decisions, blocked items)
+//   6. Active Plan (plan-first pipeline)
+//   7. Channel Context (where, who, what project, how to behave)
+//   8. Session Awareness (message count, age)
+//   9. Conversation History
+func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string, channelRole *orchestrator.ChannelRole) string {
 	var sb strings.Builder
 
 	// Static system content (cached, built once at startup)
+	// Layers 1-4: Identity, Context, Behavior, Tools
 	sb.WriteString(cc.staticSystemText)
 
-	// --- V32: Working state injection ---
-	// Inject active task, decisions, blocked items, and working context
-	// BEFORE state actions and session history. This is how the agent
-	// "wakes up knowing what it was doing" instead of guessing from memory.
+	// --- Layer 5: Working state injection ---
 	if cc.stateMgr != nil {
 		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
 			sb.WriteString("\n" + statePrompt + "\n")
@@ -1133,9 +1192,7 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 		}
 	}
 
-	// V32: Inject active plan into prompt
-	// The guard rail checks if a plan exists before code mutations.
-	// The agent also needs to KNOW what plan is active.
+	// --- Layer 6: Active plan injection ---
 	if cc.planMgr != nil {
 		if plans, err := cc.planMgr.LoadPlans(); err == nil {
 			activePlan := plan.ActivePlan(plans)
@@ -1146,14 +1203,27 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 		}
 	}
 
-	// --- State action injection ---
-	// Resolve the state action for this context (channel role or "agent")
-	// and inject its instructions AFTER the static prompt but BEFORE session history.
-	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
-		sb.WriteString("\n## Context\n")
-		sb.WriteString(sa.Inject)
-		sb.WriteString("\n\n")
-		log.Printf("[STATE] injected state action %q for agent %s", stateActionKey, agentCfg.ID)
+	// --- Layer 7: Channel context injection ---
+	// V33: Structured channel context replaces raw state_actions.inject.
+	// When a ChannelRole has a Context field, use that.
+	// When it doesn't, fall back to state_actions.inject for backward compatibility.
+	if channelRole != nil && channelRole.Context != "" {
+		sb.WriteString("\n## Channel: #" + channelRole.Role + "\n")
+		sb.WriteString(channelRole.Context + "\n\n")
+		// V33: Project scoping — tell the agent which project is relevant
+		if channelRole.Project != "" && channelRole.Project != "none" {
+			sb.WriteString(fmt.Sprintf("When the user asks about \"the project\", they mean %s.\n", channelRole.Project))
+		}
+		log.Printf("[CHANNEL] injected channel context for %q (project=%s, tools=%s, personality=%s)",
+			channelRole.Role, channelRole.Project, channelRole.Tools, channelRole.Personality)
+	} else {
+		// Backward compatibility: fall back to state_actions.inject
+		if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
+			sb.WriteString("\n## Context\n")
+			sb.WriteString(sa.Inject)
+			sb.WriteString("\n\n")
+			log.Printf("[STATE] injected state action %q for agent %s", stateActionKey, agentCfg.ID)
+		}
 	}
 
 	// --- Session awareness (V29) ---

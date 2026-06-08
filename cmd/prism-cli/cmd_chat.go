@@ -475,7 +475,7 @@ func (cc *chatContext) processWithChatProvider(
 	}
 
 	// Build messages from session
-	messages := cc.buildChatMessages(sess, agentCfg, "")	// CLI chat has no channel context
+	messages := cc.buildChatMessages(sess, agentCfg, "", nil)	// CLI chat has no channel context
 	chatTools := cc.buildChatToolDefs()
 
 	log.Printf("[CHAT-CLI] entering native tool loop with %d tools", len(chatTools))
@@ -520,7 +520,7 @@ func (cc *chatContext) processWithTextProvider(
 	run *runtrack.Run,
 ) (string, error) {
 	// Build the full prompt (same as Discord pipeline)
-	prompt := cc.buildChatPrompt(sess, agentCfg, "")	// CLI chat has no channel context
+	prompt := cc.buildChatPrompt(sess, agentCfg, "", nil)	// CLI chat has no channel context
 
 	// Set up NATS for event pipeline (using persistent connection)
 	var natsAdapter *natsPublisherAdapter
@@ -618,73 +618,119 @@ func (cc *chatContext) buildAgentConfigMap() map[string]*orchestrator.AgentConfi
 // This includes agent identity, workspace context, conversation postfix, and tool instructions.
 // It does NOT include dynamic session info (age, message count) which changes per message.
 // Called once at startup. The result is reused for every message in the session.
+// V33: Layered prompt assembly — identity from SOUL.md/IDENTITY.md, not generic config.
 func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConfig) {
 	var sb strings.Builder
 
-	// Agent identity
-	sb.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+	// --- Layer 1: IDENTITY ---
+	// V33: Derive identity from workspace files, fall back to config id/role.
+	identityContent := ""
+	if cc.ctxBuilder != nil {
+		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).WithNamedContexts([]string{"soul", "identity"})
+		injected, err := builder.Build()
+		if err == nil {
+			for _, f := range injected.Files {
+				if f.Name == "soul" && f.Content != "" {
+					identityContent = f.Content
+				}
+			}
+		}
+	}
+	if identityContent == "" {
+		identityContent = fmt.Sprintf("You are %s, a %s assistant.", agentCfg.ID, agentCfg.Role)
+	}
 
-	// Workspace context injection
+	sb.WriteString("## Who You Are\n")
+	sb.WriteString(identityContent + "\n\n")
+
+	// --- Layer 2: WORKSPACE CONTEXT ---
+	// Excluding soul/identity which are already in Layer 1
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
 			budget = 4000
 		}
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(budget)
-		injected, err := builder.BuildCached()
-		if err == nil && injected.FormattedString != "" {
-			sb.WriteString("\n" + injected.FormattedString)
+
+		otherContexts := make([]string, 0, len(agentCfg.Context))
+		for _, c := range agentCfg.Context {
+			if c != "soul" && c != "identity" {
+				otherContexts = append(otherContexts, c)
+			}
+		}
+
+		if len(otherContexts) > 0 {
+			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+				WithNamedContexts(otherContexts).
+				WithTokenBudget(budget)
+			injected, err := builder.BuildCached()
+			if err == nil && injected.FormattedString != "" {
+				sb.WriteString("## Context\n")
+				sb.WriteString(injected.FormattedString + "\n")
+			}
 		}
 	}
 
-	// Conversation postfix
+	// --- Layer 3: BEHAVIOR ---
 	postfix := agentCfg.ConversationPostfix
 	if postfix == "" {
 		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
 			"Don't wrap things up unless the topic is genuinely resolved. " +
 			"Be warm, curious, and engaged — not a transactional Q&A machine."
 	}
-	sb.WriteString("\n" + postfix + "\n")
+	sb.WriteString("## How You Respond\n")
+	sb.WriteString(postfix + "\n\n")
 
-	// Tool instructions (for text path)
+	// --- Layer 4: TOOLS (text path) ---
 	if cc.toolExec != nil {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		if len(toolInfos) > 0 {
-			sb.WriteString("\n" + agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...))
+			sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
+			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...))
 		}
 	}
 
 	cc.staticSystemText = sb.String()
 
-	// For ChatProvider path: same content but with toolUsageGuidance instead of full tool prompt
+	// --- ChatProvider path: same layered format ---
 	var sbChat strings.Builder
-	sbChat.WriteString(fmt.Sprintf("You are %s, a %s assistant.\n", agentCfg.ID, agentCfg.Role))
+	sbChat.WriteString("## Who You Are\n")
+	sbChat.WriteString(identityContent + "\n\n")
 
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
 			budget = 4000
 		}
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-			WithNamedContexts(agentCfg.Context).
-			WithTokenBudget(budget)
-		injected, err := builder.BuildCached()
-		if err == nil && injected.FormattedString != "" {
-			sbChat.WriteString("\n" + injected.FormattedString)
+
+		otherContexts := make([]string, 0, len(agentCfg.Context))
+		for _, c := range agentCfg.Context {
+			if c != "soul" && c != "identity" {
+				otherContexts = append(otherContexts, c)
+			}
+		}
+
+		if len(otherContexts) > 0 {
+			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
+				WithNamedContexts(otherContexts).
+				WithTokenBudget(budget)
+			injected, err := builder.BuildCached()
+			if err == nil && injected.FormattedString != "" {
+				sbChat.WriteString("## Context\n")
+				sbChat.WriteString(injected.FormattedString + "\n")
+			}
 		}
 	}
 
-	sbChat.WriteString("\n" + postfix + "\n")
+	sbChat.WriteString("\n## How You Respond\n")
+	sbChat.WriteString(postfix + "\n")
 	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
 
 	cc.staticSystemChat = sbChat.String()
 }
 
 // buildChatPrompt builds a flat string prompt (for text-based providers).
-// Uses pre-built static system content + dynamic session info + conversation history.
-func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string) string {
+// V33: Layered prompt with channel context support.
+func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string, channelRole *orchestrator.ChannelRole) string {
 	var sb strings.Builder
 
 	// Static system content (cached, built once at startup)
@@ -707,11 +753,20 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 		}
 	}
 
-	// State action injection
-	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
-		sb.WriteString("\n## Context\n")
-		sb.WriteString(sa.Inject)
-		sb.WriteString("\n\n")
+	// V33: Channel context injection
+	if channelRole != nil && channelRole.Context != "" {
+		sb.WriteString("\n## Channel: #" + channelRole.Role + "\n")
+		sb.WriteString(channelRole.Context + "\n\n")
+		if channelRole.Project != "" && channelRole.Project != "none" {
+			sb.WriteString(fmt.Sprintf("When the user asks about \"the project\", they mean %s.\n", channelRole.Project))
+		}
+	} else {
+		// Backward compatibility: fall back to state_actions.inject
+		if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
+			sb.WriteString("\n## Context\n")
+			sb.WriteString(sa.Inject)
+			sb.WriteString("\n\n")
+		}
 	}
 
 	// Dynamic session awareness
@@ -735,7 +790,7 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 }
 
 // buildChatMessages builds structured ChatMessage array (for ChatProvider).
-func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string) []provider.ChatMessage {
+func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string, channelRole *orchestrator.ChannelRole) []provider.ChatMessage {
 	var messages []provider.ChatMessage
 
 	// System message
@@ -760,9 +815,18 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 		}
 	}
 
-	// State action injection
-	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
-		systemContent += "\n## Context\n" + sa.Inject + "\n\n"
+	// V33: Channel context injection
+	if channelRole != nil && channelRole.Context != "" {
+		systemContent += "\n## Channel: #" + channelRole.Role + "\n"
+		systemContent += channelRole.Context + "\n\n"
+		if channelRole.Project != "" && channelRole.Project != "none" {
+			systemContent += fmt.Sprintf("When the user asks about \"the project\", they mean %s.\n", channelRole.Project)
+		}
+	} else {
+		// Backward compatibility: fall back to state_actions.inject
+		if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
+			systemContent += "\n## Context\n" + sa.Inject + "\n\n"
+		}
 	}
 
 	// Dynamic session awareness
