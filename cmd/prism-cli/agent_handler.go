@@ -312,10 +312,13 @@ func isAgentBot(agents []orchestrator.AgentConfig, userID string) bool {
 
 // handlePlanApproval processes "approve P-XXX" or "reject P-XXX" commands from Discord.
 // Returns true if the message was handled (was a plan approval/rejection command).
+//
+// Security: Only users in the configured admin channel (manager-room) can approve/reject plans.
+// The channel role is resolved from config, not from the message content.
 func (cc *conversationContext) handlePlanApproval(msg *discordbot.InboundMessage) bool {
 	trimmed := strings.TrimSpace(msg.Content)
 	parts := strings.Fields(trimmed)
-	if len(parts) != 2 {
+	if len(parts) < 2 {
 		return false
 	}
 
@@ -327,18 +330,30 @@ func (cc *conversationContext) handlePlanApproval(msg *discordbot.InboundMessage
 		return false // Not a plan command
 	}
 
+	// Authorization: plan approval is only allowed in the manager-room channel.
+	// This prevents random users in other channels from approving/rejecting plans.
+	channelRole := cc.cfg.ResolveChannelRole(msg.ChannelID)
+	if channelRole != "manager-room" {
+		log.Printf("[PLAN] WARN: plan approval attempted in non-manager channel %q (role=%q) by %s", msg.ChannelID, channelRole, msg.UserName)
+		return false
+	}
+
 	var resultMsg string
 	switch action {
 	case "approve":
 		if err := cc.planMgr.ApprovePlan(planID, msg.UserName); err != nil {
+			log.Printf("[PLAN] ERROR: failed to approve plan %s: %v", planID, err)
 			resultMsg = fmt.Sprintf("\u274c Could not approve plan %s: %v", planID, err)
 		} else {
+			log.Printf("[PLAN] approved %s by %s", planID, msg.UserName)
 			resultMsg = fmt.Sprintf("\u2705 Plan %s approved by %s. Proceeding with execution.", planID, msg.UserName)
 		}
 	case "reject":
 		if err := cc.planMgr.AbandonPlan(planID); err != nil {
+			log.Printf("[PLAN] ERROR: failed to reject plan %s: %v", planID, err)
 			resultMsg = fmt.Sprintf("\u274c Could not reject plan %s: %v", planID, err)
 		} else {
+			log.Printf("[PLAN] rejected %s by %s", planID, msg.UserName)
 			resultMsg = fmt.Sprintf("\u274c Plan %s rejected by %s. Will not proceed.", planID, msg.UserName)
 		}
 	default:
@@ -351,6 +366,5 @@ func (cc *conversationContext) handlePlanApproval(msg *discordbot.InboundMessage
 			Content:   resultMsg,
 		})
 	}
-	log.Printf("[PLAN] %s %s by %s", action, planID, msg.UserName)
 	return true
 }

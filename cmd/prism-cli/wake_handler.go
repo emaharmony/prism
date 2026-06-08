@@ -30,7 +30,6 @@ import (
 )
 
 // WakeHandler subscribes to scheduler events and triggers LLM inference.
-// WakeHandler subscribes to scheduler events and triggers LLM inference.
 type WakeHandler struct {
 	cfg         *orchestrator.Config
 	providers   *provider.ProviderRegistry
@@ -356,7 +355,9 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 	}
 
 	// V32: After sending result, check for plans that need approval and notify Ema
-	if wh.bot != nil && wh.planMgr != nil {
+	// Only check after improvement-related actions (auto_patch, review_improvements, daily_review)
+	// to avoid unnecessary disk reads on every wake event.
+	if wh.bot != nil && wh.planMgr != nil && (action == "auto_patch" || action == "review_improvements" || action == "daily_review") {
 		wh.notifyPendingApprovals(actionDef.ChannelID)
 	}
 
