@@ -218,7 +218,6 @@ func TestResolveChannelRoleConfig(t *testing.T) {
 			{
 				ID:          "1491622581348864162",
 				Role:        "manager-room",
-				Project:     "prism",
 				Tools:       "all",
 				Personality: "direct",
 				Context:     "You are in #manager-room, a private strategic channel with Ema.",
@@ -226,7 +225,6 @@ func TestResolveChannelRoleConfig(t *testing.T) {
 			{
 				ID:          "1493297644821283067",
 				Role:        "fun",
-				Project:     "none",
 				Tools:       "none",
 				Personality: "bubbly",
 				Context:     "You are in #fun, a casual social channel. NO tools, NO code.",
@@ -239,9 +237,6 @@ func TestResolveChannelRoleConfig(t *testing.T) {
 	if cr == nil {
 		t.Fatal("expected ChannelRole, got nil")
 	}
-	if cr.Project != "prism" {
-		t.Errorf("Project = %q, want prism", cr.Project)
-	}
 	if cr.Tools != "all" {
 		t.Errorf("Tools = %q, want all", cr.Tools)
 	}
@@ -253,9 +248,6 @@ func TestResolveChannelRoleConfig(t *testing.T) {
 	cr2 := cfg.ResolveChannelRoleConfig("1493297644821283067")
 	if cr2 == nil {
 		t.Fatal("expected ChannelRole for fun, got nil")
-	}
-	if cr2.Project != "none" {
-		t.Errorf("Project = %q, want none", cr2.Project)
 	}
 	if cr2.Tools != "none" {
 		t.Errorf("Tools = %q, want none", cr2.Tools)
@@ -281,9 +273,6 @@ func TestResolveChannelRoleConfig(t *testing.T) {
 		t.Errorf("Role = %q, want test", cr4.Role)
 	}
 	// New fields should be empty (backward compatible)
-	if cr4.Project != "" {
-		t.Errorf("Project = %q, want empty", cr4.Project)
-	}
 	if cr4.Tools != "" {
 		t.Errorf("Tools = %q, want empty", cr4.Tools)
 	}

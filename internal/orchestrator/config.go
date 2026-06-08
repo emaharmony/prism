@@ -176,18 +176,15 @@ type SchedulerJobConfig struct {
 
 // ChannelRole maps a Discord channel ID to a role name that determines
 // which state action (if any) applies when the agent is in that channel.
-// V33: Now includes project scoping, tool filtering, personality, and structured context.
+// V33: Includes tool filtering, personality, and structured channel context.
+// Project focus is NOT hardcoded — the agent switches context dynamically
+// based on conversation. The channel provides vibes, not project scope.
 type ChannelRole struct {
 	// ID is the Discord channel ID.
 	ID string `yaml:"id"`
 
 	// Role is the state action key to activate (e.g., "manager-room", "fun").
 	Role string `yaml:"role"`
-
-	// Project is the project this channel is about (e.g., "prism", "bassbook").
-	// When set, the agent knows which project is relevant and scopes responses accordingly.
-	// When empty, no project scoping is applied.
-	Project string `yaml:"project,omitempty"`
 
 	// Tools controls which tools are available in this channel.
 	// "all" = all tools, "read-only" = only read tools, "none" = no tools.
@@ -204,7 +201,7 @@ type ChannelRole struct {
 
 	// Context is structured channel context that replaces state_actions.inject.
 	// It provides rich context about where the agent is, who it's talking to,
-	// what's expected, and what project is relevant.
+	// and what's expected — but NOT which project (that's dynamic).
 	// When empty, falls back to state_actions.inject.
 	Context string `yaml:"context,omitempty"`
 }

@@ -52,10 +52,10 @@ func TestBuildPrompt_WithContextInjection(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg, "")
+	prompt := convCtx.buildPrompt(sess, agentCfg, "", nil)
 
 	// Verify agent identity is in the prompt
-	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
+	if !strings.Contains(prompt, "## Who You Are") {
 		t.Error("prompt should contain agent identity")
 	}
 
@@ -100,10 +100,10 @@ func TestBuildPrompt_WithoutContextInjection(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg, "")
+	prompt := convCtx.buildPrompt(sess, agentCfg, "", nil)
 
 	// Should still have agent identity
-	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
+	if !strings.Contains(prompt, "## Who You Are") {
 		t.Error("prompt should contain agent identity even without context injection")
 	}
 
@@ -126,7 +126,7 @@ func TestBuildPrompt_EmptyContextList(t *testing.T) {
 
 	ctxBuilder := context.NewBuilder(workspace)
 	convCtx := &conversationContext{
-		cfg:       &orchestrator.Config{},
+		cfg:        &orchestrator.Config{},
 		ctxBuilder: ctxBuilder,
 	}
 
@@ -138,18 +138,22 @@ func TestBuildPrompt_EmptyContextList(t *testing.T) {
 	agentCfg := &orchestrator.AgentConfig{
 		ID:      "lumi",
 		Role:    "lead",
-		Context: []string{}, // Empty context list — no injection
+		Context: []string{}, // Empty context list
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg, "")
+	prompt := convCtx.buildPrompt(sess, agentCfg, "", nil)
 
-	// Should have identity but no SOUL.md
-	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
-		t.Error("prompt should contain agent identity")
+	// V33: Identity (SOUL.md) is ALWAYS injected regardless of context list
+	if !strings.Contains(prompt, "## Who You Are") {
+		t.Error("prompt should always contain identity header")
 	}
-	if strings.Contains(prompt, "soul content") {
-		t.Error("prompt should not inject context when context list is empty")
+	if !strings.Contains(prompt, "soul content") {
+		t.Error("prompt should contain SOUL.md content as identity")
+	}
+	// Other context files should NOT be injected when context list is empty
+	if strings.Contains(prompt, "## Context") {
+		t.Error("prompt should not inject context section when context list is empty")
 	}
 }
 
@@ -175,10 +179,10 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 	}
 
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg, "")
+	prompt := convCtx.buildPrompt(sess, agentCfg, "", nil)
 
 	// Should still work — missing files are skipped gracefully
-	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
+	if !strings.Contains(prompt, "## Who You Are") {
 		t.Error("prompt should contain agent identity even with missing workspace files")
 	}
 }
@@ -365,9 +369,9 @@ func TestBuildPrompt_ConfigurableTokenBudget(t *testing.T) {
 
 	sess := &session.Session{ID: "test", Messages: []session.Message{}}
 	convCtx.rebuildStaticSystemContent(agentCfg)
-	prompt := convCtx.buildPrompt(sess, agentCfg, "")
+	prompt := convCtx.buildPrompt(sess, agentCfg, "", nil)
 
-	if !strings.Contains(prompt, "You are lumi, a lead assistant") {
+	if !strings.Contains(prompt, "## Who You Are") {
 		t.Error("prompt should contain agent identity")
 	}
 	// SOUL.md should be present (priority 100, never truncated)
