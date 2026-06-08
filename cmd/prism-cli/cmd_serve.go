@@ -718,13 +718,26 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// P-008: Evaluate tool relevance gate BEFORE building the prompt
 	// This determines whether to include tools in the LLM request
 	toolNames := cc.toolExec.Registry.List()
-	gateResult := cc.toolGate.Evaluate(msg.Content, toolNames)
-	log.Printf("[TOOL-GATE] decision=%d reason=%q tools=%v", gateResult.Decision, gateResult.Reason, gateResult.ToolFilter)
+
+	// V33: Channel tool filtering — some channels restrict tools
+	var gateResult *stage.GateResult
+	channelRoleConfig := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
+	if channelRoleConfig != nil && channelRoleConfig.Tools == "none" {
+		// Fun channel: no tools at all. The agent is purely conversational.
+		log.Printf("[TOOL-CHANNEL] tools excluded by channel role %q", channelRoleConfig.Role)
+		gateResult = &stage.GateResult{Decision: stage.ToolDecisionExclude, Reason: "channel role excludes all tools"}
+	} else {
+		evalResult := cc.toolGate.Evaluate(msg.Content, toolNames)
+		gateResult = &evalResult
+		log.Printf("[TOOL-GATE] decision=%d reason=%q tools=%v", gateResult.Decision, gateResult.Reason, gateResult.ToolFilter)
+	}
 
 	// Step 7c: Append tool instructions to prompt so the LLM knows it has tools
 	// Skip tool instructions if the gate excluded tools for this message
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		// V33: Filter tools based on channel role (read-only channels get limited tools)
+		toolInfos = filterToolInfosByChannelRole(toolInfos, channelRoleConfig)
 		if len(toolInfos) > 0 {
 			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...)
 		}
@@ -811,6 +824,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			// Build messages array and tools list
 			messages := cc.buildMessages(sess, agentCfg)
 			chatTools := cc.buildChatTools()
+
+			// V33: Filter tools based on channel role (none, read-only, all)
+			chatTools = filterChatToolsByChannelRole(chatTools, channelRoleConfig)
 
 			// P-008: Filter tools based on gate result
 			if gateResult.Decision == stage.ToolDecisionSubset && len(gateResult.ToolFilter) > 0 {
@@ -1399,6 +1415,27 @@ func primaryName(cfg *orchestrator.Config) string {
 	return p.ID
 }
 
+// filterToolInfosByChannelRole filters ToolInfo slices based on channel role configuration.
+func filterToolInfosByChannelRole(toolInfos []tool.ToolInfo, channelRole *orchestrator.ChannelRole) []tool.ToolInfo {
+	if channelRole == nil {
+		return toolInfos
+	}
+	switch channelRole.Tools {
+	case "none":
+		return nil
+	case "read-only":
+		var filtered []tool.ToolInfo
+		for _, t := range toolInfos {
+			if readOnlyTools[t.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		return filtered
+	default:
+		return toolInfos
+	}
+}
+
 // remembranceTimeout returns the configured Remembrance timeout duration,
 // falling back to the default if not set.
 func remembranceTimeout(cfg *orchestrator.Config) time.Duration {
@@ -1422,4 +1459,39 @@ func filterChatTools(tools []provider.ChatTool, filter []string) []provider.Chat
 		}
 	}
 	return filtered
+}
+
+// readOnlyTools is the set of tool names that are safe for read-only channels.
+var readOnlyTools = map[string]bool{
+	"read_project":    true,
+	"search_files":    true,
+	"project_overview": true,
+	"git_status":      true,
+	"git_log":         true,
+	"git_diff":        true,
+	"git_branch_list": true,
+	"plan_list":       true,
+	"state_get":       true,
+}
+
+// filterChatToolsByChannelRole filters tools based on channel role configuration.
+// "none" → empty list (no tools), "read-only" → only read tools, "" or "all" → all tools.
+func filterChatToolsByChannelRole(tools []provider.ChatTool, channelRole *orchestrator.ChannelRole) []provider.ChatTool {
+	if channelRole == nil {
+		return tools
+	}
+	switch channelRole.Tools {
+	case "none":
+		return nil
+	case "read-only":
+		var filtered []provider.ChatTool
+		for _, t := range tools {
+			if readOnlyTools[t.Function.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		return filtered
+	default: // "all" or empty
+		return tools
+	}
 }
