@@ -257,18 +257,22 @@ func executeServe(args []string) {
 
 	var discordBots []*discordbot.BotAdapter
 
+	// V32: State manager and context builder — shared across all channels
+	var stateMgr *state.Manager
+	var ctxBuildr *context.Builder
+
 	for _, ch := range cfg.Channels {
 		switch ch.Type {
 		case "discord":
 			bot := discordbot.NewBotAdapter(ch.Token)
 
 			// V21: Build workspace context injection
-			var ctxBuilder *context.Builder
+			ctxBuildr = nil
 			if cfg.Prism.Workspace != "" {
-				ctxBuilder = context.NewBuilder(cfg.Prism.Workspace)
+				ctxBuildr = context.NewBuilder(cfg.Prism.Workspace)
 			} else {
 				// Default: use home directory + .openclaw/workspace
-				ctxBuilder = context.NewBuilder(filepath.Join(os.Getenv("HOME"), ".openclaw", "workspace"))
+				ctxBuildr = context.NewBuilder(filepath.Join(os.Getenv("HOME"), ".openclaw", "workspace"))
 			}
 
 			// V21: Create Remembrance client if enabled
@@ -338,7 +342,7 @@ func executeServe(args []string) {
 		toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 		toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 		// V32: State management tools
-		stateMgr := state.NewManager(workspaceRoot)
+		stateMgr = state.NewManager(workspaceRoot)
 		stateMgr.EnsureDir()
 		tool.RegisterStateTools(toolReg, stateMgr)
 
@@ -358,7 +362,7 @@ func executeServe(args []string) {
 				debounce:    msgDebounce,
 				eventLog:    eventLog,
 				cancelReg:   cancelReg,
-				ctxBuilder:  ctxBuilder,
+				ctxBuilder:  ctxBuildr,
 				natsConn:    natsConn,
 				natsURL:     natsURL,
 				actionReg:   actionReg,
@@ -462,6 +466,25 @@ func executeServe(args []string) {
 		}
 		sched.StartInBackground()
 		log.Printf("[SCHEDULER] started with %d job(s)", len(cfg.Prism.Scheduler.Jobs))
+	}
+
+	// V32: Start wake handler to process scheduler events
+	// Uses the first Discord bot as the notification channel
+	if cfg.Prism.Scheduler.Enabled && len(discordBots) > 0 && natsConn != nil {
+		wakeHandler := NewWakeHandler(
+			cfg,
+			provReg,
+			sessMgr,
+			stateMgr,
+			natsConn,
+			discordBots[0], // use first bot for notifications
+			ctxBuildr,
+		)
+		if err := wakeHandler.Start(); err != nil {
+			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
+		} else {
+			log.Printf("[WAKE] handler started, listening for scheduled events")
+		}
 	}
 
 	// 12. Wait for shutdown signal
