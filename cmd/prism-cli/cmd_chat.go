@@ -757,9 +757,6 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 	if channelRole != nil && channelRole.Context != "" {
 		sb.WriteString("\n## Channel: #" + channelRole.Role + "\n")
 		sb.WriteString(channelRole.Context + "\n\n")
-		if channelRole.Project != "" && channelRole.Project != "none" {
-			sb.WriteString(fmt.Sprintf("When the user asks about \"the project\", they mean %s.\n", channelRole.Project))
-		}
 	} else {
 		// Backward compatibility: fall back to state_actions.inject
 		if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
@@ -819,9 +816,6 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 	if channelRole != nil && channelRole.Context != "" {
 		systemContent += "\n## Channel: #" + channelRole.Role + "\n"
 		systemContent += channelRole.Context + "\n\n"
-		if channelRole.Project != "" && channelRole.Project != "none" {
-			systemContent += fmt.Sprintf("When the user asks about \"the project\", they mean %s.\n", channelRole.Project)
-		}
 	} else {
 		// Backward compatibility: fall back to state_actions.inject
 		if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {

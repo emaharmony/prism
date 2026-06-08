@@ -1210,12 +1210,8 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	if channelRole != nil && channelRole.Context != "" {
 		sb.WriteString("\n## Channel: #" + channelRole.Role + "\n")
 		sb.WriteString(channelRole.Context + "\n\n")
-		// V33: Project scoping — tell the agent which project is relevant
-		if channelRole.Project != "" && channelRole.Project != "none" {
-			sb.WriteString(fmt.Sprintf("When the user asks about \"the project\", they mean %s.\n", channelRole.Project))
-		}
-		log.Printf("[CHANNEL] injected channel context for %q (project=%s, tools=%s, personality=%s)",
-			channelRole.Role, channelRole.Project, channelRole.Tools, channelRole.Personality)
+		log.Printf("[CHANNEL] injected channel context for %q (tools=%s, personality=%s)",
+			channelRole.Role, channelRole.Tools, channelRole.Personality)
 	} else {
 		// Backward compatibility: fall back to state_actions.inject
 		if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
