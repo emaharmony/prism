@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emaharmony/prism/internal/guard"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/session"
@@ -210,6 +211,19 @@ func (cc *conversationContext) executeChatTool(
 	tc provider.ToolCall,
 	agentCfg *orchestrator.AgentConfig,
 ) (string, toolCallSummary) {
+	// V32: Guard rail — check if plan exists for code mutations
+	if cc.guardian != nil {
+		guardResult := cc.guardian.CheckToolExecution(tc.Function.Name, tc.Function.Arguments)
+		if guardResult.Decision == guard.Block {
+			return guardResult.Reason, toolCallSummary{
+				Tool:   tc.Function.Name,
+				Input:  tc.Function.Arguments,
+				Status: "blocked_by_guard",
+				Error:  guardResult.Reason,
+			}
+		}
+	}
+
 	// Execute the tool via the registry
 	result, execErr := cc.toolExec.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
 

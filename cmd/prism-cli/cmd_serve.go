@@ -46,7 +46,10 @@ import (
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/debounce"
+	"github.com/emaharmony/prism/internal/guard"
+	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/plan"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/anthropic"
 	"github.com/emaharmony/prism/internal/provider/gemini"
@@ -110,6 +113,8 @@ type conversationContext struct {
 	taskStore   *task.Store           // V22: Task store for delegation tracking
 	toolExec    *tool.Executor        // V27: Tool executor for file system access
 	stateMgr    *state.Manager        // V32: Working state manager for adaptive context
+	planMgr     *plan.Manager         // V32: Plan manager for plan-first pipeline
+	guardian    *guard.Guard         // V32: Guard rail for plan enforcement
 	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
 	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
 	toolGate   *stage.ToolRelevanceGate // P-008: Tool relevance gate
@@ -257,9 +262,10 @@ func executeServe(args []string) {
 
 	var discordBots []*discordbot.BotAdapter
 
-	// V32: State manager and context builder — shared across all channels
+	// V32: State manager, context builder, and plan manager — shared across all channels
 	var stateMgr *state.Manager
 	var ctxBuildr *context.Builder
+	var planMgr *plan.Manager
 
 	for _, ch := range cfg.Channels {
 		switch ch.Type {
@@ -346,6 +352,18 @@ func executeServe(args []string) {
 		stateMgr.EnsureDir()
 		tool.RegisterStateTools(toolReg, stateMgr)
 
+		// V32: Plan-First Pipeline tools
+		planMgr = plan.NewManager(workspaceRoot)
+		planMgr.EnsureDir()
+		tool.RegisterPlanTools(toolReg, planMgr)
+
+		// V32: Self-Improvement Loop
+		improveMgr := improve.NewManager(workspaceRoot)
+		improveMgr.EnsureDir()
+
+		// V32: Guard rail (plan-first enforcement)
+		guardian := guard.NewGuard(planMgr, ctxBuildr)
+
 		toolPolicy := tool.DefaultPolicyConfig()
 		// Mutation operations require approval
 		toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
@@ -381,6 +399,8 @@ func executeServe(args []string) {
 				),
 				toolGate: stage.NewToolRelevanceGate(true), // P-008: enabled by default
 				stateMgr: stateMgr, // V32: shared state manager (same instance as tools)
+				planMgr:  planMgr,  // V32: plan manager
+				guardian: guardian, // V32: guard rail
 			}
 
 			// Pre-build static system content for all agents
@@ -1110,6 +1130,19 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
 			sb.WriteString("\n" + statePrompt + "\n")
 			log.Printf("[STATE] injected working state into prompt")
+		}
+	}
+
+	// V32: Inject active plan into prompt
+	// The guard rail checks if a plan exists before code mutations.
+	// The agent also needs to KNOW what plan is active.
+	if cc.planMgr != nil {
+		if plans, err := cc.planMgr.LoadPlans(); err == nil {
+			activePlan := plan.ActivePlan(plans)
+			if activePlan != nil {
+				sb.WriteString("\n" + plan.FormatPlanForPrompt(activePlan) + "\n")
+				log.Printf("[PLAN] injected active plan %s into prompt", activePlan.ID)
+			}
 		}
 	}
 

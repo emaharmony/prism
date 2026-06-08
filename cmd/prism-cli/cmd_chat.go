@@ -36,7 +36,9 @@ import (
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/delegation"
+	"github.com/emaharmony/prism/internal/guard"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/plan"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
@@ -69,6 +71,8 @@ type chatContext struct {
 	natsCleanup  func()                // Cleanup for embedded NATS
 	rateLimiter  *chatRateLimit        // Per-message rate limiting for CLI
 	stateMgr     *state.Manager         // V32: Working state manager for adaptive context
+	planMgr      *plan.Manager          // V32: Plan manager for plan-first pipeline
+	guardian     *guard.Guard           // V32: Guard rail for plan enforcement
 
 	// Cached static system content — built once, reused every message.
 	// Includes: agent identity, workspace context, postfix, tool instructions.
@@ -225,6 +229,8 @@ func executeChat(args []string) {
 	chatStateMgr.EnsureDir()
 	tool.RegisterStateTools(registry, chatStateMgr)
 
+	// V32: Plan-First Pipeline tools (guard created after ctxBuilder)
+
 	toolPolicy := tool.DefaultPolicyConfig()
 	toolPolicy.MaxFileSize = 10 * 1024 * 1024
 	toolPolicy.WorkspaceRoot = workspaceRoot
@@ -241,6 +247,15 @@ func executeChat(args []string) {
 
 	// 8. Set up action registry (empty for chat mode)
 	actionReg := action.NewRegistry()
+
+	// V32: Plan-First Pipeline tools and guard
+	chatPlanMgr := plan.NewManager(workspaceRoot)
+	chatPlanMgr.EnsureDir()
+	tool.RegisterPlanTools(registry, chatPlanMgr)
+	var chatGuardian *guard.Guard
+	if ctxBuilder != nil {
+		chatGuardian = guard.NewGuard(chatPlanMgr, ctxBuilder)
+	}
 
 	// 9. Set up task store and delegation engine
 	var taskStore *task.Store
@@ -271,6 +286,8 @@ func executeChat(args []string) {
 		natsCleanup:  natsCleanup,
 		rateLimiter: &chatRateLimit{minDelay: 500 * time.Millisecond}, // 2 msg/s max
 		stateMgr:    chatStateMgr,
+		planMgr:     chatPlanMgr,
+		guardian:    chatGuardian,
 	}
 
 	// 10.5. Pre-build static system content (only needs to be done once)
@@ -680,6 +697,16 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 		}
 	}
 
+	// V32: Inject active plan into prompt
+	if cc.planMgr != nil {
+		if plans, err := cc.planMgr.LoadPlans(); err == nil {
+			activePlan := plan.ActivePlan(plans)
+			if activePlan != nil {
+				sb.WriteString("\n" + plan.FormatPlanForPrompt(activePlan) + "\n")
+			}
+		}
+	}
+
 	// State action injection
 	if sa := cc.cfg.ResolveStateAction(agentCfg.ID, stateActionKey); sa != nil && sa.Inject != "" {
 		sb.WriteString("\n## Context\n")
@@ -720,6 +747,16 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 	if cc.stateMgr != nil {
 		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
 			systemContent += "\n" + statePrompt + "\n"
+		}
+	}
+
+	// V32: Inject active plan into prompt
+	if cc.planMgr != nil {
+		if plans, err := cc.planMgr.LoadPlans(); err == nil {
+			activePlan := plan.ActivePlan(plans)
+			if activePlan != nil {
+				systemContent += "\n" + plan.FormatPlanForPrompt(activePlan) + "\n"
+			}
 		}
 	}
 
