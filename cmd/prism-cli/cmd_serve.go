@@ -56,6 +56,7 @@ import (
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/scheduler"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/safety"
 	"github.com/emaharmony/prism/internal/state"
@@ -440,6 +441,27 @@ func executeServe(args []string) {
 	// 11. Start dream cycle scheduler (3AM nightly + event-triggered)
 	if remClient != nil {
 		go startDreamScheduler(remClient)
+	}
+
+	// V32: Start cron-style task scheduler if configured
+	if cfg.Prism.Scheduler.Enabled {
+		sched := scheduler.NewScheduler(&natsPublisherAdapter{conn: natsConn})
+		for _, jobCfg := range cfg.Prism.Scheduler.Jobs {
+			schedule, err := scheduler.ParseCron(jobCfg.Schedule)
+			if err != nil {
+				log.Printf("[SCHEDULER] ERROR parsing cron for job %q: %v", jobCfg.Name, err)
+				continue
+			}
+			sched.AddJob(&scheduler.Job{
+				Name:     jobCfg.Name,
+				Schedule: schedule,
+				Event:    jobCfg.Event,
+				Payload:  jobCfg.Payload,
+				Enabled:  jobCfg.Enabled,
+			})
+		}
+		go sched.Start()
+		log.Printf("[SCHEDULER] started with %d job(s)", len(cfg.Prism.Scheduler.Jobs))
 	}
 
 	// 12. Wait for shutdown signal
