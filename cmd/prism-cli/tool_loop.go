@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/guard"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/tool"
@@ -184,6 +185,17 @@ func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.Age
 
 	if policyResult.Decision == tool.PolicyRequiresApproval {
 		return tool.ToolResult{}, true, nil // approval needed
+	}
+
+	// V32: Guard rail — check if plan exists for code mutations
+	if cc.guardian != nil {
+		guardResult := cc.guardian.CheckToolExecution(parsed.ToolName, parsed.ToolInput)
+		if guardResult.Decision == guard.Block {
+			return tool.ToolResult{
+				Success: false,
+				Error:   guardResult.Reason,
+			}, false, nil
+		}
 	}
 
 	// Execute the tool
