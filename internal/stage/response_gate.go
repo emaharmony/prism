@@ -68,8 +68,9 @@ var lowSignalMessages = map[string]bool{
 }
 
 // ShouldRespond decides whether a message warrants a response.
-// channelRole is the channel's role name (e.g., "manager-room", "build-room", "fun").
-// It returns one of: RespondFully, RespondLightly, or Skip.
+// channelRole MUST be a role name (e.g., "manager-room", "build-room", "fun"),
+// NOT a channel ID. Passing a channel ID will cause the gate to treat it as
+// an unknown channel and apply heuristics, potentially skipping important messages.
 func ShouldRespond(message, channelRole string) ResponseDecision {
 	trimmed := strings.TrimSpace(message)
 
@@ -141,6 +142,7 @@ func containsQuestion(s string) bool {
 }
 
 // containsTechIntent checks if a message seems to be about technical work.
+// Includes short command words that signal intent even at ≤4 chars.
 func containsTechIntent(s string) bool {
 	lower := strings.ToLower(s)
 	techWords := []string{
@@ -149,6 +151,9 @@ func containsTechIntent(s string) bool {
 		"pr", "merge", "commit", "branch", "repo", "project",
 		"api", "server", "client", "database", "config", "log",
 		"feature", "refactor", "implement", "debug", "review",
+		// Short command words that signal tech intent even at ≤4 chars
+		"new", "add", "run", "set", "get", "put", "del",
+		"git", "ssh", "npm", "pip", "go",
 	}
 	for _, w := range techWords {
 		if strings.Contains(lower, w) {

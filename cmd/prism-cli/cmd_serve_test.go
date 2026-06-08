@@ -512,3 +512,57 @@ func TestRemembranceTimeout_Negative(t *testing.T) {
 		t.Errorf("expected default %v for negative, got %v", remembrance.DefaultTimeout, got)
 	}
 }
+
+func TestBuildPrompt_WithChannelRole(t *testing.T) {
+	workspace := t.TempDir()
+	soulContent := "# SOUL\nYou are Lumi. Be warm, playful, and confident."
+	if err := os.WriteFile(filepath.Join(workspace, "SOUL.md"), []byte(soulContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctxBuilder := context.NewBuilder(workspace)
+	convCtx := &conversationContext{
+		cfg: &orchestrator.Config{
+			Agents: []orchestrator.AgentConfig{
+				{ID: "lumi", Role: "lead", Context: []string{"soul", "user"}},
+			},
+			ChannelRoles: []orchestrator.ChannelRole{
+				{ID: "123", Role: "manager-room", Tools: "all", Personality: "direct", Context: "You are in #manager-room."},
+			},
+		},
+		ctxBuilder: ctxBuilder,
+	}
+
+	sess := &session.Session{ID: "test", Messages: []session.Message{}}
+	agentCfg := &orchestrator.AgentConfig{ID: "lumi", Role: "lead", Context: []string{"soul", "user"}}
+
+	convCtx.rebuildStaticSystemContent(agentCfg)
+
+	// Test with a real channel role config
+	channelRole := &orchestrator.ChannelRole{
+		Role:        "manager-room",
+		Tools:       "all",
+		Personality: "direct",
+		Context:     "You are in #manager-room, a private strategic channel.",
+	}
+	prompt := convCtx.buildPrompt(sess, agentCfg, "manager-room", channelRole)
+
+	if !strings.Contains(prompt, "## Who You Are") {
+		t.Error("prompt should contain identity header")
+	}
+	if !strings.Contains(prompt, "## Channel: #manager-room") {
+		t.Error("prompt should contain channel context header")
+	}
+	if !strings.Contains(prompt, "You are in #manager-room, a private strategic channel.") {
+		t.Error("prompt should contain channel context text")
+	}
+
+	// Test with no channel role (nil) — should not crash and should not contain channel section
+	promptNoRole := convCtx.buildPrompt(sess, agentCfg, "", nil)
+	if !strings.Contains(promptNoRole, "## Who You Are") {
+		t.Error("prompt without channel role should still contain identity")
+	}
+	if strings.Contains(promptNoRole, "## Channel:") {
+		t.Error("prompt without channel role should not contain channel section")
+	}
+}
