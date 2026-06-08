@@ -602,6 +602,23 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 2: Route the sanitized message to the appropriate agent
 	result := cc.router.Route(sanitizedContent)
 
+	// Step 2b: Response gate — skip low-signal messages that don't warrant a full LLM call
+	// Manager-room and build-room always respond. Fun channel always responds.
+	gateRole := cc.cfg.ResolveChannelRole(msg.ChannelID)
+	gateDecision := stage.ShouldRespond(sanitizedContent, gateRole)
+	if gateDecision == stage.Skip {
+		log.Printf("[GATE] skipping low-signal message from %s in %s", msg.UserName, gateRole)
+		return
+	}
+	if gateDecision == stage.RespondLightly {
+		log.Printf("[GATE] light acknowledgment for message from %s in %s", msg.UserName, gateRole)
+		cc.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: msg.ChannelID,
+			Content:   "👍",
+		})
+		return
+	}
+
 	// Step 3: Find or create a session (handler-level)
 	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
 	if err != nil {
