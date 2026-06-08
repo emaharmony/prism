@@ -59,6 +59,7 @@ type Scheduler struct {
 	publisher NatsPublisher
 	mu        sync.RWMutex
 	stopCh    chan struct{}
+	wg        sync.WaitGroup // tracks in-flight fireJob goroutines
 	running   bool
 }
 
@@ -88,7 +89,7 @@ func (s *Scheduler) AddJob(job *Job) error {
 }
 
 // Start begins the scheduler loop. It checks jobs every minute.
-// This is a blocking call — run it in a goroutine.
+// This is a blocking call — run it in a goroutine or use StartInBackground.
 func (s *Scheduler) Start() {
 	s.mu.Lock()
 	if s.running {
@@ -127,15 +128,25 @@ func (s *Scheduler) Start() {
 	}
 }
 
-// Stop gracefully stops the scheduler.
+// Stop gracefully stops the scheduler and waits for in-flight jobs to complete.
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.running {
 		s.running = false
 		close(s.stopCh)
 	}
+	s.mu.Unlock()
+
+	// Wait for all in-flight fireJob goroutines to finish.
+	// This prevents log errors from publishing after shutdown.
+	s.wg.Wait()
+	log.Printf("[SCHEDULER] all in-flight jobs completed")
+}
+
+// StartInBackground starts the scheduler in a goroutine.
+// This is a convenience method for the common pattern: go sched.Start().
+func (s *Scheduler) StartInBackground() {
+	go s.Start()
 }
 
 // Jobs returns a copy of the current job list.
@@ -159,7 +170,11 @@ func (s *Scheduler) checkAndFire(t time.Time) {
 			continue
 		}
 		if matchesSchedule(job.Schedule, t) {
-			go s.fireJob(job)
+			s.wg.Add(1)
+			go func(j *Job) {
+				defer s.wg.Done()
+				s.fireJob(j)
+			}(job)
 		}
 	}
 }

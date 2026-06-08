@@ -460,7 +460,7 @@ func executeServe(args []string) {
 				Enabled:  jobCfg.Enabled,
 			})
 		}
-		go sched.Start()
+		sched.StartInBackground()
 		log.Printf("[SCHEDULER] started with %d job(s)", len(cfg.Prism.Scheduler.Jobs))
 	}
 
