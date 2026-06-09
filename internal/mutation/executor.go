@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/emaharmony/prism/internal/approval"
+	"github.com/emaharmony/prism/internal/safety"
 )
 
 // MaxContentSize is the maximum allowed content size (1MB).
@@ -75,13 +76,13 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	// 2. Status check: must be pending (we'll approve first) or already approved
 	if a.Status != approval.StatusPending && a.Status != approval.StatusApproved {
 		e.emitEvent("prism.mutation.failed", map[string]any{
-			"approval_id":    approvalID,
-			"run_id":         runID,
-			"mutation_type":  a.MutationType,
-			"target_path":    a.TargetPath,
-			"correlation_id": a.CorrelationID,
+			"approval_id":     approvalID,
+			"run_id":          runID,
+			"mutation_type":   a.MutationType,
+			"target_path":     a.TargetPath,
+			"correlation_id":  a.CorrelationID,
 			"approval_status": a.Status,
-			"error":          fmt.Sprintf("approval status is %q, not pending or approved", a.Status),
+			"error":           fmt.Sprintf("approval status is %q, not pending or approved", a.Status),
 		})
 		return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: fmt.Sprintf("approval status is %q", a.Status)}, nil
 	}
@@ -104,8 +105,8 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	if a.Status == approval.StatusPending {
 		if err := a.Approve(approvedBy); err != nil {
 			e.emitEvent("prism.mutation.failed", map[string]any{
-				"approval_id":    approvalID,
-				"error":          "failed to approve: " + err.Error(),
+				"approval_id": approvalID,
+				"error":       "failed to approve: " + err.Error(),
 			})
 			return &MutationResult{Success: false, ApprovalID: approvalID, Message: "failed to approve"}, nil
 		}
@@ -117,14 +118,14 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 
 	// 5. Emit approval.granted
 	e.emitEvent("prism.approval.granted", map[string]any{
-		"approval_id":    approvalID,
-		"run_id":         runID,
-		"mutation_type":  a.MutationType,
-		"target_path":    a.TargetPath,
-		"correlation_id": a.CorrelationID,
-		"approved_by":    approvedBy,
+		"approval_id":     approvalID,
+		"run_id":          runID,
+		"mutation_type":   a.MutationType,
+		"target_path":     a.TargetPath,
+		"correlation_id":  a.CorrelationID,
+		"approved_by":     approvedBy,
 		"policy_decision": a.Policy.Decision,
-		"policy_reason":  a.Policy.Reason,
+		"policy_reason":   a.Policy.Reason,
 	})
 
 	// 6. Emit mutation.validated
@@ -195,7 +196,7 @@ func (e *Executor) validateSafety(a *approval.Approval) error {
 	}
 
 	// Check: no absolute paths
-	if filepath.IsAbs(a.TargetPath) {
+	if safety.IsAbsolutePath(a.TargetPath) {
 		return fmt.Errorf("absolute paths are not allowed: %q", a.TargetPath)
 	}
 
@@ -275,13 +276,13 @@ func (e *Executor) DenyApproval(runID, approvalID, deniedBy, reason string) erro
 	}
 
 	e.emitEvent("prism.approval.denied", map[string]any{
-		"approval_id":    approvalID,
-		"run_id":         runID,
-		"mutation_type":  a.MutationType,
-		"target_path":    a.TargetPath,
-		"correlation_id": a.CorrelationID,
-		"denied_by":      deniedBy,
-		"denial_reason":  reason,
+		"approval_id":     approvalID,
+		"run_id":          runID,
+		"mutation_type":   a.MutationType,
+		"target_path":     a.TargetPath,
+		"correlation_id":  a.CorrelationID,
+		"denied_by":       deniedBy,
+		"denial_reason":   reason,
 		"policy_decision": a.Policy.Decision,
 	})
 

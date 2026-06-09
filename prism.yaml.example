@@ -9,8 +9,11 @@
 #   If no ID is provided, auto-generated as prism1, prism2, etc.
 
 prism:
+  # Instance name used by signed cross-Prism messages.
+  instance_id: "astraea-manager"
   # NATS bus URL. Empty = embedded NATS server.
-  nats_url: ""
+  # For two-Prism mode, point both environments at the Windows broker.
+  nats_url: "nats://127.0.0.1:4222"
   # Data directory for SQLite databases and run artifacts.
   data_dir: "~/.prism/data"
   # Workspace root for context injection (SOUL.md, AGENTS.md, USER.md, etc.)
@@ -23,9 +26,32 @@ prism:
   # Log level: debug, info, warn, error
   log_level: "info"
 
+bridge:
+  # Set true after PRISM_BRIDGE_SECRET is configured on both Prism environments.
+  enabled: false
+  mode: "shared_nats"
+  secret_env: "PRISM_BRIDGE_SECRET"
+  allowed_subjects:
+    - "prism.cross.context_sync"
+    - "prism.cross.task_request"
+    - "prism.cross.status_request"
+    - "prism.cross.validation_request"
+    - "prism.cross.task_response"
+  factory:
+    enabled: true
+    root: "D:/_projects_/roblox-factory"
+    project: "eggventura"
+    project_path: "D:/Projects/Roblox/eggventura"
+    approval_mode: "report_only"
+    run_codex: false
+    vision_review: "none"
+    playtest_mode: "none"
+    enable_ui_generation: false
+    ui_generation_dry_run: true
+
 agents:
-  - id: lumi
-    role: lead
+  - id: astraea
+    role: orchestrator
     provider: ollama
     model: "llama3.2"
     primary: true
@@ -37,12 +63,18 @@ agents:
       - plan
       - route
       - review
+      - validate
       - report
+    state_actions:
+      manager-room:
+        inject: "Act as the Windows-side Prism manager. Prefer explicit status, bridge health, and Factory validation handoff."
+      build-room:
+        inject: "Focus on Roblox Factory coordination. Keep work report-only unless implementation is explicitly approved."
     # V22: Subscribe to other agents' task events
     # subscriptions:
     #   - "mango.task.completed"  # Receive Mango's results
 
-  - id: mango
+  - id: forge
     role: coder
     provider: ollama
     model: "llama3.2"
@@ -56,12 +88,36 @@ agents:
     # subscriptions:
     #   - "mango.task.created"  # Receive tasks from Lumi
 
+  # Optional API-backed model. Requires OPENAI_API_KEY and API billing.
+  # ChatGPT web subscriptions and API billing are separate.
+  # - id: openai-reviewer
+  #   role: reviewer
+  #   provider: openai_responses
+  #   model: "gpt-5.1"
+  #   context:
+  #     - agents
+  #   capabilities:
+  #     - review
+  #     - summarize
+
 channels:
   - type: discord
     token: "${DISCORD_BOT_TOKEN}"
     channels:
       - "general"
       - "dev"
+
+channel_roles:
+  - id: "general"
+    role: "manager-room"
+    tools: "read-only"
+    personality: "direct"
+    context: "Coordination room for cross-Prism status, task triage, and manager-level decisions."
+  - id: "dev"
+    role: "build-room"
+    tools: "all"
+    personality: "terse"
+    context: "Roblox Factory build and validation room. Prefer concrete task handoff, smoke checks, and artifact paths."
 
 actions:
   # Save agent output to memory

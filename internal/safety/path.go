@@ -12,6 +12,7 @@ package safety
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -57,7 +58,14 @@ func IsWithinRoot(absPath, absRoot string) bool {
 	if err != nil {
 		return false
 	}
-	return !strings.HasPrefix(rel, "..") && rel != ".."
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// IsAbsolutePath treats platform-native and POSIX-style absolute paths as
+// absolute. On Windows, filepath.IsAbs("/etc/passwd") is false, but model/tool
+// inputs often use POSIX absolute paths regardless of host OS.
+func IsAbsolutePath(p string) bool {
+	return filepath.IsAbs(p) || path.IsAbs(strings.ReplaceAll(p, "\\", "/"))
 }
 
 // resolveNonExistentPath walks up from absPath until it finds an existing
@@ -107,7 +115,7 @@ func ResolveAndContain(root, relPath string) (string, error) {
 	}
 
 	// Block absolute paths — they must be relative to root
-	if filepath.IsAbs(relPath) {
+	if IsAbsolutePath(relPath) {
 		return "", fmt.Errorf("safety: absolute path not allowed: %q", relPath)
 	}
 
@@ -155,7 +163,7 @@ func ResolveAndContainMulti(roots []string, relPath string) (string, error) {
 	}
 
 	var absPath string
-	if filepath.IsAbs(relPath) {
+	if IsAbsolutePath(relPath) {
 		// Absolute path — check against all roots directly
 		absPath = filepath.Clean(relPath)
 	} else {

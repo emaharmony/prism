@@ -13,10 +13,11 @@
 // the model is compromised.
 //
 // Current policies (V4):
-//   echo, list_dir, read_file → allowed (read-only, no risk)
-//   write_file_dry_run → allowed (preview only, writes nothing)
-//   write_file_proposal → requires_approval (creates a pending approval, human must approve)
-//   write_file (direct, no proposal) → denied (bypassing approval is never allowed)
+//
+//	echo, list_dir, read_file → allowed (read-only, no risk)
+//	write_file_dry_run → allowed (preview only, writes nothing)
+//	write_file_proposal → requires_approval (creates a pending approval, human must approve)
+//	write_file (direct, no proposal) → denied (bypassing approval is never allowed)
 package tool
 
 import (
@@ -139,7 +140,7 @@ func evaluateV4ProposalPolicy(cfg PolicyConfig, toolName string, input map[strin
 	}
 
 	// Block absolute paths
-	if filepath.IsAbs(pathStr) {
+	if safety.IsAbsolutePath(pathStr) {
 		return PolicyResult{Decision: PolicyDenied, Reason: "absolute paths are not allowed"}
 	}
 
@@ -200,7 +201,7 @@ func evaluatePathPolicy(cfg PolicyConfig, toolName string, input map[string]any)
 	}
 
 	var absPath string
-	if filepath.IsAbs(pathStr) {
+	if safety.IsAbsolutePath(pathStr) {
 		// Absolute path — check against all allowed roots
 		absPath = filepath.Clean(pathStr)
 	} else {
