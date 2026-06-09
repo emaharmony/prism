@@ -52,7 +52,7 @@ func ResolveToolPath(tp ToolPaths, inputPath string) (string, error) {
 	}
 
 	var absPath string
-	if filepath.IsAbs(inputPath) {
+	if safety.IsAbsolutePath(inputPath) {
 		absPath = filepath.Clean(inputPath)
 	} else {
 		absPath = filepath.Clean(filepath.Join(absRoots[0], inputPath))

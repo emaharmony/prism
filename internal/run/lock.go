@@ -62,7 +62,8 @@ func (l *RunLock) Acquire(ctx context.Context) error {
 		return fmt.Errorf("%w: PID %s", ErrRunLocked, holderPID)
 	}
 
-	// Write our PID to the lock file for diagnostics
+	// Write our PID to a sidecar file for diagnostics. On Windows, writing
+	// into the locked file itself fails because the flock handle owns it.
 	if err := l.writeLockHolder(); err != nil {
 		l.Release()
 		return fmt.Errorf("run lock: write PID: %w", err)
@@ -96,18 +97,17 @@ func (l *RunLock) TryAcquire() (bool, error) {
 
 // Release releases the lock and removes the PID file.
 func (l *RunLock) Release() error {
-	// Remove the PID from the lock file
-	lockPath := filepath.Join(l.runDir, ".lock")
-	os.Remove(lockPath)
-	return l.lock.Unlock()
+	err := l.lock.Unlock()
+	os.Remove(l.pidPath())
+	os.Remove(filepath.Join(l.runDir, ".lock"))
+	return err
 }
 
 // IsLocked checks if the run directory is currently locked by another process.
 // It checks the lock file for a PID that's still alive. This avoids the
 // flock re-acquire problem where the same process can re-lock its own file.
 func (l *RunLock) IsLocked() bool {
-	lockPath := filepath.Join(l.runDir, ".lock")
-	data, err := os.ReadFile(lockPath)
+	data, err := os.ReadFile(l.pidPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false // no lock file
@@ -123,6 +123,9 @@ func (l *RunLock) IsLocked() bool {
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
 		return false
+	}
+	if pid == os.Getpid() {
+		return true
 	}
 
 	// Check if the process is still alive
@@ -141,8 +144,7 @@ func (l *RunLock) IsLocked() bool {
 
 // readLockHolder reads the PID from the lock file.
 func (l *RunLock) readLockHolder() string {
-	lockPath := filepath.Join(l.runDir, ".lock")
-	data, err := os.ReadFile(lockPath)
+	data, err := os.ReadFile(l.pidPath())
 	if err != nil {
 		return "unknown"
 	}
@@ -151,28 +153,37 @@ func (l *RunLock) readLockHolder() string {
 
 // writeLockHolder writes the current PID to the lock file.
 func (l *RunLock) writeLockHolder() error {
-	lockPath := filepath.Join(l.runDir, ".lock")
 	pid := strconv.Itoa(os.Getpid())
-	return os.WriteFile(lockPath, []byte(pid), 0644)
+	return os.WriteFile(l.pidPath(), []byte(pid), 0644)
+}
+
+func (l *RunLock) pidPath() string {
+	return filepath.Join(l.runDir, ".lock.pid")
 }
 
 // ForceUnlock removes the lock file and releases any held lock.
 // Use with caution — this should only be called during crash recovery
 // when you're certain the locking process is dead.
 func (l *RunLock) ForceUnlock() error {
+	if err := l.lock.Unlock(); err != nil {
+		return err
+	}
+	if err := os.Remove(l.pidPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("run lock: remove pid file: %w", err)
+	}
 	lockPath := filepath.Join(l.runDir, ".lock")
 	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("run lock: remove lock file: %w", err)
 	}
-	return l.lock.Unlock()
+	return nil
 }
 
 // LockInfo contains information about a run lock.
 type LockInfo struct {
-	Locked    bool      // Whether the run is currently locked
-	PID       string    // PID of the process holding the lock (if known)
-	LockedAt  time.Time // When the lock was acquired (if known)
-	RunDir    string    // The run directory path
+	Locked   bool      // Whether the run is currently locked
+	PID      string    // PID of the process holding the lock (if known)
+	LockedAt time.Time // When the lock was acquired (if known)
+	RunDir   string    // The run directory path
 }
 
 // Info returns information about the current lock state.

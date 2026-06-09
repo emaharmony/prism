@@ -9,7 +9,7 @@
 // A validation profile is: a name, a command, args, a working directory, and a timeout.
 // Profiles are registered at startup (NewRegistry) and looked up by name at runtime.
 // The two built-in profiles are:
-//   echo_test — runs `echo hello`, used for integration testing (5s timeout)
+//   echo_test — runs `go version`, used for integration testing (5s timeout)
 //   go_test_all — runs `go test ./...`, used for Go projects (120s timeout)
 //
 // Validation events (prism.validation.requested/started/completed/failed/skipped/timeout)
@@ -66,25 +66,25 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	profile, err := e.registry.Resolve(profileName)
 	if err != nil {
 		e.emit(V5EventTypes.ValidationFailed, "prism-validation", map[string]any{
-			"profile_name":  profileName,
+			"profile_name":   profileName,
 			"correlation_id": correlationID,
-			"error":         err.Error(),
+			"error":          err.Error(),
 		})
 		return nil, fmt.Errorf("cannot run validation: %w", err)
 	}
 
 	// Emit validation.requested
 	e.emit(V5EventTypes.ValidationRequested, "prism-validation", map[string]any{
-		"profile_name":  profile.Name,
+		"profile_name":   profile.Name,
 		"correlation_id": correlationID,
 	})
 
 	// Safety checks
 	if err := ValidateProfileSafety(profile, e.projectRoot); err != nil {
 		e.emit(V5EventTypes.ValidationFailed, "prism-validation", map[string]any{
-			"profile_name":  profile.Name,
+			"profile_name":   profile.Name,
 			"correlation_id": correlationID,
-			"error":         err.Error(),
+			"error":          err.Error(),
 		})
 		return &Result{
 			Profile: profile.Name,
@@ -95,7 +95,7 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 
 	// Emit validation.started
 	e.emit(V5EventTypes.ValidationStarted, "prism-validation", map[string]any{
-		"profile_name":  profile.Name,
+		"profile_name":   profile.Name,
 		"correlation_id": correlationID,
 	})
 
@@ -103,9 +103,9 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	validationDir := filepath.Join(e.artifactDir, "validation")
 	if err := os.MkdirAll(validationDir, 0755); err != nil {
 		e.emit(V5EventTypes.ValidationFailed, "prism-validation", map[string]any{
-			"profile_name":  profile.Name,
+			"profile_name":   profile.Name,
 			"correlation_id": correlationID,
-			"error":         err.Error(),
+			"error":          err.Error(),
 		})
 		return &Result{
 			Profile: profile.Name,
@@ -122,9 +122,9 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	stdoutFile, err := os.Create(stdoutPath)
 	if err != nil {
 		e.emit(V5EventTypes.ValidationFailed, "prism-validation", map[string]any{
-			"profile_name":  profile.Name,
+			"profile_name":   profile.Name,
 			"correlation_id": correlationID,
-			"error":         err.Error(),
+			"error":          err.Error(),
 		})
 		return &Result{
 			Profile: profile.Name,
@@ -137,9 +137,9 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	stderrFile, err := os.Create(stderrPath)
 	if err != nil {
 		e.emit(V5EventTypes.ValidationFailed, "prism-validation", map[string]any{
-			"profile_name":  profile.Name,
+			"profile_name":   profile.Name,
 			"correlation_id": correlationID,
-			"error":         err.Error(),
+			"error":          err.Error(),
 		})
 		return &Result{
 			Profile: profile.Name,
@@ -207,9 +207,9 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	// Check if it was a timeout
 	if execCtx.Err() == context.DeadlineExceeded {
 		e.emit(V5EventTypes.ValidationTimeout, "prism-validation", map[string]any{
-			"profile_name":       profile.Name,
-			"correlation_id":      correlationID,
-			"duration_ms":         durationMs,
+			"profile_name":         profile.Name,
+			"correlation_id":       correlationID,
+			"duration_ms":          durationMs,
 			"stdout_artifact_path": stdoutPath,
 			"stderr_artifact_path": stderrPath,
 			"result_artifact_path": resultPath,
@@ -246,24 +246,24 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 
 	if status == "passed" {
 		e.emit(V5EventTypes.ValidationCompleted, "prism-validation", map[string]any{
-			"profile_name":       profile.Name,
-			"correlation_id":      correlationID,
-			"exit_code":           exitCode,
-			"duration_ms":         durationMs,
+			"profile_name":         profile.Name,
+			"correlation_id":       correlationID,
+			"exit_code":            exitCode,
+			"duration_ms":          durationMs,
 			"stdout_artifact_path": stdoutPath,
 			"stderr_artifact_path": stderrPath,
 			"result_artifact_path": resultPath,
 		})
 	} else {
 		e.emit(V5EventTypes.ValidationFailed, "prism-validation", map[string]any{
-			"profile_name":       profile.Name,
-			"correlation_id":      correlationID,
-			"exit_code":           exitCode,
-			"duration_ms":         durationMs,
+			"profile_name":         profile.Name,
+			"correlation_id":       correlationID,
+			"exit_code":            exitCode,
+			"duration_ms":          durationMs,
 			"stdout_artifact_path": stdoutPath,
 			"stderr_artifact_path": stderrPath,
 			"result_artifact_path": resultPath,
-			"error":               fmt.Sprintf("exit code %d not in allowed codes", exitCode),
+			"error":                fmt.Sprintf("exit code %d not in allowed codes", exitCode),
 		})
 	}
 

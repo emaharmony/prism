@@ -21,8 +21,8 @@
 package main
 
 import (
-	stdctx "context"
 	ctxcontext "context"
+	stdctx "context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -38,14 +38,15 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/action"
-	"github.com/emaharmony/prism/internal/api"
-	"github.com/emaharmony/prism/internal/context"
-	"github.com/emaharmony/prism/internal/delegation"
-	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/api"
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/context"
+	"github.com/emaharmony/prism/internal/crossprism"
 	"github.com/emaharmony/prism/internal/debounce"
+	"github.com/emaharmony/prism/internal/delegation"
+	"github.com/emaharmony/prism/internal/factory"
 	"github.com/emaharmony/prism/internal/guard"
 	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -58,11 +59,12 @@ import (
 	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
-	"github.com/emaharmony/prism/internal/session"
-	"github.com/emaharmony/prism/internal/scheduler"
-	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prism/internal/scheduler"
+	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
+	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 
 	"github.com/nats-io/nats.go"
@@ -102,27 +104,27 @@ type conversationContext struct {
 	debounce    *debounce.Tracker
 	eventLog    *runtrack.EventLogger
 	cancelReg   *runtrack.CancelRegistry
-	ctxBuilder  *context.Builder   // V21: workspace context injection
-	natsConn    *nats.Conn        // V21: NATS bus connection for event publishing
-	natsURL     string            // V21: NATS bus URL
-	actionReg   *action.Registry  // V21: action registry for event-triggered actions
-	remClient   *remembrance.Client // V21: Remembrance client for memory auto-save
-	remSem      chan struct{}         // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
-	remCache    *remembranceCache     // V26: TTL cache for BuildContext results
-	delegEngine *delegation.Engine    // V22: Delegation engine for agent-to-agent task delegation
-	taskStore   *task.Store           // V22: Task store for delegation tracking
-	toolExec    *tool.Executor        // V27: Tool executor for file system access
-	stateMgr    *state.Manager        // V32: Working state manager for adaptive context
-	planMgr     *plan.Manager         // V32: Plan manager for plan-first pipeline
-	improveMgr  *improve.Manager      // V32: Self-improvement loop
-	guardian    *guard.Guard         // V32: Guard rail for plan enforcement
-	toolPolicy  tool.PolicyConfig     // V27: Tool policy configuration
-	rateLimiter *safety.UserRateLimiter // V28: Per-user rate limiting
-	toolGate   *stage.ToolRelevanceGate // P-008: Tool relevance gate
+	ctxBuilder  *context.Builder         // V21: workspace context injection
+	natsConn    *nats.Conn               // V21: NATS bus connection for event publishing
+	natsURL     string                   // V21: NATS bus URL
+	actionReg   *action.Registry         // V21: action registry for event-triggered actions
+	remClient   *remembrance.Client      // V21: Remembrance client for memory auto-save
+	remSem      chan struct{}            // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
+	remCache    *remembranceCache        // V26: TTL cache for BuildContext results
+	delegEngine *delegation.Engine       // V22: Delegation engine for agent-to-agent task delegation
+	taskStore   *task.Store              // V22: Task store for delegation tracking
+	toolExec    *tool.Executor           // V27: Tool executor for file system access
+	stateMgr    *state.Manager           // V32: Working state manager for adaptive context
+	planMgr     *plan.Manager            // V32: Plan manager for plan-first pipeline
+	improveMgr  *improve.Manager         // V32: Self-improvement loop
+	guardian    *guard.Guard             // V32: Guard rail for plan enforcement
+	toolPolicy  tool.PolicyConfig        // V27: Tool policy configuration
+	rateLimiter *safety.UserRateLimiter  // V28: Per-user rate limiting
+	toolGate    *stage.ToolRelevanceGate // P-008: Tool relevance gate
 
 	// Cached static system content — built once, reused every message.
-	staticSystemText    string // For text-based provider path
-	staticSystemChat    string // For ChatProvider path (includes toolUsageGuidance)
+	staticSystemText string // For text-based provider path
+	staticSystemChat string // For ChatProvider path (includes toolUsageGuidance)
 }
 
 func executeServe(args []string) {
@@ -261,6 +263,49 @@ func executeServe(args []string) {
 	ctx, cancel := ctxcontext.WithCancel(ctxcontext.Background())
 	defer cancel()
 
+	if cfg.Bridge.Enabled {
+		secret := os.Getenv(cfg.Bridge.SecretEnv)
+		if secret == "" {
+			fmt.Fprintf(os.Stderr, "Error: bridge enabled but %s is not set\n", cfg.Bridge.SecretEnv)
+			os.Exit(1)
+		}
+		allowedSubjects := cfg.Bridge.AllowedSubjects
+		if len(allowedSubjects) == 0 {
+			allowedSubjects = crossprism.DefaultSubjects()
+		}
+
+		var factoryOp *factory.Operator
+		if cfg.Bridge.Factory.Enabled {
+			factoryOp, err = factory.NewOperator(factoryConfigFromBridge(cfg.Bridge.Factory))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error configuring Roblox Factory bridge: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		crossSvc, err := crossprism.NewService(natsConn, crossprism.ServiceConfig{
+			InstanceID:      cfg.Prism.InstanceID,
+			Secret:          secret,
+			AllowedSubjects: allowedSubjects,
+			MaxAge:          5 * time.Minute,
+		}, func(ctx ctxcontext.Context, subject string, msg crossprism.Message) (*crossprism.Message, error) {
+			if subject == crossprism.SubjectTaskRequest && factoryOp != nil {
+				return factoryOp.HandleCrossPrismTask(ctx, msg)
+			}
+			return nil, nil
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating cross-Prism bridge: %v\n", err)
+			os.Exit(1)
+		}
+		if err := crossSvc.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "Error starting cross-Prism bridge: %v\n", err)
+			os.Exit(1)
+		}
+		defer crossSvc.Close()
+		fmt.Printf("  Cross-Prism: %s listening on %d signed subject(s)\n", cfg.Prism.InstanceID, len(allowedSubjects))
+	}
+
 	var discordBots []*discordbot.BotAdapter
 
 	// V32: State manager, context builder, and plan manager — shared across all channels
@@ -326,54 +371,54 @@ func executeServe(args []string) {
 			}
 
 			// V27/V28: Set up tool executor with full tool suite
-		workspaceRoot := cfg.Prism.Workspace
-		if workspaceRoot == "" {
-			workspaceRoot = "."
-		}
-
-		// V30: Resolve allowed paths to absolute
-		allowedPaths := make([]string, 0, len(cfg.Prism.AllowedPaths))
-		for _, p := range cfg.Prism.AllowedPaths {
-			abs, err := filepath.Abs(p)
-			if err != nil {
-				log.Printf("[WARN] invalid allowed_path %q: %v", p, err)
-				continue
+			workspaceRoot := cfg.Prism.Workspace
+			if workspaceRoot == "" {
+				workspaceRoot = "."
 			}
-			allowedPaths = append(allowedPaths, abs)
-			log.Printf("[TOOL] allowed path: %s", abs)
-		}
 
-		toolReg := tool.NewRegistry()
-		tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024, allowedPaths...) // all read-only + project tools
-		// V28: Git mutation tools (require approval)
-		toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-		toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-		toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-		// V32: State management tools
-		stateMgr = state.NewManager(workspaceRoot)
-		stateMgr.EnsureDir()
-		tool.RegisterStateTools(toolReg, stateMgr)
+			// V30: Resolve allowed paths to absolute
+			allowedPaths := make([]string, 0, len(cfg.Prism.AllowedPaths))
+			for _, p := range cfg.Prism.AllowedPaths {
+				abs, err := filepath.Abs(p)
+				if err != nil {
+					log.Printf("[WARN] invalid allowed_path %q: %v", p, err)
+					continue
+				}
+				allowedPaths = append(allowedPaths, abs)
+				log.Printf("[TOOL] allowed path: %s", abs)
+			}
 
-		// V32: Plan-First Pipeline tools
-		planMgr = plan.NewManager(workspaceRoot)
-		planMgr.EnsureDir()
-		tool.RegisterPlanTools(toolReg, planMgr)
+			toolReg := tool.NewRegistry()
+			tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024, allowedPaths...) // all read-only + project tools
+			// V28: Git mutation tools (require approval)
+			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+			// V32: State management tools
+			stateMgr = state.NewManager(workspaceRoot)
+			stateMgr.EnsureDir()
+			tool.RegisterStateTools(toolReg, stateMgr)
 
-		// V32: Self-Improvement Loop
-		improveMgr = improve.NewManager(workspaceRoot)
-		improveMgr.EnsureDir()
+			// V32: Plan-First Pipeline tools
+			planMgr = plan.NewManager(workspaceRoot)
+			planMgr.EnsureDir()
+			tool.RegisterPlanTools(toolReg, planMgr)
 
-		// V32: Guard rail (plan-first enforcement)
-		guardian := guard.NewGuard(planMgr, ctxBuildr)
+			// V32: Self-Improvement Loop
+			improveMgr = improve.NewManager(workspaceRoot)
+			improveMgr.EnsureDir()
 
-		toolPolicy := tool.DefaultPolicyConfig()
-		// Mutation operations require approval
-		toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
-		toolPolicy.WorkspaceRoot = workspaceRoot
-		toolPolicy.AllowedPaths = allowedPaths
-		toolExec := tool.NewExecutor(toolReg, toolPolicy)
+			// V32: Guard rail (plan-first enforcement)
+			guardian := guard.NewGuard(planMgr, ctxBuildr)
 
-		convCtx := &conversationContext{
+			toolPolicy := tool.DefaultPolicyConfig()
+			// Mutation operations require approval
+			toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
+			toolPolicy.WorkspaceRoot = workspaceRoot
+			toolPolicy.AllowedPaths = allowedPaths
+			toolExec := tool.NewExecutor(toolReg, toolPolicy)
+
+			convCtx := &conversationContext{
 				router:      rtr,
 				sessMgr:     sessMgr,
 				cfg:         cfg,
@@ -394,16 +439,16 @@ func executeServe(args []string) {
 				toolExec:    toolExec,
 				toolPolicy:  toolPolicy,
 				rateLimiter: safety.NewUserRateLimiter(
-					10,   // max 10 messages per burst per user
-					1,    // refill 1 token/sec per user
-					60,   // global max 60 concurrent requests
-					10,   // global refill 10 tokens/sec
+					10, // max 10 messages per burst per user
+					1,  // refill 1 token/sec per user
+					60, // global max 60 concurrent requests
+					10, // global refill 10 tokens/sec
 				),
-				toolGate: stage.NewToolRelevanceGate(true), // P-008: enabled by default
-				stateMgr: stateMgr, // V32: shared state manager (same instance as tools)
-				planMgr:  planMgr,  // V32: plan manager
-				improveMgr: improveMgr, // V32: improvement manager
-				guardian: guardian, // V32: guard rail
+				toolGate:   stage.NewToolRelevanceGate(true), // P-008: enabled by default
+				stateMgr:   stateMgr,                         // V32: shared state manager (same instance as tools)
+				planMgr:    planMgr,                          // V32: plan manager
+				improveMgr: improveMgr,                       // V32: improvement manager
+				guardian:   guardian,                         // V32: guard rail
 			}
 
 			// Pre-build static system content for all agents
@@ -537,8 +582,8 @@ func executeServe(args []string) {
 // concerns (debounce, typing, session management, Discord delivery) while
 // delegating the domain-agnostic core to the stage pipeline:
 //
-//  Pipeline: LLMStage → PersistenceStage → EventPublishStage
-//  Handler: debounce, session, typing, prompt build, StreamCallback, Remembrance
+//	Pipeline: LLMStage → PersistenceStage → EventPublishStage
+//	Handler: debounce, session, typing, prompt build, StreamCallback, Remembrance
 //
 // The StreamCallback bridges LLMStage streaming to Discord:
 // LLMStage calls callback(token) → callback sends to Discord via placeholder + edits.
@@ -826,7 +871,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-// Step 9b: Tool execution loop — branch on ChatProvider vs text-based
+	// Step 9b: Tool execution loop — branch on ChatProvider vs text-based
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		// Check if the provider supports native tool calling (ChatProvider)
 		chatProv, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
@@ -1033,7 +1078,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
-}// sendError sends a user-friendly error message to a Discord channel.
+} // sendError sends a user-friendly error message to a Discord channel.
 func (cc *conversationContext) sendError(channelID, message string) {
 	err := cc.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
@@ -1215,15 +1260,15 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 
 // buildPrompt constructs the LLM prompt from session history and injected context.
 // V33: Layered prompt assembly with explicit priority labels.
-//   1. Who You Are (identity from SOUL.md/IDENTITY.md)
-//   2. Context (workspace files, excluding identity)
-//   3. How You Respond (conversation postfix)
-//   4. Tools (tool usage guidance)
-//   5. Working State (active task, decisions, blocked items)
-//   6. Active Plan (plan-first pipeline)
-//   7. Channel Context (where, who, what project, how to behave)
-//   8. Session Awareness (message count, age)
-//   9. Conversation History
+//  1. Who You Are (identity from SOUL.md/IDENTITY.md)
+//  2. Context (workspace files, excluding identity)
+//  3. How You Respond (conversation postfix)
+//  4. Tools (tool usage guidance)
+//  5. Working State (active task, decisions, blocked items)
+//  6. Active Plan (plan-first pipeline)
+//  7. Channel Context (where, who, what project, how to behave)
+//  8. Session Awareness (message count, age)
+//  9. Conversation History
 func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string, channelRole *orchestrator.ChannelRole) string {
 	var sb strings.Builder
 
@@ -1309,6 +1354,7 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 
 // createProvider creates a provider instance for an agent config.
 // V20 supports: ollama, openai, anthropic, gemini.
+// V34 adds openai_responses as an additive OpenAI Responses API option.
 func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provider.ModelInfo, error) {
 	info := provider.ModelInfo{
 		ID:           agentCfg.Model,
@@ -1332,6 +1378,13 @@ func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provi
 		}
 		return p, info, nil
 
+	case "openai_responses":
+		p, err := createOpenAIResponsesProvider(agentCfg.Model)
+		if err != nil {
+			return nil, info, fmt.Errorf("openai responses provider: %w", err)
+		}
+		return p, info, nil
+
 	case "anthropic":
 		p, err := createAnthropicProvider(agentCfg.Model)
 		if err != nil {
@@ -1347,7 +1400,22 @@ func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provi
 		return p, info, nil
 
 	default:
-		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, anthropic, gemini)", agentCfg.Provider)
+		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini)", agentCfg.Provider)
+	}
+}
+
+func factoryConfigFromBridge(cfg orchestrator.FactoryBridgeConfig) factory.Config {
+	return factory.Config{
+		Enabled:            cfg.Enabled,
+		Root:               cfg.Root,
+		Project:            cfg.Project,
+		ProjectPath:        cfg.ProjectPath,
+		ApprovalMode:       cfg.ApprovalMode,
+		RunCodex:           cfg.RunCodex,
+		VisionReview:       cfg.VisionReview,
+		PlaytestMode:       cfg.PlaytestMode,
+		EnableUIGeneration: cfg.EnableUIGeneration,
+		UIGenerationDryRun: cfg.UIGenerationDryRun,
 	}
 }
 
@@ -1369,6 +1437,15 @@ func createOpenAIProvider(model string) (provider.Provider, error) {
 		return nil, fmt.Errorf("OPENAI_API_KEY environment variable not set")
 	}
 	return openai.New(apiKey), nil
+}
+
+// createOpenAIResponsesProvider creates an OpenAI Responses API provider.
+func createOpenAIResponsesProvider(model string) (provider.Provider, error) {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY environment variable not set")
+	}
+	return openai.NewResponses(apiKey), nil
 }
 
 // createAnthropicProvider creates an Anthropic provider instance.
@@ -1475,15 +1552,15 @@ func filterChatTools(tools []provider.ChatTool, filter []string) []provider.Chat
 
 // readOnlyTools is the set of tool names that are safe for read-only channels.
 var readOnlyTools = map[string]bool{
-	"read_project":    true,
-	"search_files":    true,
+	"read_project":     true,
+	"search_files":     true,
 	"project_overview": true,
-	"git_status":      true,
-	"git_log":         true,
-	"git_diff":        true,
-	"git_branch_list": true,
-	"plan_list":       true,
-	"state_get":       true,
+	"git_status":       true,
+	"git_log":          true,
+	"git_diff":         true,
+	"git_branch_list":  true,
+	"plan_list":        true,
+	"state_get":        true,
 }
 
 // ToolMode represents the tool access level for a channel.
@@ -1491,8 +1568,8 @@ type ToolMode int
 
 const (
 	ToolModeAll      ToolMode = iota // All tools available
-	ToolModeReadOnly                  // Only read-only tools
-	ToolModeNone                      // No tools at all
+	ToolModeReadOnly                 // Only read-only tools
+	ToolModeNone                     // No tools at all
 )
 
 // resolveToolMode determines the tool access level from a channel role config.

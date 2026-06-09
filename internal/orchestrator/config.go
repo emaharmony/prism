@@ -24,6 +24,9 @@ type Config struct {
 	// Prism holds top-level service settings.
 	Prism PrismConfig `yaml:"prism"`
 
+	// Bridge configures signed cross-Prism protocol subjects.
+	Bridge BridgeConfig `yaml:"bridge"`
+
 	// Agents defines the agents Prism should register.
 	// Each agent gets its own event namespace based on its ID.
 	Agents []AgentConfig `yaml:"agents"`
@@ -47,6 +50,9 @@ type Config struct {
 
 // PrismConfig holds top-level service settings.
 type PrismConfig struct {
+	// InstanceID identifies this Prism process in cross-Prism messages.
+	InstanceID string `yaml:"instance_id"`
+
 	// NATSURL is the NATS server URL. Empty means embedded.
 	NATSURL string `yaml:"nats_url"`
 
@@ -84,6 +90,38 @@ type PrismConfig struct {
 	// Scheduler configures cron-style scheduled tasks that fire NATS events.
 	// V32: Event-driven wake replaces heartbeat babysitting.
 	Scheduler SchedulerConfig `yaml:"scheduler"`
+}
+
+// BridgeConfig configures signed cross-Prism NATS subjects.
+type BridgeConfig struct {
+	// Enabled controls whether the cross-Prism protocol listener starts.
+	Enabled bool `yaml:"enabled"`
+
+	// Mode documents the topology. "shared_nats" means both Prisms use the same broker.
+	Mode string `yaml:"mode"`
+
+	// AllowedSubjects is the explicit protocol subject allowlist.
+	AllowedSubjects []string `yaml:"allowed_subjects"`
+
+	// SecretEnv names the environment variable containing the shared HMAC secret.
+	SecretEnv string `yaml:"secret_env"`
+
+	// Factory configures optional Roblox Factory task handoff for task_request messages.
+	Factory FactoryBridgeConfig `yaml:"factory"`
+}
+
+// FactoryBridgeConfig configures report/validation-only handoff to Roblox Factory.
+type FactoryBridgeConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	Root               string `yaml:"root"`
+	Project            string `yaml:"project"`
+	ProjectPath        string `yaml:"project_path"`
+	ApprovalMode       string `yaml:"approval_mode"`
+	RunCodex           bool   `yaml:"run_codex"`
+	VisionReview       string `yaml:"vision_review"`
+	PlaytestMode       string `yaml:"playtest_mode"`
+	EnableUIGeneration bool   `yaml:"enable_ui_generation"`
+	UIGenerationDryRun bool   `yaml:"ui_generation_dry_run"`
 }
 
 // AgentConfig defines a single agent in prism.yaml.
@@ -299,6 +337,7 @@ type RemembranceConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Prism: PrismConfig{
+			InstanceID:         "prism",
 			NATSURL:            "",
 			Port:               8321,
 			DataDir:            filepath.Join(os.Getenv("HOME"), ".prism", "data"),
@@ -317,6 +356,29 @@ func DefaultConfig() *Config {
 			Enabled:        false,
 			URL:            "http://localhost:18790",
 			TimeoutSeconds: 60,
+		},
+		Bridge: BridgeConfig{
+			Enabled: false,
+			Mode:    "shared_nats",
+			AllowedSubjects: []string{
+				"prism.cross.context_sync",
+				"prism.cross.task_request",
+				"prism.cross.status_request",
+				"prism.cross.validation_request",
+				"prism.cross.task_response",
+			},
+			SecretEnv: "PRISM_BRIDGE_SECRET",
+			Factory: FactoryBridgeConfig{
+				Enabled:            false,
+				Root:               `D:\_projects_\roblox-factory`,
+				Project:            "eggventura",
+				ProjectPath:        `D:\Projects\Roblox\eggventura`,
+				ApprovalMode:       "report_only",
+				RunCodex:           false,
+				VisionReview:       "none",
+				PlaytestMode:       "none",
+				UIGenerationDryRun: true,
+			},
 		},
 	}
 }
@@ -386,6 +448,40 @@ func (c *Config) Validate() error {
 	if c.Remembrance.TimeoutSeconds < 0 {
 		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
 	}
+	if c.Prism.InstanceID != "" && !isValidAgentID(c.Prism.InstanceID) {
+		return fmt.Errorf("config: prism.instance_id %q must be alphanumeric + hyphens only", c.Prism.InstanceID)
+	}
+	if c.Bridge.Enabled {
+		if c.Prism.InstanceID == "" {
+			return fmt.Errorf("config: prism.instance_id is required when bridge is enabled")
+		}
+		if c.Bridge.SecretEnv == "" {
+			return fmt.Errorf("config: bridge.secret_env is required when bridge is enabled")
+		}
+		if c.Bridge.Mode == "" {
+			c.Bridge.Mode = "shared_nats"
+		}
+		if c.Bridge.Mode != "shared_nats" {
+			return fmt.Errorf("config: bridge.mode must be 'shared_nats'")
+		}
+		if c.Bridge.Factory.Enabled {
+			if c.Bridge.Factory.Root == "" {
+				return fmt.Errorf("config: bridge.factory.root is required when factory bridge is enabled")
+			}
+			if c.Bridge.Factory.Project == "" {
+				return fmt.Errorf("config: bridge.factory.project is required when factory bridge is enabled")
+			}
+			if c.Bridge.Factory.ApprovalMode == "" {
+				c.Bridge.Factory.ApprovalMode = "report_only"
+			}
+			if c.Bridge.Factory.ApprovalMode != "report_only" && c.Bridge.Factory.ApprovalMode != "implementation" {
+				return fmt.Errorf("config: bridge.factory.approval_mode must be 'report_only' or 'implementation'")
+			}
+			if c.Bridge.Factory.RunCodex && c.Bridge.Factory.ApprovalMode != "implementation" {
+				return fmt.Errorf("config: bridge.factory.run_codex=true requires approval_mode='implementation'")
+			}
+		}
+	}
 
 	return nil
 }
@@ -438,6 +534,7 @@ func LoadConfigFromBytes(data []byte) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	cfg.ResolveEnv()
 
 	// Resolve auto-generated IDs and validate in a single pass
 	if err := cfg.ResolveAndValidate(); err != nil {
@@ -445,6 +542,13 @@ func LoadConfigFromBytes(data []byte) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ResolveEnv expands ${VAR} references for secret-bearing config fields.
+func (c *Config) ResolveEnv() {
+	for i := range c.Channels {
+		c.Channels[i].Token = os.ExpandEnv(c.Channels[i].Token)
+	}
 }
 
 // agentIDPattern enforces alphanumeric + hyphens, no dots.

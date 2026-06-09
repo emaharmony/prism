@@ -1,8 +1,6 @@
 package orchestrator
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
@@ -240,7 +238,7 @@ func TestValidAgentIDs(t *testing.T) {
 }
 func TestAgentSubscriptions(t *testing.T) {
 	cfg := &Config{
-		Prism: PrismConfig{DataDir: "/tmp/prism"},
+		Prism:    PrismConfig{DataDir: "/tmp/prism"},
 		Sessions: SessionConfig{MaxContextMessages: 100, IdleTimeoutMinutes: 30, CompactionStrategy: "truncate"},
 		Agents: []AgentConfig{
 			{
@@ -278,7 +276,7 @@ func TestAgentSubscriptions(t *testing.T) {
 
 func TestAgentSubscriptions_Empty(t *testing.T) {
 	cfg := &Config{
-		Prism: PrismConfig{DataDir: "/tmp/prism"},
+		Prism:    PrismConfig{DataDir: "/tmp/prism"},
 		Sessions: SessionConfig{MaxContextMessages: 100, IdleTimeoutMinutes: 30, CompactionStrategy: "truncate"},
 		Agents: []AgentConfig{
 			{ID: "lumi", Role: "lead", Provider: "ollama", Model: "glm-5.1:cloud", Primary: true},
@@ -307,5 +305,46 @@ func TestValidateRemembranceTimeoutNegative(t *testing.T) {
 	cfg.Remembrance.TimeoutSeconds = -1
 	if err := cfg.Validate(); err == nil {
 		t.Error("expected validation error for negative remembrance timeout")
+	}
+}
+
+func TestResolveEnvExpandsChannelToken(t *testing.T) {
+	t.Setenv("PRISM_TEST_DISCORD_TOKEN", "test-token")
+	cfg, err := LoadConfigFromBytes([]byte(`
+agents:
+  - id: lumi
+    role: lead
+    provider: ollama
+    model: llama3.2
+channels:
+  - type: discord
+    token: "${PRISM_TEST_DISCORD_TOKEN}"
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Channels[0].Token != "test-token" {
+		t.Fatalf("token = %q", cfg.Channels[0].Token)
+	}
+}
+
+func TestValidateBridgeRequiresSecretEnvName(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Bridge.Enabled = true
+	cfg.Bridge.SecretEnv = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for missing bridge secret env")
+	}
+}
+
+func TestValidateFactoryRunCodexRequiresImplementation(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Bridge.Enabled = true
+	cfg.Bridge.SecretEnv = "PRISM_BRIDGE_SECRET"
+	cfg.Bridge.Factory.Enabled = true
+	cfg.Bridge.Factory.RunCodex = true
+	cfg.Bridge.Factory.ApprovalMode = "report_only"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for run_codex in report_only mode")
 	}
 }

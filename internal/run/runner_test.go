@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats-server/v2/server"
+	"github.com/nats-io/nats.go"
 
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/event"
@@ -133,14 +133,14 @@ func TestV1LifecycleWithMemoryFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := run.RunConfig{
-		Task:           "Test with memory failure",
-		Project:        "prism",
-		Agent:          "lumi",
-		BusURL:         busURL,
-		MemoryEnabled:  true,
-		RequireMemory:  false, // Should continue even if memory fails
-		MemoryURL:      "http://localhost:18790", // Not running
-		RunDir:         filepath.Join(tmpDir, "runs"),
+		Task:          "Test with memory failure",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: true,
+		RequireMemory: false,                    // Should continue even if memory fails
+		MemoryURL:     "http://localhost:18790", // Not running
+		RunDir:        filepath.Join(tmpDir, "runs"),
 	}
 
 	runner := run.NewRunner(cfg)
@@ -165,14 +165,14 @@ func TestV1LifecycleRequireMemoryFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := run.RunConfig{
-		Task:           "Test require-memory failure",
-		Project:        "prism",
-		Agent:          "lumi",
-		BusURL:         busURL,
-		MemoryEnabled:  true,
-		RequireMemory:  true, // Should fail if memory is unavailable
-		MemoryURL:      "http://localhost:18790", // Not running
-		RunDir:         filepath.Join(tmpDir, "runs"),
+		Task:          "Test require-memory failure",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: true,
+		RequireMemory: true,                     // Should fail if memory is unavailable
+		MemoryURL:     "http://localhost:18790", // Not running
+		RunDir:        filepath.Join(tmpDir, "runs"),
 	}
 
 	runner := run.NewRunner(cfg)
@@ -319,7 +319,7 @@ func TestV1NATSPublishAndSubscribe(t *testing.T) {
 	// Create stream
 	_, _ = js.AddStream(&nats.StreamConfig{
 		Name:      "PRISM",
-		Subjects: []string{"prism.>"},
+		Subjects:  []string{"prism.>"},
 		Retention: nats.LimitsPolicy,
 		MaxMsgs:   1000000,
 		Storage:   nats.MemoryStorage,
@@ -386,14 +386,14 @@ func TestV1Remembrance404(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	cfg := run.RunConfig{
-		Task:           "Test remembrance 404",
-		Project:        "prism",
-		Agent:          "lumi",
-		BusURL:         busURL,
-		MemoryEnabled:  true,
-		RequireMemory:  false,
-		MemoryURL:      memoryURL,
-		RunDir:         filepath.Join(tmpDir, "runs"),
+		Task:          "Test remembrance 404",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: true,
+		RequireMemory: false,
+		MemoryURL:     memoryURL,
+		RunDir:        filepath.Join(tmpDir, "runs"),
 	}
 
 	runner := run.NewRunner(cfg)
@@ -1126,16 +1126,16 @@ func TestV2MemoryFailureGraceful(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := run.RunConfig{
-		Task:           "Test memory failure graceful",
-		Project:        "prism",
-		Agent:          "lumi",
-		BusURL:         busURL,
-		MemoryEnabled:  true,
-		RequireMemory:  false, // graceful: continue even if memory fails
-		MemoryURL:      "http://localhost:18790", // Not running
-		RunDir:         filepath.Join(tmpDir, "runs"),
-		Provider:       mockpkg.New(),
-		Model:          "mock-model",
+		Task:          "Test memory failure graceful",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: true,
+		RequireMemory: false,                    // graceful: continue even if memory fails
+		MemoryURL:     "http://localhost:18790", // Not running
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      mockpkg.New(),
+		Model:         "mock-model",
 	}
 
 	runner := run.NewRunner(cfg)
@@ -1188,16 +1188,16 @@ func TestV2MemoryFailureStrict(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := run.RunConfig{
-		Task:           "Test memory failure strict",
-		Project:        "prism",
-		Agent:          "lumi",
-		BusURL:         busURL,
-		MemoryEnabled:  true,
-		RequireMemory:  true, // strict: fail if memory unavailable
-		MemoryURL:      "http://localhost:18790", // Not running
-		RunDir:         filepath.Join(tmpDir, "runs"),
-		Provider:       mockpkg.New(),
-		Model:          "mock-model",
+		Task:          "Test memory failure strict",
+		Project:       "prism",
+		Agent:         "lumi",
+		BusURL:        busURL,
+		MemoryEnabled: true,
+		RequireMemory: true,                     // strict: fail if memory unavailable
+		MemoryURL:     "http://localhost:18790", // Not running
+		RunDir:        filepath.Join(tmpDir, "runs"),
+		Provider:      mockpkg.New(),
+		Model:         "mock-model",
 	}
 
 	runner := run.NewRunner(cfg)
@@ -1284,6 +1284,7 @@ func startMockMemoryServer(t *testing.T) *mockMemoryServer {
 		server:   server,
 	}
 }
+
 // ============================================================================
 // V3 Tests — Tool Execution
 // ============================================================================
@@ -1457,8 +1458,8 @@ func TestV3ToolEventsInEventLog(t *testing.T) {
 	// Find tool events
 	toolEventTypes := map[string]bool{
 		event.V3EventTypes.ToolRequested: false,
-		event.V3EventTypes.ToolApproved: false,
-		event.V3EventTypes.ToolStarted:  false,
+		event.V3EventTypes.ToolApproved:  false,
+		event.V3EventTypes.ToolStarted:   false,
 		event.V3EventTypes.ToolCompleted: false,
 	}
 
@@ -1858,9 +1859,9 @@ func TestV5ReviewWithFailedValidation(t *testing.T) {
 
 	// Simulate a failed validation (without actually running a profile)
 	failedResult := validation.Result{
-		Profile:   "echo_test",
-		Status:    "failed",
-		ExitCode:  1,
+		Profile:    "echo_test",
+		Status:     "failed",
+		ExitCode:   1,
 		DurationMs: 500,
 	}
 
@@ -1925,15 +1926,15 @@ func TestV5ApprovalApproveWithValidate(t *testing.T) {
 	})
 	os.WriteFile(filepath.Join(runDir, "summary.json"), append(summaryData, '\n'), 0644)
 
-	// Use a test registry with only echo_test
+	// Use a test registry with a portable smoke profile.
 	testRegistry := validation.NewEmptyRegistry()
 	testRegistry.Register(validation.Profile{
-		Name:            "echo_test",
-		Description:    "Quick echo test",
-		Command:        "echo",
-		Args:           []string{"hello"},
-		WorkingDir:     ".",
-		TimeoutSeconds: 5,
+		Name:             "echo_test",
+		Description:      "Quick Go toolchain smoke test",
+		Command:          "go",
+		Args:             []string{"version"},
+		WorkingDir:       ".",
+		TimeoutSeconds:   5,
 		AllowedExitCodes: []int{0},
 	})
 

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/emaharmony/prism/internal/policy"
@@ -20,8 +21,11 @@ func TestPolicyIntegrationAllowsReadFile(t *testing.T) {
 	})
 	policyEval := policy.NewEvaluator(policyReg)
 
-	// Use the actual repo root as workspace
-	repoRoot := "/Users/ema/projects/repos/prism" // actual repo root
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd error: %v", err)
+	}
+	repoRoot = repoRoot + "/../.."
 
 	// Tool executor with V8 policy
 	toolReg := NewRegistry()

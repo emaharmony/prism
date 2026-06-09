@@ -78,23 +78,23 @@ func (r *Registry) List() []string {
 func RegisterBuiltins(r *Registry) {
 	// echo_test — quick test profile for integration tests (runs instantly)
 	r.Register(Profile{
-		Name:            "echo_test",
-		Description:    "Quick echo test for integration testing",
-		Command:        "echo",
-		Args:           []string{"hello"},
-		WorkingDir:     ".",
-		TimeoutSeconds: 5,
+		Name:             "echo_test",
+		Description:      "Quick validation smoke test for integration testing",
+		Command:          "go",
+		Args:             []string{"version"},
+		WorkingDir:       ".",
+		TimeoutSeconds:   5,
 		AllowedExitCodes: []int{0},
 	})
 
 	// go_test_all — runs all Go tests in the project
 	r.Register(Profile{
-		Name:            "go_test_all",
-		Description:    "Run all Go tests in the project",
-		Command:        "go",
-		Args:           []string{"test", "./..."},
-		WorkingDir:     ".",
-		TimeoutSeconds: 120,
+		Name:             "go_test_all",
+		Description:      "Run all Go tests in the project",
+		Command:          "go",
+		Args:             []string{"test", "./..."},
+		WorkingDir:       ".",
+		TimeoutSeconds:   120,
 		AllowedExitCodes: []int{0},
 	})
 }
