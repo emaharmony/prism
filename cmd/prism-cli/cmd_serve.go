@@ -297,6 +297,7 @@ func executeServe(args []string) {
 	defer cancel()
 
 	var crossCoord *crossprism.Coordinator
+	var crossSvc *crossprism.Service
 	if cfg.Bridge.Enabled {
 		secret := bridgeSecret(cfg)
 		if secret == "" {
@@ -331,7 +332,7 @@ func executeServe(args []string) {
 			ReportOnly:             true,
 		})
 
-		crossSvc, err := crossprism.NewService(natsConn, crossprism.ServiceConfig{
+		crossSvc, err = crossprism.NewService(natsConn, crossprism.ServiceConfig{
 			InstanceID:      cfg.Prism.InstanceID,
 			Secret:          secret,
 			AllowedSubjects: allowedSubjects,
@@ -443,6 +444,11 @@ func executeServe(args []string) {
 			planMgr = plan.NewManager(workspaceRoot)
 			planMgr.EnsureDir()
 			tool.RegisterPlanTools(toolReg, planMgr)
+
+			// V34: Cross-Prism bridge tool — send messages to remote Prism instances
+			if crossSvc != nil {
+				toolReg.Register(tool.NewSendCrossMessageTool(crossSvc))
+			}
 
 			// V32: Self-Improvement Loop
 			improveMgr = improve.NewManager(workspaceRoot)
