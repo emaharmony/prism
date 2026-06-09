@@ -17,12 +17,25 @@ const (
 	SubjectStatusRequest     = "prism.cross.status_request"
 	SubjectValidationRequest = "prism.cross.validation_request"
 	SubjectTaskResponse      = "prism.cross.task_response"
+	SubjectTaskAccept        = "prism.cross.task_accept"
+	SubjectTaskReject        = "prism.cross.task_reject"
+	SubjectClarification     = "prism.cross.clarification"
+	SubjectTaskProgress      = "prism.cross.task_progress"
+	SubjectTaskResult        = "prism.cross.task_result"
+	SubjectTaskCancel        = "prism.cross.task_cancel"
 
 	TypeContextSync       = "context_sync"
 	TypeTaskRequest       = "task_request"
 	TypeStatusRequest     = "status_request"
 	TypeValidationRequest = "validation_request"
 	TypeTaskResponse      = "task_response"
+	TypeTaskAccept        = "task_accept"
+	TypeTaskReject        = "task_reject"
+	TypeClarificationReq  = "clarification_request"
+	TypeClarificationResp = "clarification_response"
+	TypeTaskProgress      = "task_progress"
+	TypeTaskResult        = "task_result"
+	TypeTaskCancel        = "task_cancel"
 )
 
 // DefaultSubjects returns the narrow subject allowlist for cross-Prism traffic.
@@ -33,6 +46,40 @@ func DefaultSubjects() []string {
 		SubjectStatusRequest,
 		SubjectValidationRequest,
 		SubjectTaskResponse,
+		SubjectTaskAccept,
+		SubjectTaskReject,
+		SubjectClarification,
+		SubjectTaskProgress,
+		SubjectTaskResult,
+		SubjectTaskCancel,
+	}
+}
+
+// SubjectForType returns the protocol subject used for a message type.
+func SubjectForType(messageType string) string {
+	switch messageType {
+	case TypeContextSync:
+		return SubjectContextSync
+	case TypeTaskRequest:
+		return SubjectTaskRequest
+	case TypeStatusRequest:
+		return SubjectStatusRequest
+	case TypeValidationRequest:
+		return SubjectValidationRequest
+	case TypeTaskAccept:
+		return SubjectTaskAccept
+	case TypeTaskReject:
+		return SubjectTaskReject
+	case TypeClarificationReq, TypeClarificationResp:
+		return SubjectClarification
+	case TypeTaskProgress:
+		return SubjectTaskProgress
+	case TypeTaskResult:
+		return SubjectTaskResult
+	case TypeTaskCancel:
+		return SubjectTaskCancel
+	default:
+		return SubjectTaskResponse
 	}
 }
 

@@ -43,9 +43,9 @@ import (
 	"github.com/emaharmony/prism/internal/router"
 	"github.com/emaharmony/prism/internal/runtrack"
 	"github.com/emaharmony/prism/internal/safety"
-	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/stage"
+	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/nats-io/nats.go"
@@ -54,39 +54,39 @@ import (
 // chatContext holds all dependencies for the interactive chat loop.
 // It mirrors conversationContext but without Discord-specific fields.
 type chatContext struct {
-	router       *router.Router
-	sessMgr      *session.Manager
-	cfg          *orchestrator.Config
-	providers    *provider.ProviderRegistry
-	ctxBuilder   *context.Builder
-	toolExec     *tool.Executor
-	toolPolicy   tool.PolicyConfig
-	eventLog     *runtrack.EventLogger
-	cancelReg    *runtrack.CancelRegistry
-	actionReg    *action.Registry
-	taskStore    *task.Store
-	delegEngine  *delegation.Engine
-	natsConn     *nats.Conn            // Persistent NATS connection for event pipeline
-	natsURL      string                // NATS URL (embedded or external)
-	natsCleanup  func()                // Cleanup for embedded NATS
-	rateLimiter  *chatRateLimit        // Per-message rate limiting for CLI
-	stateMgr     *state.Manager         // V32: Working state manager for adaptive context
-	planMgr      *plan.Manager          // V32: Plan manager for plan-first pipeline
-	guardian     *guard.Guard           // V32: Guard rail for plan enforcement
+	router      *router.Router
+	sessMgr     *session.Manager
+	cfg         *orchestrator.Config
+	providers   *provider.ProviderRegistry
+	ctxBuilder  *context.Builder
+	toolExec    *tool.Executor
+	toolPolicy  tool.PolicyConfig
+	eventLog    *runtrack.EventLogger
+	cancelReg   *runtrack.CancelRegistry
+	actionReg   *action.Registry
+	taskStore   *task.Store
+	delegEngine *delegation.Engine
+	natsConn    *nats.Conn     // Persistent NATS connection for event pipeline
+	natsURL     string         // NATS URL (embedded or external)
+	natsCleanup func()         // Cleanup for embedded NATS
+	rateLimiter *chatRateLimit // Per-message rate limiting for CLI
+	stateMgr    *state.Manager // V32: Working state manager for adaptive context
+	planMgr     *plan.Manager  // V32: Plan manager for plan-first pipeline
+	guardian    *guard.Guard   // V32: Guard rail for plan enforcement
 
 	// Cached static system content — built once, reused every message.
 	// Includes: agent identity, workspace context, postfix, tool instructions.
 	// Does NOT include: session age/count (dynamic per message).
-	staticSystemText    string // For text-based provider path
-	staticSystemChat    string // For ChatProvider path (includes toolUsageGuidance)
+	staticSystemText string // For text-based provider path
+	staticSystemChat string // For ChatProvider path (includes toolUsageGuidance)
 }
 
 // chatRateLimit provides simple rate limiting for CLI chat.
 // Unlike Discord (per-user), this is per-process — prevents runaway LLM calls.
 type chatRateLimit struct {
-	mu        sync.Mutex
-	lastCall  time.Time
-	minDelay  time.Duration // Minimum time between messages
+	mu       sync.Mutex
+	lastCall time.Time
+	minDelay time.Duration // Minimum time between messages
 }
 
 func (r *chatRateLimit) Allow() bool {
@@ -269,21 +269,21 @@ func executeChat(args []string) {
 
 	// 10. Build chat context
 	cc := &chatContext{
-		router:       rtr,
-		sessMgr:      sessMgr,
-		cfg:          cfg,
-		providers:    provReg,
-		ctxBuilder:   ctxBuilder,
-		toolExec:     toolExec,
-		toolPolicy:   toolPolicy,
-		eventLog:     &runtrack.EventLogger{},
-		cancelReg:    runtrack.NewCancelRegistry(),
-		actionReg:    actionReg,
-		taskStore:    taskStore,
+		router:      rtr,
+		sessMgr:     sessMgr,
+		cfg:         cfg,
+		providers:   provReg,
+		ctxBuilder:  ctxBuilder,
+		toolExec:    toolExec,
+		toolPolicy:  toolPolicy,
+		eventLog:    &runtrack.EventLogger{},
+		cancelReg:   runtrack.NewCancelRegistry(),
+		actionReg:   actionReg,
+		taskStore:   taskStore,
 		delegEngine: delegEngine,
-		natsConn:     natsConn,
-		natsURL:      natsURL,
-		natsCleanup:  natsCleanup,
+		natsConn:    natsConn,
+		natsURL:     natsURL,
+		natsCleanup: natsCleanup,
 		rateLimiter: &chatRateLimit{minDelay: 500 * time.Millisecond}, // 2 msg/s max
 		stateMgr:    chatStateMgr,
 		planMgr:     chatPlanMgr,
@@ -401,7 +401,7 @@ LOOP:
 		}
 
 		// Process through the pipeline
-		fmt.Println() // blank line before response
+		fmt.Println()            // blank line before response
 		fmt.Print("Thinking...") // Show thinking indicator
 
 		responseText, err := cc.processMessage(ctxcontext.Background(), sess, agentCfg, sanitizedInput)
@@ -475,7 +475,7 @@ func (cc *chatContext) processWithChatProvider(
 	}
 
 	// Build messages from session
-	messages := cc.buildChatMessages(sess, agentCfg, "", nil)	// CLI chat has no channel context
+	messages := cc.buildChatMessages(sess, agentCfg, "", nil) // CLI chat has no channel context
 	chatTools := cc.buildChatToolDefs()
 
 	log.Printf("[CHAT-CLI] entering native tool loop with %d tools", len(chatTools))
@@ -520,7 +520,7 @@ func (cc *chatContext) processWithTextProvider(
 	run *runtrack.Run,
 ) (string, error) {
 	// Build the full prompt (same as Discord pipeline)
-	prompt := cc.buildChatPrompt(sess, agentCfg, "", nil)	// CLI chat has no channel context
+	prompt := cc.buildChatPrompt(sess, agentCfg, "", nil) // CLI chat has no channel context
 
 	// Set up NATS for event pipeline (using persistent connection)
 	var natsAdapter *natsPublisherAdapter
@@ -534,7 +534,7 @@ func (cc *chatContext) processWithTextProvider(
 	}
 	if cc.delegEngine != nil {
 		pipelineStages = append(pipelineStages, &stage.DelegationStage{
-			Engine:      cc.delegEngine,
+			Engine:       cc.delegEngine,
 			StripMarkers: true,
 			AgentConfigs: cc.buildAgentConfigMap(),
 		})
@@ -605,9 +605,18 @@ func (cc *chatContext) processWithTextProvider(
 
 // buildAgentConfigMap creates a map of agent configs for the DelegationStage.
 func (cc *chatContext) buildAgentConfigMap() map[string]*orchestrator.AgentConfig {
-	m := make(map[string]*orchestrator.AgentConfig)
+	m := make(map[string]*orchestrator.AgentConfig, len(cc.cfg.Agents)+1)
 	for i := range cc.cfg.Agents {
 		m[cc.cfg.Agents[i].ID] = &cc.cfg.Agents[i]
+	}
+	if cc.cfg.Codex.Enabled {
+		m["codex"] = &orchestrator.AgentConfig{
+			ID:           "codex",
+			Role:         "coder",
+			Provider:     "codex_cli",
+			Model:        cc.cfg.Codex.Model,
+			Capabilities: []string{"code", "test", "review", "report"},
+		}
 	}
 	return m
 }
@@ -934,11 +943,11 @@ func (cc *chatContext) runChatToolLoop(
 
 		// Call the ChatProvider
 		req := provider.ChatGenerateRequest{
-			RunID:     fmt.Sprintf("chat-%d", i),
-			Agent:     agentCfg.ID,
-			Model:     agentCfg.Model,
-			Messages:  currentMessages,
-			Tools:     toolsForThisIteration,
+			RunID:    fmt.Sprintf("chat-%d", i),
+			Agent:    agentCfg.ID,
+			Model:    agentCfg.Model,
+			Messages: currentMessages,
+			Tools:    toolsForThisIteration,
 		}
 		response, err := chatProv.ChatGenerate(ctx, req)
 		if err != nil {
@@ -1049,10 +1058,10 @@ func (cc *chatContext) runTextToolLoop(
 		}
 
 		genResp, err := llmProvider.Generate(ctx, provider.GenerateRequest{
-			RunID:   fmt.Sprintf("chat-text-%d", i),
-			Agent:   agentCfg.ID,
-			Model:   agentCfg.Model,
-			Prompt:  currentPrompt,
+			RunID:  fmt.Sprintf("chat-text-%d", i),
+			Agent:  agentCfg.ID,
+			Model:  agentCfg.Model,
+			Prompt: currentPrompt,
 		})
 		if err != nil {
 			return "", summaries, fmt.Errorf("LLM call failed iteration %d: %w", i+1, err)

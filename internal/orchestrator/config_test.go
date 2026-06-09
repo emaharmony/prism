@@ -328,12 +328,38 @@ channels:
 	}
 }
 
-func TestValidateBridgeRequiresSecretEnvName(t *testing.T) {
+func TestValidateBridgeRequiresSecret(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Bridge.Enabled = true
 	cfg.Bridge.SecretEnv = ""
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected validation error for missing bridge secret env")
+		t.Fatal("expected validation error for missing bridge secret")
+	}
+}
+
+func TestValidateBridgeAllowsInlineSecret(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Bridge.Enabled = true
+	cfg.Bridge.SecretEnv = ""
+	cfg.Bridge.Secret = "test-secret"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected inline bridge secret to validate: %v", err)
+	}
+}
+
+func TestResolveEnvExpandsBridgeSecret(t *testing.T) {
+	t.Setenv("PRISM_TEST_BRIDGE_SECRET", "test-secret")
+	cfg, err := LoadConfigFromBytes([]byte(`
+bridge:
+  enabled: true
+  secret_env: ""
+  secret: "${PRISM_TEST_BRIDGE_SECRET}"
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.Bridge.Secret != "test-secret" {
+		t.Fatalf("bridge secret = %q", cfg.Bridge.Secret)
 	}
 }
 
@@ -346,5 +372,63 @@ func TestValidateFactoryRunCodexRequiresImplementation(t *testing.T) {
 	cfg.Bridge.Factory.ApprovalMode = "report_only"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error for run_codex in report_only mode")
+	}
+}
+
+func TestValidateBridgeTargetProfiles(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Bridge.Enabled = true
+	cfg.Bridge.SecretEnv = ""
+	cfg.Bridge.Secret = "test-secret"
+	cfg.Bridge.TargetProfiles = []BridgeTargetProfile{
+		{Name: "generic", InstanceID: "astraea-manager", Adapter: "generic"},
+		{Name: "factory", InstanceID: "astraea-manager", Adapter: "factory"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected target profiles to validate: %v", err)
+	}
+}
+
+func TestValidateBridgeConfidenceThresholdRange(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Bridge.Enabled = true
+	cfg.Bridge.SecretEnv = ""
+	cfg.Bridge.Secret = "test-secret"
+	cfg.Bridge.ConfidenceThreshold = 1.1
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for bridge confidence_threshold > 1")
+	}
+}
+
+func TestValidateCodexDefaultsWhenEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Prism.Workspace = "D:/workspace"
+	cfg.Codex.Enabled = true
+	cfg.Codex.Workspace = ""
+	cfg.Codex.Sandbox = ""
+	cfg.Codex.ApprovalPolicy = ""
+	cfg.Codex.TimeoutMinutes = 0
+	cfg.Codex.MaxConcurrency = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected codex config to validate: %v", err)
+	}
+	if cfg.Codex.Workspace != "D:/workspace" {
+		t.Fatalf("workspace = %q", cfg.Codex.Workspace)
+	}
+	if cfg.Codex.Sandbox != "workspace-write" {
+		t.Fatalf("sandbox = %q", cfg.Codex.Sandbox)
+	}
+	if cfg.Codex.ApprovalPolicy != "on-request" {
+		t.Fatalf("approval = %q", cfg.Codex.ApprovalPolicy)
+	}
+}
+
+func TestValidateCodexRejectsBadApprovalPolicy(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Codex.Enabled = true
+	cfg.Codex.Workspace = "."
+	cfg.Codex.ApprovalPolicy = "always"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for bad codex approval policy")
 	}
 }

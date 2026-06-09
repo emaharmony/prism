@@ -27,6 +27,9 @@ type Config struct {
 	// Bridge configures signed cross-Prism protocol subjects.
 	Bridge BridgeConfig `yaml:"bridge"`
 
+	// Codex configures subscription-backed Codex CLI task delegation.
+	Codex CodexConfig `yaml:"codex"`
+
 	// Agents defines the agents Prism should register.
 	// Each agent gets its own event namespace based on its ID.
 	Agents []AgentConfig `yaml:"agents"`
@@ -106,8 +109,51 @@ type BridgeConfig struct {
 	// SecretEnv names the environment variable containing the shared HMAC secret.
 	SecretEnv string `yaml:"secret_env"`
 
+	// Secret is an optional local fallback HMAC secret. Prefer SecretEnv for
+	// shared or production environments so the secret stays out of tracked config.
+	Secret string `yaml:"secret"`
+
+	// LeaderInstance is the Prism instance currently allowed to coordinate a
+	// cross-Prism thread. It is configurable so leadership can move between
+	// environments without changing code.
+	LeaderInstance string `yaml:"leader_instance"`
+
+	// ConfidenceThreshold is the receiver-rated threshold required before a
+	// task is accepted without clarification.
+	ConfidenceThreshold float64 `yaml:"confidence_threshold"`
+
+	// MaxClarificationRounds caps back-and-forth clarification turns before the
+	// task needs human input.
+	MaxClarificationRounds int `yaml:"max_clarification_rounds"`
+
+	// TargetProfiles define addressable cross-Prism destinations for commands.
+	TargetProfiles []BridgeTargetProfile `yaml:"target_profiles"`
+
 	// Factory configures optional Roblox Factory task handoff for task_request messages.
 	Factory FactoryBridgeConfig `yaml:"factory"`
+}
+
+// BridgeTargetProfile maps a human command target to a Prism instance and adapter.
+type BridgeTargetProfile struct {
+	Name         string   `yaml:"name"`
+	InstanceID   string   `yaml:"instance_id"`
+	Adapter      string   `yaml:"adapter"`
+	Capabilities []string `yaml:"capabilities"`
+}
+
+// CodexConfig configures local Codex CLI task execution.
+type CodexConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	Executable     string   `yaml:"executable"`
+	Model          string   `yaml:"model"`
+	Profile        string   `yaml:"profile"`
+	Workspace      string   `yaml:"workspace"`
+	Sandbox        string   `yaml:"sandbox"`
+	ApprovalPolicy string   `yaml:"approval_policy"`
+	TimeoutMinutes int      `yaml:"timeout_minutes"`
+	MaxConcurrency int      `yaml:"max_concurrency"`
+	CaptureDiff    bool     `yaml:"capture_diff"`
+	ExtraArgs      []string `yaml:"extra_args"`
 }
 
 // FactoryBridgeConfig configures report/validation-only handoff to Roblox Factory.
@@ -366,6 +412,48 @@ func DefaultConfig() *Config {
 				"prism.cross.status_request",
 				"prism.cross.validation_request",
 				"prism.cross.task_response",
+				"prism.cross.task_accept",
+				"prism.cross.task_reject",
+				"prism.cross.clarification",
+				"prism.cross.task_progress",
+				"prism.cross.task_result",
+				"prism.cross.task_cancel",
+			},
+			LeaderInstance:         "lumi-ceo",
+			ConfidenceThreshold:    0.75,
+			MaxClarificationRounds: 1,
+			TargetProfiles: []BridgeTargetProfile{
+				{
+					Name:       "generic",
+					InstanceID: "astraea-manager",
+					Adapter:    "generic",
+					Capabilities: []string{
+						"plan",
+						"review",
+						"report",
+					},
+				},
+				{
+					Name:       "factory",
+					InstanceID: "astraea-manager",
+					Adapter:    "factory",
+					Capabilities: []string{
+						"roblox_factory",
+						"validation",
+						"report",
+					},
+				},
+				{
+					Name:       "codex",
+					InstanceID: "astraea-manager",
+					Adapter:    "codex",
+					Capabilities: []string{
+						"code",
+						"test",
+						"review",
+						"report",
+					},
+				},
 			},
 			SecretEnv: "PRISM_BRIDGE_SECRET",
 			Factory: FactoryBridgeConfig{
@@ -379,6 +467,18 @@ func DefaultConfig() *Config {
 				PlaytestMode:       "none",
 				UIGenerationDryRun: true,
 			},
+		},
+		Codex: CodexConfig{
+			Enabled:        false,
+			Executable:     "",
+			Model:          "",
+			Profile:        "",
+			Workspace:      "",
+			Sandbox:        "workspace-write",
+			ApprovalPolicy: "on-request",
+			TimeoutMinutes: 30,
+			MaxConcurrency: 1,
+			CaptureDiff:    true,
 		},
 	}
 }
@@ -448,6 +548,38 @@ func (c *Config) Validate() error {
 	if c.Remembrance.TimeoutSeconds < 0 {
 		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
 	}
+	if c.Codex.Enabled {
+		if c.Codex.Workspace == "" {
+			c.Codex.Workspace = c.Prism.Workspace
+		}
+		if c.Codex.Workspace == "" {
+			c.Codex.Workspace = "."
+		}
+		if c.Codex.Sandbox == "" {
+			c.Codex.Sandbox = "workspace-write"
+		}
+		if c.Codex.ApprovalPolicy == "" {
+			c.Codex.ApprovalPolicy = "on-request"
+		}
+		if c.Codex.TimeoutMinutes == 0 {
+			c.Codex.TimeoutMinutes = 30
+		}
+		if c.Codex.MaxConcurrency == 0 {
+			c.Codex.MaxConcurrency = 1
+		}
+		if c.Codex.TimeoutMinutes < 1 {
+			return fmt.Errorf("config: codex.timeout_minutes must be >= 1")
+		}
+		if c.Codex.MaxConcurrency < 1 {
+			return fmt.Errorf("config: codex.max_concurrency must be >= 1")
+		}
+		if c.Codex.Sandbox != "read-only" && c.Codex.Sandbox != "workspace-write" && c.Codex.Sandbox != "danger-full-access" {
+			return fmt.Errorf("config: codex.sandbox must be 'read-only', 'workspace-write', or 'danger-full-access'")
+		}
+		if c.Codex.ApprovalPolicy != "untrusted" && c.Codex.ApprovalPolicy != "on-request" && c.Codex.ApprovalPolicy != "never" {
+			return fmt.Errorf("config: codex.approval_policy must be 'untrusted', 'on-request', or 'never'")
+		}
+	}
 	if c.Prism.InstanceID != "" && !isValidAgentID(c.Prism.InstanceID) {
 		return fmt.Errorf("config: prism.instance_id %q must be alphanumeric + hyphens only", c.Prism.InstanceID)
 	}
@@ -455,14 +587,31 @@ func (c *Config) Validate() error {
 		if c.Prism.InstanceID == "" {
 			return fmt.Errorf("config: prism.instance_id is required when bridge is enabled")
 		}
-		if c.Bridge.SecretEnv == "" {
-			return fmt.Errorf("config: bridge.secret_env is required when bridge is enabled")
+		if c.Bridge.SecretEnv == "" && c.Bridge.Secret == "" {
+			return fmt.Errorf("config: bridge.secret_env or bridge.secret is required when bridge is enabled")
 		}
 		if c.Bridge.Mode == "" {
 			c.Bridge.Mode = "shared_nats"
 		}
 		if c.Bridge.Mode != "shared_nats" {
 			return fmt.Errorf("config: bridge.mode must be 'shared_nats'")
+		}
+		if c.Bridge.ConfidenceThreshold < 0 || c.Bridge.ConfidenceThreshold > 1 {
+			return fmt.Errorf("config: bridge.confidence_threshold must be between 0 and 1")
+		}
+		if c.Bridge.MaxClarificationRounds < 0 {
+			return fmt.Errorf("config: bridge.max_clarification_rounds must be >= 0")
+		}
+		for i, profile := range c.Bridge.TargetProfiles {
+			if profile.Name == "" {
+				return fmt.Errorf("config: bridge.target_profiles[%d].name is required", i)
+			}
+			if profile.InstanceID == "" {
+				return fmt.Errorf("config: bridge.target_profiles[%d].instance_id is required", i)
+			}
+			if profile.Adapter == "" {
+				return fmt.Errorf("config: bridge.target_profiles[%d].adapter is required", i)
+			}
 		}
 		if c.Bridge.Factory.Enabled {
 			if c.Bridge.Factory.Root == "" {
@@ -549,6 +698,9 @@ func (c *Config) ResolveEnv() {
 	for i := range c.Channels {
 		c.Channels[i].Token = os.ExpandEnv(c.Channels[i].Token)
 	}
+	c.Bridge.Secret = os.ExpandEnv(c.Bridge.Secret)
+	c.Codex.Executable = os.ExpandEnv(c.Codex.Executable)
+	c.Codex.Workspace = os.ExpandEnv(c.Codex.Workspace)
 }
 
 // agentIDPattern enforces alphanumeric + hyphens, no dots.

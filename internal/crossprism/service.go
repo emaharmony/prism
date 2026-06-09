@@ -133,7 +133,8 @@ func (s *Service) handle(ctx context.Context, subject string, natsMsg *nats.Msg)
 		log.Printf("[CROSS-PRISM] failed to encode response: %v", err)
 		return
 	}
-	if err := s.nc.Publish(SubjectTaskResponse, payload); err != nil {
+	subjectOut := SubjectForType(resp.MessageType)
+	if err := s.nc.Publish(subjectOut, payload); err != nil {
 		log.Printf("[CROSS-PRISM] failed to publish response: %v", err)
 	}
 }

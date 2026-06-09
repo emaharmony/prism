@@ -163,7 +163,7 @@ func TestBuildPrompt_MissingWorkspaceFiles(t *testing.T) {
 	ctxBuilder := context.NewBuilder(workspace)
 
 	convCtx := &conversationContext{
-		cfg:       &orchestrator.Config{},
+		cfg:        &orchestrator.Config{},
 		ctxBuilder: ctxBuilder,
 	}
 
@@ -510,6 +510,32 @@ func TestRemembranceTimeout_Negative(t *testing.T) {
 	got := remembranceTimeout(cfg)
 	if got != remembrance.DefaultTimeout {
 		t.Errorf("expected default %v for negative, got %v", remembrance.DefaultTimeout, got)
+	}
+}
+
+func TestBridgeSecret_UsesEnvFirst(t *testing.T) {
+	t.Setenv("PRISM_TEST_BRIDGE_SECRET", "from-env")
+	cfg := &orchestrator.Config{
+		Bridge: orchestrator.BridgeConfig{
+			SecretEnv: "PRISM_TEST_BRIDGE_SECRET",
+			Secret:    "from-config",
+		},
+	}
+	if got := bridgeSecret(cfg); got != "from-env" {
+		t.Fatalf("expected env bridge secret, got %q", got)
+	}
+}
+
+func TestBridgeSecret_FallsBackToConfig(t *testing.T) {
+	t.Setenv("PRISM_TEST_BRIDGE_SECRET", "")
+	cfg := &orchestrator.Config{
+		Bridge: orchestrator.BridgeConfig{
+			SecretEnv: "PRISM_TEST_BRIDGE_SECRET",
+			Secret:    "from-config",
+		},
+	}
+	if got := bridgeSecret(cfg); got != "from-config" {
+		t.Fatalf("expected config bridge secret, got %q", got)
 	}
 }
 
