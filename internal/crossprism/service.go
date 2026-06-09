@@ -51,6 +51,11 @@ func NewService(nc *nats.Conn, cfg ServiceConfig, handler Handler) (*Service, er
 	return &Service{nc: nc, cfg: cfg, handler: handler}, nil
 }
 
+// InstanceID returns the instance ID of this cross-Prism service.
+func (s *Service) InstanceID() string {
+	return s.cfg.InstanceID
+}
+
 // Start subscribes to allowed protocol subjects.
 func (s *Service) Start(ctx context.Context) error {
 	for _, subject := range s.cfg.AllowedSubjects {
@@ -77,6 +82,30 @@ func (s *Service) Close() {
 		_ = sub.Unsubscribe()
 	}
 	s.subs = nil
+}
+
+// Publish signs and sends a cross-Prism message on the given subject.
+func (s *Service) Publish(subject string, msg Message) error {
+	if msg.From == "" {
+		msg.From = s.cfg.InstanceID
+	}
+	if msg.Timestamp == "" {
+		msg.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if msg.Nonce == "" {
+		msg.Nonce = newNonce()
+	}
+	if err := msg.Sign(s.cfg.Secret); err != nil {
+		return fmt.Errorf("crossprism: publish sign: %w", err)
+	}
+	payload, err := msg.Payload()
+	if err != nil {
+		return fmt.Errorf("crossprism: publish payload: %w", err)
+	}
+	if err := s.nc.Publish(subject, payload); err != nil {
+		return fmt.Errorf("crossprism: publish: %w", err)
+	}
+	return s.nc.Flush()
 }
 
 func (s *Service) handle(ctx context.Context, subject string, natsMsg *nats.Msg) {
