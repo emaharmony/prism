@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/task"
 	"github.com/nats-io/nats.go"
 )
 
@@ -23,6 +24,135 @@ func TestMessageSignVerify(t *testing.T) {
 	}
 	if err := msg.Verify("secret", 5*time.Minute); err != nil {
 		t.Fatalf("verify failed: %v", err)
+	}
+}
+
+func TestCoordinatorAcceptsGenericTask(t *testing.T) {
+	store, err := task.NewStore(t.TempDir() + "/tasks.db")
+	if err != nil {
+		t.Fatalf("task store: %v", err)
+	}
+	defer store.Close()
+
+	coord := NewCoordinator(CoordinatorConfig{
+		InstanceID:             "astraea-manager",
+		Store:                  store,
+		ConfidenceThreshold:    0.75,
+		MaxClarificationRounds: 1,
+		TargetProfiles: []TargetProfile{
+			{Name: "generic", InstanceID: "astraea-manager", Adapter: "generic"},
+		},
+	})
+
+	req := NewMessage("lumi-ceo", "astraea-manager", TypeTaskRequest)
+	req.CorrelationID = "corr-generic"
+	req.Thread = map[string]any{"leader": "lumi-ceo", "turn": 0}
+	req.Request = map[string]any{
+		"task":            "review project status and report blockers",
+		"target_profile":  "generic",
+		"leader_instance": "lumi-ceo",
+	}
+
+	resp, err := coord.Handle(context.Background(), SubjectTaskRequest, req)
+	if err != nil {
+		t.Fatalf("handle task request: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.MessageType != TypeTaskAccept {
+		t.Fatalf("message type = %q, want %q", resp.MessageType, TypeTaskAccept)
+	}
+	taskID, _ := resp.Response["task_id"].(string)
+	if taskID == "" {
+		t.Fatal("expected task_id in response")
+	}
+	got, err := store.Get(taskID)
+	if err != nil {
+		t.Fatalf("stored task: %v", err)
+	}
+	if got.DelegatedBy != "lumi-ceo" || got.DelegatedTo != "astraea-manager" {
+		t.Fatalf("delegation = %s -> %s", got.DelegatedBy, got.DelegatedTo)
+	}
+}
+
+func TestCoordinatorClarifiesLowConfidenceTask(t *testing.T) {
+	coord := NewCoordinator(CoordinatorConfig{
+		InstanceID:             "astraea-manager",
+		ConfidenceThreshold:    0.75,
+		MaxClarificationRounds: 1,
+	})
+
+	req := NewMessage("lumi-ceo", "astraea-manager", TypeTaskRequest)
+	req.CorrelationID = "corr-clarify"
+	req.Thread = map[string]any{"leader": "lumi-ceo", "turn": 0}
+	req.Request = map[string]any{"task": "check it"}
+
+	resp, err := coord.Handle(context.Background(), SubjectTaskRequest, req)
+	if err != nil {
+		t.Fatalf("handle task request: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected clarification response")
+	}
+	if resp.MessageType != TypeClarificationReq {
+		t.Fatalf("message type = %q, want %q", resp.MessageType, TypeClarificationReq)
+	}
+	if resp.Response["needs_human_input"] != true {
+		t.Fatalf("expected needs_human_input=true, got %v", resp.Response["needs_human_input"])
+	}
+}
+
+type fakeTaskAdapter struct {
+	called bool
+	resp   *Message
+}
+
+func (f *fakeTaskAdapter) HandleCrossPrismTask(ctx context.Context, msg Message) (*Message, error) {
+	f.called = true
+	return f.resp, nil
+}
+
+func TestCoordinatorRoutesCodexProfileToAdapter(t *testing.T) {
+	adapter := &fakeTaskAdapter{resp: &Message{
+		MessageType: TypeTaskResult,
+		Response: map[string]any{
+			"status":  "completed",
+			"task_id": "codex-task",
+			"summary": "done",
+		},
+	}}
+	coord := NewCoordinator(CoordinatorConfig{
+		InstanceID:             "astraea-manager",
+		CodexAdapter:           adapter,
+		ConfidenceThreshold:    0.75,
+		MaxClarificationRounds: 1,
+		TargetProfiles: []TargetProfile{
+			{Name: "codex", InstanceID: "astraea-manager", Adapter: "codex"},
+		},
+	})
+
+	req := NewMessage("lumi-ceo", "astraea-manager", TypeTaskRequest)
+	req.CorrelationID = "corr-codex"
+	req.Thread = map[string]any{"leader": "lumi-ceo", "turn": 0}
+	req.Request = map[string]any{
+		"task":            "implement the feature",
+		"target_profile":  "codex",
+		"leader_instance": "lumi-ceo",
+	}
+
+	resp, err := coord.Handle(context.Background(), SubjectTaskRequest, req)
+	if err != nil {
+		t.Fatalf("handle task request: %v", err)
+	}
+	if !adapter.called {
+		t.Fatal("expected adapter to be called")
+	}
+	if resp.MessageType != TypeTaskResult {
+		t.Fatalf("message type = %q", resp.MessageType)
+	}
+	if resp.Response["target_profile"] != "codex" {
+		t.Fatalf("target_profile = %v", resp.Response["target_profile"])
 	}
 }
 

@@ -42,6 +42,7 @@ import (
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/api"
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/crossprism"
 	"github.com/emaharmony/prism/internal/debounce"
@@ -113,6 +114,7 @@ type conversationContext struct {
 	remCache    *remembranceCache        // V26: TTL cache for BuildContext results
 	delegEngine *delegation.Engine       // V22: Delegation engine for agent-to-agent task delegation
 	taskStore   *task.Store              // V22: Task store for delegation tracking
+	crossCoord  *crossprism.Coordinator  // Cross-Prism NATS delegation coordinator
 	toolExec    *tool.Executor           // V27: Tool executor for file system access
 	stateMgr    *state.Manager           // V32: Working state manager for adaptive context
 	planMgr     *plan.Manager            // V32: Plan manager for plan-first pipeline
@@ -146,6 +148,7 @@ func executeServe(args []string) {
 		delegEngine *delegation.Engine
 		orch        *orchestrator.Orchestrator
 		remClient   *remembrance.Client
+		codexWorker *codexworker.Worker
 	)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -230,6 +233,36 @@ func executeServe(args []string) {
 	defer sessMgr.Close()
 	fmt.Println("  Session manager: ready")
 
+	taskStore, err = task.NewStore(filepath.Join(cfg.Prism.DataDir, "tasks.db"))
+	if err != nil {
+		fmt.Printf("  Warning: task store failed: %v\n", err)
+	} else {
+		delegEngine = delegation.NewEngine(taskStore, natsConn)
+		fmt.Println("  Task store: ready")
+	}
+
+	if cfg.Codex.Enabled {
+		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
+		codexWorker, err = codexworker.New(codexCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error configuring Codex worker: %v\n", err)
+			os.Exit(1)
+		}
+		if delegEngine != nil {
+			if err := delegEngine.Subscribe("codex", func(ctx ctxcontext.Context, t *task.Task) error {
+				result, runErr := codexWorker.RunTask(ctx, t.ID, t.Description, t.Context)
+				if runErr != nil {
+					return runErr
+				}
+				return delegEngine.Complete(ctxcontext.Background(), t.ID, result)
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "Error subscribing Codex worker: %v\n", err)
+				os.Exit(1)
+			}
+		}
+		fmt.Println("  Codex worker: enabled")
+	}
+
 	// 6. Set up agent router
 	rtr := router.New(agentReg, cfg)
 	fmt.Println("  Router: ready")
@@ -263,10 +296,11 @@ func executeServe(args []string) {
 	ctx, cancel := ctxcontext.WithCancel(ctxcontext.Background())
 	defer cancel()
 
+	var crossCoord *crossprism.Coordinator
 	if cfg.Bridge.Enabled {
-		secret := os.Getenv(cfg.Bridge.SecretEnv)
+		secret := bridgeSecret(cfg)
 		if secret == "" {
-			fmt.Fprintf(os.Stderr, "Error: bridge enabled but %s is not set\n", cfg.Bridge.SecretEnv)
+			fmt.Fprintf(os.Stderr, "Error: bridge enabled but %s is not set and bridge.secret is empty\n", cfg.Bridge.SecretEnv)
 			os.Exit(1)
 		}
 		allowedSubjects := cfg.Bridge.AllowedSubjects
@@ -283,16 +317,27 @@ func executeServe(args []string) {
 			}
 		}
 
+		crossCoord = crossprism.NewCoordinator(crossprism.CoordinatorConfig{
+			InstanceID:             cfg.Prism.InstanceID,
+			LeaderInstance:         cfg.Bridge.LeaderInstance,
+			Secret:                 secret,
+			NATS:                   natsConn,
+			Store:                  taskStore,
+			FactoryAdapter:         factoryOp,
+			CodexAdapter:           codexWorker,
+			TargetProfiles:         crossProfilesFromBridge(cfg.Bridge.TargetProfiles),
+			ConfidenceThreshold:    cfg.Bridge.ConfidenceThreshold,
+			MaxClarificationRounds: cfg.Bridge.MaxClarificationRounds,
+			ReportOnly:             true,
+		})
+
 		crossSvc, err := crossprism.NewService(natsConn, crossprism.ServiceConfig{
 			InstanceID:      cfg.Prism.InstanceID,
 			Secret:          secret,
 			AllowedSubjects: allowedSubjects,
 			MaxAge:          5 * time.Minute,
 		}, func(ctx ctxcontext.Context, subject string, msg crossprism.Message) (*crossprism.Message, error) {
-			if subject == crossprism.SubjectTaskRequest && factoryOp != nil {
-				return factoryOp.HandleCrossPrismTask(ctx, msg)
-			}
-			return nil, nil
+			return crossCoord.Handle(ctx, subject, msg)
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating cross-Prism bridge: %v\n", err)
@@ -342,13 +387,8 @@ func executeServe(args []string) {
 				}
 			}
 
-			// V22: Initialize task store and delegation engine
-			taskStore, taskErr := task.NewStore(filepath.Join(cfg.Prism.DataDir, "tasks.db"))
-			if taskErr != nil {
-				fmt.Printf("  Warning: task store failed: %v\n", taskErr)
-			} else {
-				delegEngine = delegation.NewEngine(taskStore, natsConn)
-
+			// V22: Register agent subscriptions against the shared task store.
+			if delegEngine != nil {
 				// Register agent subscriptions
 				for i := range cfg.Agents {
 					a := &cfg.Agents[i]
@@ -436,6 +476,7 @@ func executeServe(args []string) {
 				remCache:    newRemembranceCache(60 * time.Second),
 				delegEngine: delegEngine,
 				taskStore:   taskStore,
+				crossCoord:  crossCoord,
 				toolExec:    toolExec,
 				toolPolicy:  toolPolicy,
 				rateLimiter: safety.NewUserRateLimiter(
@@ -603,15 +644,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
-	// Step 0b: Handle messages from other bots (agent-to-agent communication)
+	if cc.crossCoord != nil && cc.handleCrossPrismCommand(msg) {
+		return
+	}
+
 	if msg.IsBot {
-		if !isAgentBot(cc.cfg.Agents, msg.UserID) {
-			log.Printf("[AGENT] ignoring bot message from %s (%s) — not in listen_to_agents", msg.UserName, msg.UserID)
-			return
-		}
-		log.Printf("[AGENT] received agent message from %s (%s)", msg.UserName, msg.UserID)
-		// Agent messages skip injection defense and rate limiting — they're trusted peers
-		cc.handleAgentMessage(msg)
+		log.Printf("[AGENT] ignoring Discord bot message from %s (%s); cross-Prism agents communicate over NATS", msg.UserName, msg.UserID)
 		return
 	}
 
@@ -1094,10 +1132,19 @@ func (cc *conversationContext) sendError(channelID, message string) {
 // buildAgentConfigMap creates a map of agent ID → AgentConfig for the
 // DelegationStage capability checks.
 func (cc *conversationContext) buildAgentConfigMap() map[string]*orchestrator.AgentConfig {
-	configs := make(map[string]*orchestrator.AgentConfig, len(cc.cfg.Agents))
+	configs := make(map[string]*orchestrator.AgentConfig, len(cc.cfg.Agents)+1)
 	for i := range cc.cfg.Agents {
 		a := &cc.cfg.Agents[i]
 		configs[a.ID] = a
+	}
+	if cc.cfg.Codex.Enabled {
+		configs["codex"] = &orchestrator.AgentConfig{
+			ID:           "codex",
+			Role:         "coder",
+			Provider:     "codex_cli",
+			Model:        cc.cfg.Codex.Model,
+			Capabilities: []string{"code", "test", "review", "report"},
+		}
 	}
 	return configs
 }
@@ -1419,6 +1466,47 @@ func factoryConfigFromBridge(cfg orchestrator.FactoryBridgeConfig) factory.Confi
 	}
 }
 
+func crossProfilesFromBridge(profiles []orchestrator.BridgeTargetProfile) []crossprism.TargetProfile {
+	out := make([]crossprism.TargetProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		out = append(out, crossprism.TargetProfile{
+			Name:         profile.Name,
+			InstanceID:   profile.InstanceID,
+			Adapter:      profile.Adapter,
+			Capabilities: append([]string(nil), profile.Capabilities...),
+		})
+	}
+	return out
+}
+
+func codexConfigFromOrchestrator(cfg orchestrator.CodexConfig, root *orchestrator.Config) codexworker.Config {
+	workspace := cfg.Workspace
+	if workspace == "" && root != nil {
+		workspace = root.Prism.Workspace
+	}
+	if workspace == "" {
+		workspace = "."
+	}
+	dataDir := filepath.Join(".", ".prism", "data", "codex")
+	if root != nil && root.Prism.DataDir != "" {
+		dataDir = filepath.Join(root.Prism.DataDir, "codex")
+	}
+	return codexworker.Config{
+		Enabled:        cfg.Enabled,
+		Executable:     cfg.Executable,
+		Model:          cfg.Model,
+		Profile:        cfg.Profile,
+		Workspace:      workspace,
+		Sandbox:        cfg.Sandbox,
+		ApprovalPolicy: cfg.ApprovalPolicy,
+		TimeoutMinutes: cfg.TimeoutMinutes,
+		MaxConcurrency: cfg.MaxConcurrency,
+		CaptureDiff:    cfg.CaptureDiff,
+		ExtraArgs:      append([]string(nil), cfg.ExtraArgs...),
+		DataDir:        dataDir,
+	}
+}
+
 // createOllamaProvider creates an Ollama provider instance.
 // Uses localhost:11434 by default. V21: configurable base URL.
 // V30: Returns both Provider and ChatProvider — Ollama supports both interfaces.
@@ -1532,6 +1620,18 @@ func remembranceTimeout(cfg *orchestrator.Config) time.Duration {
 		return time.Duration(cfg.Remembrance.TimeoutSeconds) * time.Second
 	}
 	return remembrance.DefaultTimeout
+}
+
+func bridgeSecret(cfg *orchestrator.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	if cfg.Bridge.SecretEnv != "" {
+		if secret := os.Getenv(cfg.Bridge.SecretEnv); secret != "" {
+			return secret
+		}
+	}
+	return cfg.Bridge.Secret
 }
 
 // filterChatTools filters a ChatTool slice to only include tools whose names

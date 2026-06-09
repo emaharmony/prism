@@ -31,12 +31,38 @@ bridge:
   enabled: false
   mode: "shared_nats"
   secret_env: "PRISM_BRIDGE_SECRET"
+  # Optional local fallback if the env var is unavailable. Keep real secrets out of git.
+  secret: ""
+  # Configurable leader for cross-Prism threads. This can move between environments.
+  leader_instance: "lumi-ceo"
+  # Receiver-rated confidence gate. Below this, Prism asks one clarification before accepting.
+  confidence_threshold: 0.75
+  max_clarification_rounds: 1
   allowed_subjects:
     - "prism.cross.context_sync"
     - "prism.cross.task_request"
     - "prism.cross.status_request"
     - "prism.cross.validation_request"
     - "prism.cross.task_response"
+    - "prism.cross.task_accept"
+    - "prism.cross.task_reject"
+    - "prism.cross.clarification"
+    - "prism.cross.task_progress"
+    - "prism.cross.task_result"
+    - "prism.cross.task_cancel"
+  target_profiles:
+    - name: "generic"
+      instance_id: "astraea-manager"
+      adapter: "generic"
+      capabilities: ["plan", "review", "report"]
+    - name: "factory"
+      instance_id: "astraea-manager"
+      adapter: "factory"
+      capabilities: ["roblox_factory", "validation", "report"]
+    - name: "codex"
+      instance_id: "astraea-manager"
+      adapter: "codex"
+      capabilities: ["code", "test", "review", "report"]
   factory:
     enabled: true
     root: "D:/_projects_/roblox-factory"
@@ -48,6 +74,23 @@ bridge:
     playtest_mode: "none"
     enable_ui_generation: false
     ui_generation_dry_run: true
+
+codex:
+  # Uses the local Codex CLI login session. Run `codex login` before enabling.
+  enabled: false
+  # Empty = codex.cmd on Windows, codex elsewhere.
+  executable: ""
+  # Empty = Codex CLI default/profile model. Set only when you want to force a model.
+  model: ""
+  profile: ""
+  # Empty = prism.workspace, then current directory.
+  workspace: ""
+  sandbox: "workspace-write"
+  approval_policy: "on-request"
+  timeout_minutes: 30
+  max_concurrency: 1
+  capture_diff: true
+  extra_args: []
 
 agents:
   - id: astraea
@@ -70,6 +113,8 @@ agents:
         inject: "Act as the Windows-side Prism manager. Prefer explicit status, bridge health, and Factory validation handoff."
       build-room:
         inject: "Focus on Roblox Factory coordination. Keep work report-only unless implementation is explicitly approved."
+    # Keep Discord bot-to-bot listening disabled. Cross-Prism agents communicate over NATS.
+    listen_to_agents: []
     # V22: Subscribe to other agents' task events
     # subscriptions:
     #   - "mango.task.completed"  # Receive Mango's results

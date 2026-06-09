@@ -1,326 +1,332 @@
-# Prism — Event-Native AI Agent Platform
+# Prism - Event-Native AI Agent Platform
 
 [![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/)
-[![Tests: 988 passing](https://img.shields.io/badge/tests-988%20passing-brightgreen)]()
-[![Packages: 54](https://img.shields.io/badge/packages-54-green)]()
-[![Version: v0.26.0](https://img.shields.io/badge/version-v0.26.0-purple)]()
+[![Tests](https://img.shields.io/badge/tests-go%20test%20.%2F...-brightgreen)]()
+[![Packages: 65](https://img.shields.io/badge/packages-65-green)]()
 [![License: All Rights Reserved](https://img.shields.io/badge/license-all%20rights%20reserved-red)](./LICENSE)
 
 > **License Notice:** Prism is source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, or incorporation requires written permission. See [LICENSE](./LICENSE) for details.
 
-Prism is a Go event-native AI agent platform that runs as a persistent service. Agents communicate through a NATS event bus, maintain conversation sessions, remember context across conversations, and can be monitored through a web dashboard.
+Prism is a Go event-native AI agent platform that runs as a persistent service. Agents communicate through a NATS event bus, maintain conversation sessions, remember context through Remembrance, use tools under policy, and expose a local API/dashboard.
 
-**The framework controls the lifecycle. The model generates outputs inside that lifecycle.**
+The framework controls lifecycle, safety, context, routing, and persistence. The model generates outputs inside that lifecycle.
+
+Checked-in root binaries can lag behind source. For a fresh setup, build from `cmd/prism-cli` and treat the source tree as authoritative.
 
 ---
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Prism Runtime                             │
-│                                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌───────────────┐    │
-│  │ Session  │  │  Agent   │  │   Task    │  │   Approval    │    │
-│  │ Manager  │  │  Router  │  │  Tracker  │  │    Manager    │    │
-│  └────┬─────┘  └────┬─────┘  └─────┬─────┘  └──────┬───────┘    │
-│       │              │             │                │            │
-│  ┌────▼──────────────▼─────────────▼────────────────▼──────────┐  │
-│  │                 Event Bus (NATS JetStream)                 │  │
-│  │                                                            │  │
-│  │  Namespaces: lumi.*  mango.*  remembrance.*  prism.*       │  │
-│  └──────────┬──────────────┬───────────────┬──────────────────┘  │
-│             │              │               │                     │
-│  ┌──────────▼──┐  ┌───────▼──────┐  ┌─────▼──────────┐         │
-│  │  Discord    │  │ Remembrance  │  │   Dashboard     │         │
-│  │  Bot        │  │  (Python)    │  │   + API         │         │
-│  │             │  │  Memory +    │  │   + Workflow     │         │
-│  │  Receive →  │  │  Dream Cycle │  │   Editor         │         │
-│  │  Respond    │  │  Graph +     │  │                  │         │
-│  │             │  │  Search     │  │  6-tab UI        │         │
-│  └─────────────┘  └─────────────┘  └──────────────────┘         │
-└──────────────────────────────────────────────────────────────────┘
+```text
+Prism Runtime
+  - Config + orchestrator
+  - Embedded or external NATS JetStream
+  - SQLite-backed sessions, tasks, approvals, events, and run artifacts
+  - Agent router, tool executor, policy/guard checks, plan/state managers
+  - Remembrance HTTP client and cache
+  - HTTP API, SSE event stream, dashboard, visual workflow editor
+  - Optional cross-Prism bridge and Roblox Factory handoff
+
+Ingress/Egress
+  - Discord bot
+  - CLI run/chat commands
+  - REST API clients
+  - NATS subjects and scheduled wake events
 ```
 
 ### Core Packages
 
 | Package | Purpose |
 |---------|---------|
-| `bus/` | Embedded NATS JetStream event bus |
-| `event/` | Event types + SQLite WAL store |
-| `provider/` | 5 LLM providers: mock, ollama, openai, anthropic, gemini |
-| `agent/` | Agent registry + lifecycle events |
-| `session/` | SQLite session manager with daily/idle reset |
-| `router/` | Agent routing based on config |
-| `debounce/` | Per-user message deduplication |
-| `stage/` | 10 pipeline stages with WAL recovery |
-| `orchestrator/` | Config loading, validation, agent lifecycle |
-| `remembrance/` | Go HTTP client for Remembrance memory layer |
-| `delegation/` | Task delegation engine + capabilities + approval gates |
-| `approval/` | Human-in-the-loop approval store |
-| `task/` | SQLite task store for delegation tracking |
-| `context/` | Workspace context injection (SOUL.md, AGENTS.md, etc.) |
-| `vector/` | HNSW approximate nearest neighbor search |
-| `adapter/` | 4 built-in adapters + SDK for custom adapters |
-| `api/` | HTTP REST API (13 endpoints) + SSE event stream |
-| `dashboard/` | 6-tab web UI with workflow editor |
-| `editor/` | Visual workflow editor state model |
-| `workflow/` | SVG diagram generators (5 types) |
-| `bridge/` | Multi-Prism communication via NATS |
-| `policy/` | Deterministic rule engine (allow/deny/require_approval) |
-| `validation/` | Allowlisted command profiles + executor |
-| `review/` | Deterministic review artifact generation |
-| `projection/` | CQRS state projections (4 built-in) |
-| `mutation/` | Gated file mutations with audit trail |
-| `retry/` | Exponential backoff with jitter |
-| `safety/` | Path validation, symlink protection |
-| `cost/` | Token usage tracking + pricing |
-| `sse/` | Server-Sent Events decoder |
+| `bus/`, `event/`, `run/` | Embedded NATS, canonical events, run lifecycle, WAL-style artifacts |
+| `provider/` | Mock, Ollama, OpenAI chat completions, OpenAI Responses, Anthropic, Gemini |
+| `agent/`, `router/`, `orchestrator/` | Agent registry, routing, config loading, live service lifecycle |
+| `session/`, `task/`, `approval/`, `delegation/` | Conversation state, task tracking, approvals, multi-agent delegation |
+| `tool/`, `policy/`, `safety/`, `mutation/`, `guard/` | Tool registry, policy gates, path safety, mutations, plan-aware guard checks |
+| `state/`, `plan/`, `prompt/`, `context/` | Working state, task plans, prompt layering, workspace context injection |
+| `remembrance/` | Go HTTP client and cache for the separate Remembrance memory service |
+| `api/`, `dashboard/`, `editor/`, `workflow/` | REST/SSE API, dashboard, visual editor, SVG workflow diagrams |
+| `bridge/`, `crossprism/`, `factory/`, `scheduler/` | Cross-Prism protocol, Factory handoff, scheduled wake events |
+| `vector/`, `sse/`, `cost/`, `projection/`, `validation/`, `review/` | Search, streaming helpers, cost tracking, CQRS projections, checks, review artifacts |
 
 ---
 
 ## Quick Start
 
-### Windows Quick Start
+### Prerequisites
 
-These commands are for PowerShell. For the full Windows setup guide, including
-Remembrance and dashboard troubleshooting, see
-[docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP.md).
+- Go 1.26 or newer
+- Git
+- Ollama if using local Ollama models
+- Python 3.11+ only if running Remembrance
 
-Install Go 1.26 or newer and Git for Windows, then verify the tools:
+### Build
 
-```powershell
-go version
-git --version
-python --version  # optional, only needed for Remembrance
-```
-
-Clone and build fresh Windows binaries:
-
-```powershell
+```bash
 git clone https://github.com/emaharmony/prism.git
 cd prism
+go build -o prism ./cmd/prism-cli
+```
+
+On Windows PowerShell:
+
+```powershell
 $env:GOTELEMETRY = "off"
 go build -o .\prism-current.exe .\cmd\prism-cli
 go build -o .\prism-bus-current.exe .\cmd\prism-bus
 ```
 
-Do not rely on the checked-in root binaries (`prism.exe`, `prism-bus.exe`,
-`prism-agent.exe`) for a fresh setup. They may be older than the current source.
+For a full Windows walkthrough, see [docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP.md).
 
-Create a config and start Prism:
-
-```powershell
-Copy-Item .\prism.yaml.example .\prism.yaml
-.\prism-current.exe serve --config .\prism.yaml
-```
-
-Open `http://localhost:8322` for the live API/dashboard entrypoint or
-`http://localhost:8321/health` for the health check.
-
-Windows notes:
-
-- Use `Copy-Item` instead of `cp`.
-- Use `.\prism-current.exe` instead of `./prism`.
-- Avoid `~` in `data_dir`; use `.\\.prism\\data` or an absolute Windows path.
-- Set provider keys with PowerShell syntax, for example
-  `$env:OPENAI_API_KEY = "..."`.
-
-### Prerequisites
-
-- **Go 1.26+**
-- **Ollama** running locally or cloud access (`ollama serve`)
-- **Python 3.10+** (optional, for Remembrance memory layer)
-
-### Install
+### Test
 
 ```bash
-git clone https://github.com/emaharmony/prism.git
-cd prism
-go build -o prism ./cmd/prism-cli/
+go test ./... -count=1
 ```
 
-### Run Tests
+### Start Serve Mode
 
 ```bash
-go test ./...
-```
-
-### Start Prism
-
-```bash
-# 1. Create a config (or copy the example)
 cp prism.yaml.example prism.yaml
-
-# 2. Start the persistent daemon
-./prism serve
-
-# 3. Open the dashboard
-open http://localhost:8322
+./prism serve --config prism.yaml
 ```
 
-### Start with Memory (Remembrance)
+Default serve-mode URLs:
+
+- Health: `http://localhost:8321/health`
+- API status: `http://localhost:8322/api/v1/status`
+- SSE events: `http://localhost:8322/api/v1/events/stream`
+
+`prism serve` starts an embedded NATS server when `prism.nats_url` is empty.
+
+### Start Remembrance
+
+Remembrance is a separate Python service. From the repo's `remembrance` directory:
 
 ```bash
-# Terminal 1: Start Remembrance
-pip install -e ".[nats]"  # in the memory-mcp-server repo
-python -m rememberance_mcp.serve --port 8788 --nats nats://localhost:4222
-
-# Terminal 2: Start Prism
-./prism serve
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+uvicorn remembrance.app:app --host 127.0.0.1 --port 18790
 ```
 
-In `prism.yaml`, enable Remembrance:
+Enable it in `prism.yaml`:
+
 ```yaml
 remembrance:
   enabled: true
-  url: "http://localhost:8788"
+  url: "http://localhost:18790"
+  timeout_seconds: 60
 ```
 
 ### One-Shot CLI Mode
 
+`prism run` is a one-shot lifecycle command. It expects a NATS bus at `nats://localhost:4222`; use `prism serve` for embedded NATS or start `cmd/prism-bus` separately.
+
 ```bash
-# Single LLM call (no daemon needed)
-./prism run --prompt "Explain event-driven architecture" --provider ollama
-
-# With tool execution
-./prism run --prompt "Read main.go and summarize it" --tools read_file --allow-tools
-
-# With approval gate
-./prism run --prompt "Fix the bug" --tools write_file --require-approval
+./prism run --task "Explain event-driven architecture" --provider ollama --model llama3.2
+./prism run --task "Build prompt and artifacts only" --dry-run-prompt
+./prism run --task "Use Remembrance context" --memory-enabled --memory-url http://localhost:18790
 ```
+
+### Interactive Chat
+
+```bash
+./prism chat --config prism.yaml
+./prism chat --config prism.yaml --agent astraea
+```
+
+`chat` uses the same config, workspace context, tool registry, state tools, plan tools, and provider setup as serve mode, but runs in the terminal.
 
 ---
 
 ## Use Cases
 
-### 1. Persistent AI Assistant with Discord
-Run Prism as a daemon connected to Discord. Agents maintain sessions, remember context across conversations, and respond in real time with streaming.
+### Persistent AI Assistant with Discord
+
+Run Prism as a daemon connected to Discord. Agents maintain sessions, use channel-aware context, call tools through policy, and capture memory through Remembrance.
 
 ```yaml
 agents:
-  - id: lumi
-    role: "lead"
-    provider: "ollama"
-    model: "glm-5.1:cloud"
+  - id: astraea
+    role: orchestrator
+    provider: ollama
+    model: "llama3.2"
     primary: true
     context: [soul, agents, user]
+    capabilities: [plan, route, review, validate, report]
 
 channels:
-  - type: "discord"
+  - type: discord
     token: "<bot-token>"
+    channels: ["general", "dev"]
 ```
 
-### 2. Multi-Agent Delegation
-Lumi plans and delegates tasks to Mango. Tasks flow through the event bus with full lifecycle tracking and approval gates.
+### Multi-Agent Delegation
+
+Agents can delegate work through task events. Capabilities decide which agents can receive which task types, and approvals can gate risky operations.
 
 ```yaml
 agents:
   - id: lumi
-    role: "lead"
+    role: lead
     capabilities: [plan, delegate, review, approve]
-  - id: mango
-    role: "developer"
-    capabilities: [code, test, delegate]
+  - id: forge
+    role: coder
+    capabilities: [code, test, report]
 ```
 
-### 3. Memory-Aware Conversations
-Remembrance captures agent output, extracts entities, builds a knowledge graph, and injects relevant context into future conversations. The dream cycle maintains the knowledge base automatically.
+### Plan-Aware Tool Execution
 
-### 4. Visual Workflow Design
-The dashboard includes a drag-and-drop SVG editor for designing agent topologies. Edit nodes, draw edges, and write back to `prism.yaml`.
+Serve and chat modes register read, project, git, state, and plan tools. Read-only tools can run directly inside allowed paths; mutation tools such as `git_add`, `git_commit`, and `git_push` are policy-gated.
 
-### 5. Platform Integration
-The HTTP API (13 REST endpoints + SSE event stream) allows external tools to monitor agents, approve requests, and query the knowledge graph.
+### Cross-Prism and Factory Handoff
 
-### 6. Approval-Gated Operations
-Write files, run commands, or make changes that require human approval through Discord reactions or the dashboard.
+The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/CROSS-PRISM-FACTORY-SETUP.md](./docs/CROSS-PRISM-FACTORY-SETUP.md).
+
+### Codex Subscription Worker
+
+Prism can delegate selected tasks to the local OpenAI Codex CLI through a `codex` worker. This uses the user's existing `codex login` session, so Prism does not handle ChatGPT OAuth tokens and does not route this path through `OPENAI_API_KEY`.
+
+```yaml
+codex:
+  enabled: true
+  sandbox: "workspace-write"
+  approval_policy: "on-request"
+  timeout_minutes: 30
+```
+
+After enabling it, local agents can emit `[DELEGATE: codex | code] ...`, and cross-Prism commands can target `/prism delegate target:codex task:...`.
 
 ---
 
 ## CLI Reference
 
-### Daemon Mode
+### Daemon and Chat
 
 ```bash
 prism serve [--config prism.yaml] [--port 8321]
+prism chat [--config prism.yaml] [--agent <id>]
+prism status [--config prism.yaml]
+prism dashboard [--port 8080] [--run-dir ./runs] [--policy-dir policies]
 ```
 
-### One-Shot Mode
+### One-Shot Runs
 
 ```bash
-prism run --prompt "..." --provider ollama --model llama3
-prism run --workflow analyze --prompt "..."
-prism run --tools write_file,read_file --allow-tools --prompt "..."
-prism run --require-approval --prompt "..."
+prism run --task "..." [--provider mock|ollama|openai|anthropic|gemini]
+prism run --task "..." --model llama3.2 --ollama-url http://localhost:11434
+prism run --task "..." --memory-enabled --memory-url http://localhost:18790
+prism run --task "..." --dry-run-prompt
 ```
 
 ### Management
 
 ```bash
-prism status                    # System status
-prism health                    # Check NATS bus
-prism dashboard                 # Open web dashboard
-
-# Agents
-prism agent list                # List registered agents
-prism agent show <id>           # Agent details
-
-# Approvals
-prism approval list             # Pending approvals
-prism approval show <id>        # Approval details
-prism approval approve <id>     # Approve a mutation
-prism approval deny <id>        # Deny a mutation
-
-# Tools
-prism tool list                  # Available tools
-prism tool run <name>            # Execute a tool
-
-# Validation
-prism validation list            # Validation profiles
-prism validation run <profile>   # Run validation
-
-# Policy
-prism policy list                # Policy rules
-prism policy evaluate            # Evaluate a request
-
-# Other
-prism adapter list               # Registered adapters
-prism adapter health <name>      # Adapter health check
-prism projection list            # State projections
-prism workflow list              # Registered workflows
-prism context build              # Build workspace context
-prism cost                       # Token usage tracking
+prism health [--bus-url nats://localhost:4222]
+prism agent list
+prism agent show <id>
+prism approval list [--run <run_id>]
+prism approval approve <id> --by <name> --run <run_id> [--validate]
+prism approval deny <id> --by <name> --run <run_id>
+prism tool list
+prism tool run <name> --input '{"key":"value"}' --workspace .
+prism validation list
+prism validation run <profile>
+prism policy list
+prism policy evaluate --input request.json
+prism adapter list
+prism adapter show <name>
+prism adapter health <name>
+prism projection list
+prism projection rebuild --run <id>
+prism projection query <name> --run <id>
+prism workflow list
+prism workflow show <name>
+prism workflow run <name> --input input.json
+prism workflow status <run_id>
+prism context show --context soul,agents --workspace-root .
+prism cost <run_id>
+prism trace <run_id>
+prism search --query "text" [--top-k 10] [--provider mock|openai|ollama]
 ```
 
 ---
 
 ## Configuration
 
-### prism.yaml
+`prism.yaml.example` is the current reference. Important fields:
 
 ```yaml
 prism:
-  nats_url: ""                    # empty = embedded NATS
+  instance_id: "prism"
+  nats_url: ""                       # empty = embedded NATS in serve mode
   data_dir: ".prism/data"
-  port: 8321                      # health check port
+  workspace: "D:/_projects_/prism"
+  ollama_url: "http://localhost:11434"
+  context_token_budget: 4000
+  llm_timeout_seconds: 1200
+  port: 8321
   log_level: "info"
-  context_token_budget: 4000      # max tokens for workspace injection
+  allowed_paths: []
+  scheduler:
+    enabled: false
+    jobs: []
+
+bridge:
+  enabled: false
+  mode: "shared_nats"
+  secret_env: "PRISM_BRIDGE_SECRET"
+  allowed_subjects:
+    - "prism.cross.context_sync"
+    - "prism.cross.task_request"
+    - "prism.cross.status_request"
+    - "prism.cross.validation_request"
+    - "prism.cross.task_response"
+  factory:
+    enabled: false
+    root: "D:/_projects_/roblox-factory"
+    project: "eggventura"
+    project_path: "D:/Projects/Roblox/eggventura"
+    approval_mode: "report_only"
+    run_codex: false
+    vision_review: "none"
+    playtest_mode: "none"
+    enable_ui_generation: false
+    ui_generation_dry_run: true
 
 agents:
-  - id: lumi
-    role: "lead"
-    provider: "ollama"
-    model: "glm-5.1:cloud"
+  - id: astraea
+    role: orchestrator
+    provider: ollama                  # ollama, openai, openai_responses, anthropic, gemini
+    model: "llama3.2"
     primary: true
-    context: [soul, agents, user]  # which workspace files to inject
-    capabilities: [plan, delegate, review, approve]
-    subscriptions: []               # NATS subjects to listen on
+    context: [soul, agents, user]
+    conversation_postfix: ""
+    capabilities: [plan, route, review, validate, report]
+    listen_to_agents: []
+    subscriptions: []
+    state_actions:
+      manager-room:
+        inject: "Prefer explicit status and concrete decisions."
 
 channels:
-  - type: "discord"
+  - type: discord
     token: "<bot-token>"
-    channels: []                   # empty = all channels
+    channels: []
+
+channel_roles:
+  - id: "general"
+    role: "manager-room"
+    tools: "read-only"                # all, read-only, none
+    personality: "direct"
+    context: "Coordination room for status and task triage."
+
+actions:
+  - trigger: "*.agent.output"
+    action: "remembrance.gate.extract"
+    enabled: true
 
 sessions:
   max_context_messages: 100
@@ -328,103 +334,118 @@ sessions:
   compaction_strategy: "truncate"
   daily_reset_hour: 4
 
-actions: []                         # event-triggered actions
-
 remembrance:
   enabled: false
-  url: "http://localhost:8788"
+  url: "http://localhost:18790"
+  timeout_seconds: 60
 ```
+
+Windows notes:
+
+- The current config loader does not expand `~` in YAML paths; use repo-relative or absolute paths.
+- The current config loader does not expand `${ENV_VAR}` inside YAML. Put real local values in `prism.yaml` or remove optional channels while testing.
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | — | OpenAI provider key |
-| `ANTHROPIC_API_KEY` | — | Anthropic provider key |
-| `GEMINI_API_KEY` | — | Gemini provider key |
-| `NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL (empty = embedded) |
-| `PRISM_DATA_DIR` | `./runs` | Run output directory |
-| `REMEMBRANCE_HOME` | `~/.remembrance` | Remembrance data directory |
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | Required by `openai` and `openai_responses` providers |
+| `ANTHROPIC_API_KEY` | Required by the Anthropic provider |
+| `GEMINI_API_KEY` | Required by the Gemini provider |
+| `OPENAI_EMBEDDING_MODEL` | Optional model override for `prism search --provider openai` |
+| `OLLAMA_BASE_URL` | Optional embedding base URL for `prism search --provider ollama` |
+| `OLLAMA_EMBEDDING_MODEL` | Optional Ollama embedding model override |
+| `PRISM_BRIDGE_SECRET` | Shared HMAC secret for cross-Prism bridge when enabled |
+
+---
+
+## API Surface
+
+Serve mode exposes the live API on `port + 1`, so the default is `8322`.
+
+Current routes include:
+
+- `GET /api/v1/status`
+- `GET /api/v1/agents`, `GET /api/v1/agents/{id}`
+- `GET /api/v1/sessions`, `GET /api/v1/sessions/{id}`
+- `GET /api/v1/tasks`, `GET /api/v1/tasks/{id}`
+- `GET /api/v1/approvals`
+- `POST /api/v1/approvals/{id}/grant`, `POST /api/v1/approvals/{id}/deny`
+- `GET /api/v1/events/stream`
+- `GET /api/v1/workflows`, `GET /api/v1/workflows/{type}`
+- `GET/PUT /api/v1/editor`
+- `GET/POST /api/v1/editor/nodes`, `PUT/DELETE /api/v1/editor/nodes/{id}`
+- `GET/POST /api/v1/editor/edges`, `DELETE /api/v1/editor/edges/{id}`
+- `POST /api/v1/editor/save`
+- `GET /api/v1/costs`
 
 ---
 
 ## Key Design Decisions
 
-- **Events are the source of truth** — every meaningful action becomes a canonical event
-- **Per-agent namespaces** — `lumi.agent.output`, `mango.task.created`, `remembrance.dream.triggered`
-- **Deterministic policy** — no LLM-based approval, rules decide allow/deny/require_approval
-- **Single binary** — no external DB required (SQLite + embedded NATS)
-- **SSE streaming** — 50ms batching, spec-compliant, all 5 providers
-- **HNSW vector search** — O(log n) approximate nearest neighbor, pure Go
-- **Shared transport** — connection pooling across all LLM providers
-- **WAL crash recovery** — every stage checkpointed, idempotent replay
-- **Remembrance is separate** — Python service, HTTP + NATS, not embedded
-- **Dream cycle** — nightly 3AM + event-triggered after 10 PERSIST captures
+- Events are the source of truth; meaningful actions become canonical events.
+- Agent IDs define namespaces, for example `astraea.agent.output`.
+- Policies and guard checks are deterministic; the model does not decide its own write permissions.
+- SQLite and embedded NATS keep local development self-contained.
+- Remembrance is a separate HTTP service, not embedded.
+- ChatProvider-native tool calling is preferred where supported; text-based tool requests remain as fallback.
+- Working state and plans are explicit files managed by state/plan tools.
+- Cross-Prism and Factory integrations are optional adapters around the core runtime.
 
 ---
 
 ## Version History
 
-| Version | What | PR |
-|---------|------|----|
-| V1 | Foundation: CLI, events, integration tests | #1 |
-| V2 | Real LLM execution: provider interface, Ollama | — |
-| V3 | Controlled tool execution: registry, policy, built-ins | — |
-| V4 | Approval-gated mutations: propose, approve, apply | — |
-| V5 | Validation + review pipeline | #8 |
-| V6 | Gate system → moved to AI-Hedge-Prism | — |
-| V7 | Workflow runtime: compose capabilities as named workflows | #13 |
-| V8 | Core policy engine: declarative rules, evaluator | #14 |
-| V9 | Adapter contract system: manifest, registry, lifecycle | #15 |
-| V10 | State projections: CQRS query layer | #16 |
-| V11 | Dashboard: web UI for runs, events, approvals | #17 |
-| V12 | Architectural refactor: CLI split, safety consolidation | #18 |
-| V13 | Multi-agent orchestration through events | #19 |
-| V14a-e | Pipeline stages, crash recovery, providers, Discord, SQLite | #20-25 |
-| V15 | Vector search with pluggable embeddings | #26 |
-| V16 | Intelligence arc: context injection, cost tracking | — |
-| V17 | Performance: HNSW index, connection pooling, event indexes | #30 |
-| V18 | OpenClaw config transfer | — |
-| V19 | Smart context injection | — |
-| V20 | Live orchestrator: `prism serve`, Discord bot, sessions | #31 |
-| V21 | Full conversation pipeline with streaming | #32 |
-| V22 | Multi-agent delegation, capabilities, approval gates | #34 |
-| V23 | Platform: HTTP API, dashboard v2, bridge, adapter SDK | — |
-| V24 | Visual representations: 5 SVG diagram types | — |
-| V25 | Visual workflow editor: drag-and-drop SVG | — |
-| V26 | Remembrance integration: memory, dream cycle, context caching | #35 |
-
-See [docs/](./docs/) for detailed design documents for each version.
+| Version | What | Design Doc |
+|---------|------|------------|
+| V1 | Foundation: CLI, event bus, canonical events | [V1](./docs/V1-FOUNDATION-DESIGN.md) |
+| V2 | Real LLM execution and provider interface | [V2](./docs/V2-REAL-LLM-EXECUTION-DESIGN.md) |
+| V3 | Controlled tool execution | [V3](./docs/V3-CONTROLLED-TOOL-EXECUTION-DESIGN.md) |
+| V4 | Approval-gated mutations | [V4](./docs/V4-APPROVAL-GATED-MUTATIONS-DESIGN.md) |
+| V5 | Validation and deterministic review | [V5](./docs/V5-VALIDATION-REVIEW-DESIGN.md) |
+| V6 | Gate/trading work moved out of core Prism | [V6](./docs/V6-GATE-TRADING-MOVED.md) |
+| V7 | Workflow runtime | [V7](./docs/V7-WORKFLOW-RUNTIME-DESIGN.md) |
+| V8 | Policy engine | [V8](./docs/V8-POLICY-ENGINE-DESIGN.md) |
+| V9 | Adapter contract and SDK | [V9](./docs/V9-ADAPTER-CONTRACT-DESIGN.md) |
+| V10 | State projections | [V10](./docs/V10-STATE-PROJECTIONS-DESIGN.md) |
+| V11 | Dashboard | [V11](./docs/V11-DASHBOARD-DESIGN.md) |
+| V12 | CLI and architecture refactor | [V12](./docs/V12-ARCHITECTURAL-REFACTOR-DESIGN.md) |
+| V13 | Multi-agent orchestration | [V13](./docs/V13-MULTI-AGENT-DESIGN.md) |
+| V14a-e | Pipeline, streaming, providers, SQLite, Discord coverage | [V14a](./docs/V14a-DECOMPOSE-STREAM-DESIGN.md) |
+| V15 | Vector search | [V15](./docs/V15-VECTOR-SEARCH-DESIGN.md) |
+| V16 | Intelligence arc | [V16](./docs/V16-INTELLIGENCE-ARC-DESIGN.md) |
+| V17 | Performance | [V17](./docs/V17-PERFORMANCE-DESIGN.md) |
+| V18 | OpenClaw config transfer | [V18](./docs/V18-OPENCLAW-CONFIG-DESIGN.md) |
+| V19 | Smart context injection | [V19](./docs/V19-SMART-CONTEXT-DESIGN.md) |
+| V20 | Live orchestrator | [V20](./docs/V20-LIVE-ORCHESTRATOR-DESIGN.md) |
+| V21 | Full conversation pipeline | [V21](./docs/V21-FULL-CONVERSATION-DESIGN.md) |
+| V22 | Multi-agent delegation | [V22](./docs/V22-MULTI-AGENT-ORCHESTRATION-DESIGN.md) |
+| V23 | Platform API, bridge, dashboard, SDK | [V23](./docs/V23-PLATFORM-DESIGN.md) |
+| V24 | Visual workflow diagrams | [V24](./docs/V24-VISUAL-WORKFLOW-DESIGN.md) |
+| V25 | Visual workflow editor | [V25](./docs/V25-VISUAL-WORKFLOW-EDITOR-DESIGN.md) |
+| V26 | Remembrance integration | [V26](./docs/V26-REMEMBRANCE-INTEGRATION-DESIGN.md) |
+| V27 | Serve-mode tool executor | [V27](./docs/V27-SERVE-TOOL-EXECUTOR-DESIGN.md) |
+| V28 | Project and git tools | [V28](./docs/V28-PROJECT-GIT-TOOLS-DESIGN.md) |
+| V29 | Tool guidance and session awareness | [V29](./docs/V29-TOOL-GUIDANCE-SESSION-AWARENESS-DESIGN.md) |
+| V30 | Native Ollama tool calling | [V30](./docs/V30-NATIVE-TOOL-CALLING-DESIGN.md) |
+| V31 | Native chat streaming gap note | [V31](./docs/V31-CHAT-STREAMING-GAP.md) |
+| V32 | Operating environment: state, plans, guard, wake | [V32](./docs/V32-LUMI-OPERATING-ENVIRONMENT.md) |
+| V33 | Conversation awareness and channel context | [V33](./docs/V33-CONVERSATION-AWARENESS.md) |
+| V34 | OpenAI Responses provider | [V34](./docs/V34-OPENAI-RESPONSES-DESIGN.md) |
 
 ---
 
 ## Dependencies
 
-**Direct (6):**
-- `modernc.org/sqlite` — pure-Go SQLite driver
-- `github.com/gofrs/flock` — File locking
-- `github.com/nats-io/nats-server/v2` — Embedded NATS
-- `github.com/nats-io/nats.go` — NATS client
-- `github.com/oklog/ulid` — Unique IDs
-- `gopkg.in/yaml.v3` — YAML parsing
-
-**Zero SDKs. Zero frameworks. Zero external databases.**
+Direct runtime dependencies are intentionally small: pure-Go SQLite, NATS server/client, YAML, locking, ULID/XID, Discord, SVG, and WebSocket support. There is no external database requirement for local development.
 
 ---
 
 ## Testing
 
 ```bash
-# All tests (988 tests, 54 packages)
-go test ./...
-
-# Specific package
-go test ./internal/stage/... -v
-
-# With race detector
+go test ./... -count=1
 go test ./internal/stage/... -race
-
-# Benchmarks
 go test ./internal/vector/... -bench=.
 ```
 
@@ -432,11 +453,11 @@ go test ./internal/vector/... -bench=.
 
 ## Project Status
 
-Prism is a source-available AI agent platform at v0.26.0. The core runtime is stable with persistent daemon mode, Discord integration, multi-agent orchestration, memory, and a web dashboard.
+Prism is source-available and active. The stable core includes serve mode, Discord integration, sessions, multi-agent orchestration, Remembrance, tool execution, API/dashboard/editor, state/plan tooling, scheduler hooks, cross-Prism bridge, and provider support including OpenAI Responses.
 
-**Current focus:** Streaming responses, cron scheduling, OpenClaw migration tool.
+Current focus is keeping runtime behavior, docs, and configuration aligned while hardening the state/plan/guard pipeline, event-driven wake, and cross-Prism/Factory handoff.
 
-See [ROADMAP.md](./docs/ROADMAP.md) for phase milestones and [TASKS.md](./docs/TASKS.md) for granular task status.
+See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/TASKS.md](./docs/TASKS.md).
 
 ---
 
