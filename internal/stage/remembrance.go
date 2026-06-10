@@ -251,7 +251,7 @@ func (s *RemembranceStage) buildContext(rc *RunContext) (contextStr string, sour
 		return "", "no_task", nil, nil, nil
 	}
 
-	ctxResp, ctxErr := s.client.BuildContext(query, rc.Project, rc.Agent, 10)
+	ctxResp, ctxErr := s.client.BuildContext(query, rc.Project, rc.Agent, remcli.DefaultContextMaxTokens)
 	if ctxErr != nil {
 		ctxErr = fmt.Errorf("remembrance context build failed: %w", ctxErr)
 		log.Printf("prism: %v", ctxErr)

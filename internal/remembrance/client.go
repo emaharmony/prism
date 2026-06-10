@@ -144,6 +144,9 @@ type Client struct {
 // Capture may run synchronous extraction and graph wiring before returning.
 const DefaultTimeout = 60 * time.Second
 
+// DefaultContextMaxTokens is the default Remembrance context-pack token budget.
+const DefaultContextMaxTokens = 2500
+
 // NewClient creates a new Remembrance client with default timeout.
 func NewClient(baseURL string) *Client {
 	return NewClientWithTimeout(baseURL, DefaultTimeout)
@@ -163,14 +166,14 @@ func NewClientWithTimeout(baseURL string, timeout time.Duration) *Client {
 
 // BuildContext requests context from Remembrance for a task.
 // POSTs to /v1/context/build with the agent's task.
-func (c *Client) BuildContext(task, project, agent string, limit int) (*ContextPackResponse, error) {
+func (c *Client) BuildContext(task, project, agent string, maxTokens int) (*ContextPackResponse, error) {
 	body := map[string]any{
 		"task":       task,
 		"project_id": project,
 		"agent_id":   agent,
 	}
-	if limit > 0 {
-		body["max_tokens"] = limit
+	if maxTokens > 0 {
+		body["max_tokens"] = maxTokens
 	}
 	if project == "" {
 		body["project_id"] = "prism"

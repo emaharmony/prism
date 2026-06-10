@@ -199,6 +199,24 @@ codex:
 
 After enabling it, local agents can emit `[DELEGATE: codex | code] ...`, and cross-Prism commands can target `/prism delegate target:codex task:...`.
 
+### Auto-Patching
+
+Autopatch turns explicit bug reports or validation failures into reviewable patch proposals. It creates an isolated git worktree, tries configured patch workers in order, runs allowlisted validation profiles, and stores artifacts under `.prism/data/autopatch/<task-id>/`. It is propose-only: patches are not applied to the main worktree.
+
+```yaml
+autopatch:
+  enabled: true
+  mode: "propose"
+  require_clean_worktree: true
+  max_attempts: 2
+  validation_profiles: ["go_test_all"]
+  worker_order: ["codex", "local_agent"]
+  local_agent: "forge"
+  worktree_root: ".prism/worktrees"
+```
+
+Start a task with `POST /api/v1/autopatch` using `{"description":"tests are failing, fix this bug"}`. In Discord, explicit requests such as “auto patch this bug” or “tests are failing, fix this bug” start the same tracked `auto_patch` task.
+
 ---
 
 ## CLI Reference

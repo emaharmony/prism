@@ -105,6 +105,6 @@ class LanceDBStore:
         """Get the total number of stored vectors."""
         try:
             table = self.db.open_table("memories")
-            return len(table.to_pandas())
+            return table.count_rows()
         except Exception:
             return 0

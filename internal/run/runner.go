@@ -241,7 +241,7 @@ func (r *Runner) Run() (*RunResult, error) {
 			"agent":   r.config.Agent,
 		}, evt.ID)
 
-		ctxResp, err := r.memClient.BuildContext(r.config.Task, r.config.Project, r.config.Agent, 10)
+		ctxResp, err := r.memClient.BuildContext(r.config.Task, r.config.Project, r.config.Agent, remembrance.DefaultContextMaxTokens)
 		if err != nil {
 			// Memory failed
 			log.Printf("prism: remembrance context failed: %v", err)
