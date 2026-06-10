@@ -56,15 +56,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <body>
 
 <div class="toolbar">
-  <h1>🔮 Workflow Editor</h1>
+  <h1>Workflow Editor</h1>
   <div class="sep"></div>
   <button class="btn" onclick="addNode()" title="Add Agent">+ Agent</button>
-  <button class="btn" onclick="addEdgeMode()" id="edgeBtn" title="Connect two nodes">↗ Edge</button>
-  <button class="btn danger" onclick="deleteSelected()" id="deleteBtn" title="Delete selected">✕ Delete</button>
+  <button class="btn" onclick="addEdgeMode()" id="edgeBtn" title="Connect two nodes">Edge</button>
+  <button class="btn danger" onclick="deleteSelected()" id="deleteBtn" title="Delete selected">Delete</button>
   <div class="sep"></div>
-  <button class="btn" onclick="autoLayout()">⬒ Layout</button>
-  <button class="btn save" onclick="saveConfig()">💾 Save YAML</button>
-  <button class="btn" onclick="loadConfig()">↻ Reload</button>
+  <button class="btn" onclick="autoLayout()">Layout</button>
+  <button class="btn save" onclick="saveConfig()">Preview YAML</button>
+  <button class="btn" onclick="loadConfig()">Reload</button>
   <div style="flex:1"></div>
   <span id="statusText" style="font-size:12px;color:#888"></span>
 </div>
@@ -190,7 +190,7 @@ function render() {
     el.innerHTML = `
       <div class="header">
         <span class="title">${escapeHtml(node.label || node.id.toUpperCase())}</span>
-        ${node.primary ? '<span class="primary">★</span>' : ''}
+        ${node.primary ? '<span class="primary" title="Primary agent">P</span>' : ''}
       </div>
       <div class="body">
         <span class="role ${roleClass}">${node.role || 'agent'}</span>
@@ -392,7 +392,7 @@ async function saveConfig() {
     });
     const result = await resp.json();
     if (result.valid) {
-      showToast('Config valid! ' + result.agents + ' agents, ' + result.edges + ' edges', 'success');
+      showToast('YAML preview ready: ' + result.agents + ' agents, ' + result.edges + ' edges', 'success');
       // Show YAML in a new window
       if (result.yaml) {
         const w = window.open('', '_blank');

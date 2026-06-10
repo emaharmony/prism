@@ -10,6 +10,7 @@ import (
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/remembrance"
 	ctxcontext "context"
 )
 
@@ -97,7 +98,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 		remCtx := cc.remCache.Get(cacheKey)
 		if remCtx == nil {
 			var remCtxErr error
-			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, 5)
+			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, remembrance.DefaultContextMaxTokens)
 			if remCtxErr != nil {
 				log.Printf("[REMEMBRANCE] context build failed: %v", remCtxErr)
 			} else if remCtx != nil {

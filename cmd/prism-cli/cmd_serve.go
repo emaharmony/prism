@@ -41,7 +41,9 @@ import (
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/api"
+	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/crossprism"
@@ -112,9 +114,11 @@ type conversationContext struct {
 	remClient   *remembrance.Client      // V21: Remembrance client for memory auto-save
 	remSem      chan struct{}            // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
 	remCache    *remembranceCache        // V26: TTL cache for BuildContext results
+	summarySem  chan struct{}            // Long-running codebase summary concurrency guard
 	delegEngine *delegation.Engine       // V22: Delegation engine for agent-to-agent task delegation
 	taskStore   *task.Store              // V22: Task store for delegation tracking
 	crossCoord  *crossprism.Coordinator  // Cross-Prism NATS delegation coordinator
+	autopatcher *autopatch.Service       // Diagnose-and-propose patch tasks
 	toolExec    *tool.Executor           // V27: Tool executor for file system access
 	stateMgr    *state.Manager           // V32: Working state manager for adaptive context
 	planMgr     *plan.Manager            // V32: Plan manager for plan-first pipeline
@@ -205,6 +209,13 @@ func executeServe(args []string) {
 	}
 	fmt.Printf("  Registered %d agents\n", len(cfg.Agents))
 
+	orch, err = orchestrator.New(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating orchestrator: %v\n", err)
+		os.Exit(1)
+	}
+	orch.Agents = agentReg
+
 	// 4. Set up LLM providers from agent configs
 	provReg := provider.NewProviderRegistry()
 	if err := registerProviders(cfg, provReg); err != nil {
@@ -261,6 +272,12 @@ func executeServe(args []string) {
 			}
 		}
 		fmt.Println("  Codex worker: enabled")
+	}
+
+	autopatcher := buildAutoPatchService(cfg, taskStore, provReg, natsConn)
+	if autopatcher != nil && autopatcher.Enabled() {
+		fmt.Println("  Autopatch: enabled")
+		startAutoPatchValidationSubscriber(autopatcher, natsConn)
 	}
 
 	// 6. Set up agent router
@@ -480,9 +497,11 @@ func executeServe(args []string) {
 				remClient:   remClient,
 				remSem:      make(chan struct{}, 4),
 				remCache:    newRemembranceCache(60 * time.Second),
+				summarySem:  make(chan struct{}, 1),
 				delegEngine: delegEngine,
 				taskStore:   taskStore,
 				crossCoord:  crossCoord,
+				autopatcher: autopatcher,
 				toolExec:    toolExec,
 				toolPolicy:  toolPolicy,
 				rateLimiter: safety.NewUserRateLimiter(
@@ -534,14 +553,15 @@ func executeServe(args []string) {
 
 	apiPort := *portFlag + 1 // API on port+1 (default 8322)
 	apiServer := api.NewServer(api.Config{
-		Addr:     fmt.Sprintf(":%d", apiPort),
-		Orch:     orch,
-		Store:    taskStore,
-		Sessions: sessMgr,
-		Engine:   delegEngine,
-		Approval: approvalMgr,
-		Tracker:  delegTracker,
-		NATS:     natsConn,
+		Addr:      fmt.Sprintf(":%d", apiPort),
+		Orch:      orch,
+		Store:     taskStore,
+		Sessions:  sessMgr,
+		Engine:    delegEngine,
+		Approval:  approvalMgr,
+		Tracker:   delegTracker,
+		AutoPatch: autopatcher,
+		NATS:      natsConn,
 	})
 	go func() {
 		if err := apiServer.Start(); err != nil {
@@ -696,6 +716,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		log.Printf("[SECURITY] medium-severity flags in input from user %s: flags=%v", msg.UserID, injectionCheck.Flags)
 	}
 
+	if codesummary.RequestMatches(sanitizedContent) {
+		cc.handleCodebaseSummaryRequest(msg, sanitizedContent)
+		return
+	}
+	if autopatch.RequestMatches(sanitizedContent) {
+		cc.handleAutoPatchRequest(msg, sanitizedContent)
+		return
+	}
+
 	// Emit channel received event
 	cc.publishEvent("prism.channel.received", map[string]any{
 		"user_id":    msg.UserID,
@@ -788,7 +817,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		remCtx := cc.remCache.Get(cacheKey)
 		if remCtx == nil {
 			var remCtxErr error
-			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, 5)
+			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, remembrance.DefaultContextMaxTokens)
 			if remCtxErr != nil {
 				log.Printf("[REMEMBRANCE] context build failed: %v", remCtxErr)
 			} else if remCtx != nil {

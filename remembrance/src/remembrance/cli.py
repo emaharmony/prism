@@ -54,8 +54,8 @@ def init():
     metadata = MetadataStore(config.database.metadata_path)
     vectors = LanceDBStore(config.database.vector_path)
 
-    typer.echo(f"✅ Metadata DB initialized")
-    typer.echo(f"✅ Vector store initialized")
+    typer.echo("OK Metadata DB initialized")
+    typer.echo("OK Vector store initialized")
     typer.echo(f"")
     typer.echo(f"Run 'remembrance ingest --file seed.jsonl' to load seed memories.")
 
@@ -95,7 +95,7 @@ def ingest(
                     source_agent=data.get("source_agent", "cli"),
                 )
                 result = ingester.ingest(req)
-                typer.echo(f"  ✅ {result.memory_id}: {req.title} [{result.status}]")
+                typer.echo(f"  OK {result.memory_id}: {req.title} [{result.status}]")
                 count += 1
         typer.echo(f"\nIngested {count} memories from {file}")
     elif title and content:
@@ -110,9 +110,9 @@ def ingest(
             importance_score=importance,
         )
         result = ingester.ingest(req)
-        typer.echo(f"✅ Ingested: {result.memory_id} [{result.status}]")
+        typer.echo(f"OK Ingested: {result.memory_id} [{result.status}]")
     else:
-        typer.echo("❌ Provide --file or --title + --content")
+        typer.echo("ERROR Provide --file or --title + --content")
         raise typer.Exit(1)
 
 
@@ -162,18 +162,18 @@ def build_context(
     )
     context = builder.build_context(request)
 
-    typer.echo(f"\n📋 Context Pack for: {task}")
+    typer.echo(f"\nContext Pack for: {task}")
     typer.echo(f"   Selected {len(context.selected_memories)} memories | ~{context.token_count} tokens")
     if context.warnings:
         for w in context.warnings:
-            typer.echo(f"   ⚠️  {w}")
+            typer.echo(f"   WARNING {w}")
 
     if context.context_markdown:
         typer.echo(f"\n{context.context_markdown}")
 
     if out and context.context_markdown:
         Path(out).write_text(context.context_markdown)
-        typer.echo(f"\n✅ Context written to {out}")
+        typer.echo(f"\nOK Context written to {out}")
 
 
 @app.command()

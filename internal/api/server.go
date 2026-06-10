@@ -1,34 +1,38 @@
 // Package api provides the Prism HTTP API server (REST + SSE).
 //
 // Endpoints:
-//   GET /api/v1/status          — System status
-//   GET /api/v1/agents           — List agents
-//   GET /api/v1/agents/{id}      — Agent detail
-//   GET /api/v1/sessions          — List sessions
-//   GET /api/v1/sessions/{id}    — Session detail
-//   GET /api/v1/tasks             — List tasks
-//   GET /api/v1/tasks/{id}       — Task detail
-//   GET /api/v1/approvals         — List pending approvals
-//   POST /api/v1/approvals/{id}/grant — Grant approval
-//   POST /api/v1/approvals/{id}/deny   — Deny approval
-//   GET /api/v1/events/stream    — SSE event stream
-//   GET /api/v1/workflows        — List workflow types
-//   GET /api/v1/workflows/{type} — SVG diagram
-//   GET /api/v1/editor          — Get editor state (current config as graph)
-//   PUT /api/v1/editor          — Validate + preview YAML from editor state
-//   GET /api/v1/editor/nodes    — List nodes
-//   POST /api/v1/editor/nodes    — Add a node
-//   PUT /api/v1/editor/nodes/{id} — Update a node
-//   DELETE /api/v1/editor/nodes/{id} — Delete a node
-//   GET /api/v1/editor/edges    — List edges
-//   POST /api/v1/editor/edges    — Add an edge
-//   DELETE /api/v1/editor/edges/{id} — Delete an edge
-//   POST /api/v1/editor/save     — Validate + generate YAML
-//   GET /api/v1/costs             — Cost summary
+//
+//	GET /api/v1/status          — System status
+//	GET /api/v1/agents           — List agents
+//	GET /api/v1/agents/{id}      — Agent detail
+//	GET /api/v1/sessions          — List sessions
+//	GET /api/v1/sessions/{id}    — Session detail
+//	GET /api/v1/tasks             — List tasks
+//	GET /api/v1/tasks/{id}       — Task detail
+//	POST /api/v1/autopatch        — Start bug diagnosis + patch proposal
+//	GET /api/v1/approvals         — List pending approvals
+//	POST /api/v1/approvals/{id}/grant — Grant approval
+//	POST /api/v1/approvals/{id}/deny   — Deny approval
+//	GET /api/v1/events/stream    — SSE event stream
+//	GET /api/v1/workflows        — List workflow types
+//	GET /api/v1/workflows/{type} — SVG diagram
+//	GET /api/v1/editor          — Get editor state (current config as graph)
+//	PUT /api/v1/editor          — Validate + preview YAML from editor state
+//	GET /api/v1/editor/nodes    — List nodes
+//	POST /api/v1/editor/nodes    — Add a node
+//	PUT /api/v1/editor/nodes/{id} — Update a node
+//	DELETE /api/v1/editor/nodes/{id} — Delete a node
+//	GET /api/v1/editor/edges    — List edges
+//	POST /api/v1/editor/edges    — Add an edge
+//	DELETE /api/v1/editor/edges/{id} — Delete an edge
+//	POST /api/v1/editor/save     — Validate + generate YAML
+//	GET /api/v1/costs             — Cost summary
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -37,6 +41,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/editor"
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -55,6 +60,7 @@ type Server struct {
 	engine    *delegation.Engine
 	approval  *delegation.ApprovalManager
 	tracker   *delegation.Tracker
+	autopatch AutoPatchStarter
 	nc        *nats.Conn
 	mux       *http.ServeMux
 	editorMu  sync.RWMutex
@@ -63,14 +69,21 @@ type Server struct {
 
 // Config holds API server configuration.
 type Config struct {
-	Addr     string // listen address (e.g., ":8081")
-	Orch     *orchestrator.Orchestrator
-	Store    *task.Store
-	Sessions *session.Manager
-	Engine   *delegation.Engine
-	Approval *delegation.ApprovalManager
-	Tracker  *delegation.Tracker
-	NATS     *nats.Conn
+	Addr      string // listen address (e.g., ":8081")
+	Orch      *orchestrator.Orchestrator
+	Store     *task.Store
+	Sessions  *session.Manager
+	Engine    *delegation.Engine
+	Approval  *delegation.ApprovalManager
+	Tracker   *delegation.Tracker
+	AutoPatch AutoPatchStarter
+	NATS      *nats.Conn
+}
+
+// AutoPatchStarter is the API surface needed from the autopatch service.
+type AutoPatchStarter interface {
+	Enabled() bool
+	Start(ctx context.Context, req autopatch.Request) (*task.Task, error)
 }
 
 // NewServer creates a new API server.
@@ -83,6 +96,7 @@ func NewServer(cfg Config) *Server {
 		engine:    cfg.Engine,
 		approval:  cfg.Approval,
 		tracker:   cfg.Tracker,
+		autopatch: cfg.AutoPatch,
 		nc:        cfg.NATS,
 		mux:       http.NewServeMux(),
 	}
@@ -99,6 +113,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/sessions/", s.handleSessionDetail)
 	s.mux.HandleFunc("/api/v1/tasks", s.handleTasks)
 	s.mux.HandleFunc("/api/v1/tasks/", s.handleTaskDetail)
+	s.mux.HandleFunc("/api/v1/autopatch", s.handleAutoPatch)
 	s.mux.HandleFunc("/api/v1/approvals", s.handleApprovals)
 	s.mux.HandleFunc("/api/v1/approvals/", s.handleApprovalAction)
 	s.mux.HandleFunc("/api/v1/events/stream", s.handleEventStream)
@@ -120,11 +135,11 @@ func (s *Server) Start() error {
 	handler := corsMiddleware(panicRecovery(s.mux))
 
 	srv := &http.Server{
-		Addr:         s.addr,
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           s.addr,
+		Handler:        handler,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    60 * time.Second,
 		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 
@@ -207,7 +222,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, s.orch.Status())
+	writeJSON(w, s.orch.Config.Agents)
 }
 
 func (s *Server) handleAgentDetail(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +367,48 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, tsk)
+}
+
+// --- Autopatch ---
+
+func (s *Server) handleAutoPatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.autopatch == nil || !s.autopatch.Enabled() {
+		writeJSONError(w, "autopatch is disabled", http.StatusServiceUnavailable)
+		return
+	}
+	var req autopatch.Request
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Source == "" {
+		req.Source = "manual"
+	}
+	if req.SubmittedBy == "" {
+		req.SubmittedBy = "api:user"
+	}
+	tsk, err := s.autopatch.Start(r.Context(), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, autopatch.ErrDirtyWorktree):
+			writeJSONError(w, err.Error(), http.StatusConflict)
+		case errors.Is(err, autopatch.ErrDisabled):
+			writeJSONError(w, err.Error(), http.StatusServiceUnavailable)
+		default:
+			writeJSONError(w, err.Error(), http.StatusBadRequest)
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusAccepted)
+	if err := json.NewEncoder(w).Encode(tsk); err != nil {
+		log.Printf("[API] json encode error: %v", err)
+	}
 }
 
 // --- Approvals ---
@@ -640,7 +697,7 @@ func (s *Server) putEditorState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"valid": true,
+		"valid":  true,
 		"yaml":   yaml,
 		"agents": len(state.Nodes),
 		"edges":  len(state.Edges),
@@ -816,7 +873,7 @@ func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{
 			"valid":   true,
-			"yaml":     yaml,
+			"yaml":    yaml,
 			"agents":  len(req.Nodes),
 			"edges":   len(req.Edges),
 			"written": true,
@@ -828,7 +885,7 @@ func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 
 	// Preview only
 	writeJSON(w, map[string]any{
-		"valid":  true,
+		"valid":   true,
 		"yaml":    yaml,
 		"agents":  len(req.Nodes),
 		"edges":   len(req.Edges),

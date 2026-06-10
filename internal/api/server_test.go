@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +10,38 @@ import (
 	"testing"
 	"time"
 
+	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/editor"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/task"
 )
+
+type fakeAutoPatchStarter struct {
+	enabled bool
+	err     error
+	req     autopatch.Request
+}
+
+func (f *fakeAutoPatchStarter) Enabled() bool { return f.enabled }
+func (f *fakeAutoPatchStarter) Start(ctx context.Context, req autopatch.Request) (*task.Task, error) {
+	f.req = req
+	if f.err != nil {
+		return nil, f.err
+	}
+	now := time.Now()
+	return &task.Task{
+		ID:          "autopatch-test",
+		Type:        "auto_patch",
+		Status:      task.StatusCreated,
+		DelegatedBy: req.SubmittedBy,
+		DelegatedTo: "autopatch",
+		Description: req.Description,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, nil
+}
 
 func newTestAPI(t *testing.T) (*Server, func()) {
 	t.Helper()
@@ -133,6 +160,17 @@ func TestAPI_Agents(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
+
+	var agents []orchestrator.AgentConfig
+	if err := json.NewDecoder(w.Body).Decode(&agents); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(agents))
+	}
+	if agents[0].ID != "lumi" || agents[1].ID != "mango" {
+		t.Fatalf("unexpected agents: %+v", agents)
+	}
 }
 
 func TestAPI_AgentDetail(t *testing.T) {
@@ -200,6 +238,48 @@ func TestAPI_Tasks_ByStatus(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestAPI_AutoPatch_Start(t *testing.T) {
+	s, cleanup := newTestAPI(t)
+	defer cleanup()
+	fake := &fakeAutoPatchStarter{enabled: true}
+	s.autopatch = fake
+
+	body := `{"description":"tests are failing, fix this bug"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/autopatch", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	if fake.req.Source != "manual" || fake.req.SubmittedBy != "api:user" {
+		t.Fatalf("defaults not applied: %+v", fake.req)
+	}
+	var tsk task.Task
+	if err := json.NewDecoder(w.Body).Decode(&tsk); err != nil {
+		t.Fatalf("decode task: %v", err)
+	}
+	if tsk.Type != "auto_patch" {
+		t.Fatalf("type = %q", tsk.Type)
+	}
+}
+
+func TestAPI_AutoPatch_DirtyWorktreeConflict(t *testing.T) {
+	s, cleanup := newTestAPI(t)
+	defer cleanup()
+	s.autopatch = &fakeAutoPatchStarter{enabled: true, err: autopatch.ErrDirtyWorktree}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/autopatch", strings.NewReader(`{"description":"fix this bug"}`))
+	w := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", w.Code)
 	}
 }
 

@@ -30,6 +30,9 @@ type Config struct {
 	// Codex configures subscription-backed Codex CLI task delegation.
 	Codex CodexConfig `yaml:"codex"`
 
+	// Autopatch configures diagnose-and-propose patch tasks.
+	Autopatch AutopatchConfig `yaml:"autopatch"`
+
 	// Agents defines the agents Prism should register.
 	// Each agent gets its own event namespace based on its ID.
 	Agents []AgentConfig `yaml:"agents"`
@@ -154,6 +157,18 @@ type CodexConfig struct {
 	MaxConcurrency int      `yaml:"max_concurrency"`
 	CaptureDiff    bool     `yaml:"capture_diff"`
 	ExtraArgs      []string `yaml:"extra_args"`
+}
+
+// AutopatchConfig configures the bug diagnosis and patch proposal loop.
+type AutopatchConfig struct {
+	Enabled              bool     `yaml:"enabled"`
+	Mode                 string   `yaml:"mode"`
+	RequireCleanWorktree *bool    `yaml:"require_clean_worktree"`
+	MaxAttempts          int      `yaml:"max_attempts"`
+	ValidationProfiles   []string `yaml:"validation_profiles"`
+	WorkerOrder          []string `yaml:"worker_order"`
+	LocalAgent           string   `yaml:"local_agent"`
+	WorktreeRoot         string   `yaml:"worktree_root"`
 }
 
 // FactoryBridgeConfig configures report/validation-only handoff to Roblox Factory.
@@ -480,6 +495,16 @@ func DefaultConfig() *Config {
 			MaxConcurrency: 1,
 			CaptureDiff:    true,
 		},
+		Autopatch: AutopatchConfig{
+			Enabled:              false,
+			Mode:                 "propose",
+			RequireCleanWorktree: boolPtr(true),
+			MaxAttempts:          2,
+			ValidationProfiles:   []string{"go_test_all"},
+			WorkerOrder:          []string{"codex", "local_agent"},
+			LocalAgent:           "forge",
+			WorktreeRoot:         filepath.Join(".prism", "worktrees"),
+		},
 	}
 }
 
@@ -578,6 +603,37 @@ func (c *Config) Validate() error {
 		}
 		if c.Codex.ApprovalPolicy != "untrusted" && c.Codex.ApprovalPolicy != "on-request" && c.Codex.ApprovalPolicy != "never" {
 			return fmt.Errorf("config: codex.approval_policy must be 'untrusted', 'on-request', or 'never'")
+		}
+	}
+	if c.Autopatch.Mode == "" {
+		c.Autopatch.Mode = "propose"
+	}
+	if c.Autopatch.RequireCleanWorktree == nil {
+		c.Autopatch.RequireCleanWorktree = boolPtr(true)
+	}
+	if c.Autopatch.MaxAttempts == 0 {
+		c.Autopatch.MaxAttempts = 2
+	}
+	if len(c.Autopatch.ValidationProfiles) == 0 {
+		c.Autopatch.ValidationProfiles = []string{"go_test_all"}
+	}
+	if len(c.Autopatch.WorkerOrder) == 0 {
+		c.Autopatch.WorkerOrder = []string{"codex", "local_agent"}
+	}
+	if c.Autopatch.WorktreeRoot == "" {
+		c.Autopatch.WorktreeRoot = filepath.Join(".prism", "worktrees")
+	}
+	if c.Autopatch.Enabled {
+		if c.Autopatch.Mode != "propose" {
+			return fmt.Errorf("config: autopatch.mode must be 'propose'")
+		}
+		if c.Autopatch.MaxAttempts < 1 {
+			return fmt.Errorf("config: autopatch.max_attempts must be >= 1")
+		}
+		for _, worker := range c.Autopatch.WorkerOrder {
+			if worker != "codex" && worker != "local_agent" {
+				return fmt.Errorf("config: autopatch.worker_order contains unknown worker %q", worker)
+			}
 		}
 	}
 	if c.Prism.InstanceID != "" && !isValidAgentID(c.Prism.InstanceID) {
@@ -709,6 +765,10 @@ var agentIDPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 func isValidAgentID(id string) bool {
 	return agentIDPattern.MatchString(id)
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 // RegisterAgents adds all configured agents to the given registry.
