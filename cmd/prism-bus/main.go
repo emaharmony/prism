@@ -74,7 +74,7 @@ func main() {
 			log.Printf("  ⚡ [%s] (invalid event: %v)", msg.Subject, err)
 			return
 		}
-		log.Printf("  💎 [%s] id=%s source=%s", evt.Type, evt.ID[:20], evt.Source)
+		log.Printf("  💎 [%s] id=%s source=%s", evt.Type, shortEventID(evt.ID), evt.Source)
 	}, nats.Durable("logger"), nats.DeliverAll())
 	if err != nil {
 		log.Fatalf("prism: failed to create logger subscription: %v", err)
@@ -138,8 +138,8 @@ func main() {
 	evt1 := event.NewEvent("prism.channel.received", "discord", map[string]any{
 		"channel":    "discord",
 		"channel_id": "1491622581348864162",
-		"sender":    "ema",
-		"text":      "deploy the new feature",
+		"sender":     "ema",
+		"text":       "deploy the new feature",
 	})
 	evt1.CorrelationID = correlationID
 	evt1.Metadata = metadata
@@ -202,4 +202,11 @@ func main() {
 	nc.Close()
 	ns.Shutdown()
 	log.Println("prism: stopped.")
+}
+
+func shortEventID(id string) string {
+	if len(id) <= 20 {
+		return id
+	}
+	return id[:20]
 }
