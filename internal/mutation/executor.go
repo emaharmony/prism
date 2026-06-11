@@ -23,14 +23,16 @@ type EmitFunc func(eventType, source string, payload map[string]any)
 // Executor applies approved file mutations with safety checks.
 type Executor struct {
 	workspaceRoot string
+	allowedPaths  []string
 	approvalStore *approval.Store
 	emit          EmitFunc
 }
 
 // NewExecutor creates a new mutation executor.
-func NewExecutor(workspaceRoot string, approvalStore *approval.Store) *Executor {
+func NewExecutor(workspaceRoot string, approvalStore *approval.Store, allowedPaths ...string) *Executor {
 	return &Executor{
 		workspaceRoot: workspaceRoot,
+		allowedPaths:  allowedPaths,
 		approvalStore: approvalStore,
 	}
 }
@@ -138,7 +140,17 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	})
 
 	// 7. Apply the mutation
-	absPath := filepath.Join(e.workspaceRoot, a.TargetPath)
+	absPath, resolveErr := e.resolveTargetPath(a.TargetPath)
+	if resolveErr != nil {
+		e.emitEvent("prism.mutation.failed", map[string]any{
+			"approval_id":    approvalID,
+			"mutation_type":  a.MutationType,
+			"target_path":    a.TargetPath,
+			"correlation_id": a.CorrelationID,
+			"error":          resolveErr.Error(),
+		})
+		return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: resolveErr.Error()}, nil
+	}
 
 	// Ensure parent directory exists
 	parentDir := filepath.Dir(absPath)
@@ -194,6 +206,23 @@ func (e *Executor) validateSafety(a *approval.Approval) error {
 	if strings.Contains(a.TargetPath, "..") {
 		return fmt.Errorf("path traversal with '..' is blocked: %q", a.TargetPath)
 	}
+
+	resolvedTargetPath, resolveErr := e.resolveTargetPath(a.TargetPath)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	if len(a.Content) > MaxContentSize {
+		return fmt.Errorf("content size %d bytes exceeds maximum %d bytes", len(a.Content), MaxContentSize)
+	}
+	if info, statErr := os.Lstat(resolvedTargetPath); statErr == nil {
+		if info.IsDir() {
+			return fmt.Errorf("target path %q is a directory, not a file", a.TargetPath)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("target path %q is a symlink, not a regular file", a.TargetPath)
+		}
+	}
+	return nil
 
 	// Check: no absolute paths
 	if safety.IsAbsolutePath(a.TargetPath) {
@@ -258,6 +287,15 @@ func (e *Executor) validateSafety(a *approval.Approval) error {
 	}
 
 	return nil
+}
+
+func (e *Executor) resolveTargetPath(targetPath string) (string, error) {
+	roots := append([]string{e.workspaceRoot}, e.allowedPaths...)
+	absPath, err := safety.ResolveAndContainMulti(roots, targetPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(absPath), nil
 }
 
 // DenyApproval marks an approval as denied without applying the mutation.

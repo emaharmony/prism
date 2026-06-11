@@ -3,7 +3,9 @@ package tool
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/policy"
 	"github.com/emaharmony/prism/internal/safety"
 )
@@ -15,8 +17,14 @@ type Executor struct {
 	Registry        *Registry
 	Policy          PolicyConfig
 	PolicyEvaluator PolicyEvaluatorFunc // V8: central policy engine (optional)
+	ApprovalStore   ApprovalStorer      // Optional persistence for approval-gated tools.
 	// Emit is called to record events. If nil, events are silently dropped.
 	Emit func(eventType, source string, payload map[string]any)
+}
+
+// ApprovalStorer is the persistence interface used for approval-gated tools.
+type ApprovalStorer interface {
+	Save(a *approval.Approval) error
 }
 
 // PolicyEvaluatorFunc evaluates a V8 policy request and returns a decision.
@@ -27,7 +35,7 @@ type PolicyEvaluatorFunc func(action string, resource policy.Resource, context p
 func NewExecutor(registry *Registry, policy PolicyConfig) *Executor {
 	return &Executor{
 		Registry: registry,
-		Policy:  policy,
+		Policy:   policy,
 	}
 }
 
@@ -42,6 +50,12 @@ func (e *Executor) SetPolicyEvaluator(fn PolicyEvaluatorFunc) {
 	e.PolicyEvaluator = fn
 }
 
+// SetApprovalStore enables durable approval artifacts for tools whose policy
+// decision is requires_approval.
+func (e *Executor) SetApprovalStore(store ApprovalStorer) {
+	e.ApprovalStore = store
+}
+
 // ExecuteWithPolicy evaluates policy for a tool call, emits events for the
 // decision, and executes the tool if approved.
 //
@@ -51,13 +65,17 @@ func (e *Executor) SetPolicyEvaluator(fn PolicyEvaluatorFunc) {
 // If V8 policy allows, local policy still enforces path safety, etc.
 // If V8 policy is not configured, local policy runs as before (backward compatible).
 func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, project, correlationID string, input map[string]any) (ToolResult, error) {
+	runID := metadataString(input, "_run_id")
+	execInput := stripMetadata(input)
+
 	// Emit tool.requested
 	e.emitEvent("prism.tool.requested", map[string]any{
 		"tool_name":      toolName,
-		"agent":           agent,
-		"project":         project,
-		"correlation_id":  correlationID,
-		"input":           input,
+		"agent":          agent,
+		"project":        project,
+		"correlation_id": correlationID,
+		"run_id":         runID,
+		"input":          execInput,
 	})
 
 	// V8: Evaluate central policy first (if configured)
@@ -70,8 +88,8 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 
 		e.emitEvent("prism.policy.checked", map[string]any{
 			"tool_name":       toolName,
-			"policy_decision":  string(v8Decision.Decision),
-			"policy_rule_id":   v8Decision.RuleID,
+			"policy_decision": string(v8Decision.Decision),
+			"policy_rule_id":  v8Decision.RuleID,
 			"policy_reason":   v8Decision.Reason,
 		})
 
@@ -82,7 +100,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 				"agent":           agent,
 				"project":         project,
 				"correlation_id":  correlationID,
-				"policy_decision":  string(v8Decision.Decision),
+				"policy_decision": string(v8Decision.Decision),
 				"policy_reason":   v8Decision.Reason,
 				"policy_source":   "v8",
 			})
@@ -94,13 +112,13 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		case policy.DecisionRequiresApproval:
 			// V8 says requires_approval — fall through to local policy
 			// which will handle the approval workflow
-				default:
+		default:
 			// V8 says allowed — local policy still validates safety
 		}
 	}
 
 	// Evaluate policy
-	policyResult := EvaluatePolicy(e.Policy, toolName, input)
+	policyResult := EvaluatePolicy(e.Policy, toolName, execInput)
 
 	// Handle requires_approval — this is not a denial, it's a request for human approval
 	if policyResult.Decision == PolicyRequiresApproval {
@@ -114,7 +132,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		})
 
 		// Execute the tool (which will return approval_id)
-		result, err := e.Registry.Execute(ctx, toolName, input)
+		result, err := e.Registry.Execute(ctx, toolName, execInput)
 		if err != nil {
 			return ToolResult{
 				Success: false,
@@ -122,10 +140,28 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 				Error:   err.Error(),
 			}, err
 		}
+		if result.Output == nil {
+			result.Output = map[string]any{}
+		}
 
 		// Mark as pending_approval status
 		result.Output["policy_decision"] = string(PolicyRequiresApproval)
 		result.Output["policy_reason"] = policyResult.Reason
+		if err := e.persistApproval(toolName, agent, project, correlationID, runID, execInput, policyResult, &result); err != nil {
+			e.emitEvent("prism.approval.persist_failed", map[string]any{
+				"tool_name":      toolName,
+				"agent":          agent,
+				"project":        project,
+				"correlation_id": correlationID,
+				"run_id":         runID,
+				"error":          err.Error(),
+			})
+			return ToolResult{
+				Success: false,
+				Output:  nil,
+				Error:   fmt.Sprintf("approval request could not be saved: %v", err),
+			}, nil
+		}
 
 		return result, nil
 	}
@@ -165,7 +201,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	})
 
 	// Sanitize tool inputs before execution (command injection prevention)
-	sanitizedInput := safety.SanitizeToolInput(toolName, input)
+	sanitizedInput := safety.SanitizeToolInput(toolName, execInput)
 
 	// Resolve and execute the tool
 	result, err := e.Registry.Execute(ctx, toolName, sanitizedInput)
@@ -201,4 +237,93 @@ func (e *Executor) emitEvent(eventType string, payload map[string]any) {
 	if e.Emit != nil {
 		e.Emit(eventType, "prism-tool-executor", payload)
 	}
+}
+
+func (e *Executor) persistApproval(toolName, agent, project, correlationID, runID string, input map[string]any, policyResult PolicyResult, result *ToolResult) error {
+	if e.ApprovalStore == nil {
+		return nil
+	}
+	if runID == "" {
+		runID = correlationID
+	}
+	if runID == "" {
+		return fmt.Errorf("run_id is required for approval persistence")
+	}
+	if result.Output == nil {
+		result.Output = map[string]any{}
+	}
+
+	approvalID, _ := result.Output["approval_id"].(string)
+	if approvalID == "" {
+		approvalID = approval.NewApprovalID()
+		result.Output["approval_id"] = approvalID
+	}
+
+	targetPath, _ := result.Output["target_path"].(string)
+	if targetPath == "" {
+		targetPath, _ = input["path"].(string)
+	}
+	if targetPath == "" {
+		return fmt.Errorf("target_path is required for approval persistence")
+	}
+
+	content, _ := input["content"].(string)
+	mutationType, _ := result.Output["mutation_type"].(string)
+	if mutationType == "" {
+		mutationType = approval.MutationWriteFile
+	}
+
+	preview := content
+	if len(preview) > 500 {
+		preview = preview[:500] + "..."
+	}
+
+	a := &approval.Approval{
+		ApprovalID:    approvalID,
+		RunID:         runID,
+		CorrelationID: correlationID,
+		Status:        approval.StatusPending,
+		RequestedBy:   agent,
+		Project:       project,
+		MutationType:  mutationType,
+		TargetPath:    targetPath,
+		Content:       content,
+		Preview:       preview,
+		CreatedAt:     time.Now().UTC(),
+		Policy: approval.PolicyDecision{
+			Decision: approval.DecisionRequiresApproval,
+			Reason:   policyResult.Reason,
+		},
+	}
+	if err := e.ApprovalStore.Save(a); err != nil {
+		return err
+	}
+
+	result.Output["run_id"] = runID
+	result.Output["correlation_id"] = correlationID
+	result.Output["status"] = "pending_approval"
+	result.Output["instruction"] = fmt.Sprintf("Use 'prism approval approve %s --run %s --by <name>' or 'prism approval deny %s --run %s --by <name>' to proceed.", approvalID, runID, approvalID, runID)
+	return nil
+}
+
+func metadataString(input map[string]any, key string) string {
+	if input == nil {
+		return ""
+	}
+	v, _ := input[key].(string)
+	return v
+}
+
+func stripMetadata(input map[string]any) map[string]any {
+	if input == nil {
+		return map[string]any{}
+	}
+	cleaned := make(map[string]any, len(input))
+	for k, v := range input {
+		if len(k) > 0 && k[0] == '_' {
+			continue
+		}
+		cleaned[k] = v
+	}
+	return cleaned
 }

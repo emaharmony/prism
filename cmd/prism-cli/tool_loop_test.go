@@ -81,7 +81,10 @@ func TestFormatApprovalMessage(t *testing.T) {
 		ToolName:  "write_file_proposal",
 		ToolInput: map[string]any{"path": "test.go"},
 	}
-	msg := formatApprovalMessage(parsed)
+	msg := formatApprovalMessage(parsed, tool.ToolResult{Success: true, Output: map[string]any{
+		"approval_id": "appr_test",
+		"run_id":      "run_test",
+	}})
 	if msg == "" {
 		t.Error("formatApprovalMessage should not be empty")
 	}

@@ -41,6 +41,7 @@ import (
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/api"
+	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/codesummary"
@@ -50,6 +51,7 @@ import (
 	"github.com/emaharmony/prism/internal/debounce"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/factory"
+	"github.com/emaharmony/prism/internal/factorymonitor"
 	"github.com/emaharmony/prism/internal/guard"
 	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -370,6 +372,7 @@ func executeServe(args []string) {
 	}
 
 	var discordBots []*discordbot.BotAdapter
+	var factoryMon *factorymonitor.Monitor
 
 	// V32: State manager, context builder, and plan manager — shared across all channels
 	var stateMgr *state.Manager
@@ -448,6 +451,7 @@ func executeServe(args []string) {
 
 			toolReg := tool.NewRegistry()
 			tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024, allowedPaths...) // all read-only + project tools
+			toolReg.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
 			// V28: Git mutation tools (require approval)
 			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
 			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
@@ -480,6 +484,7 @@ func executeServe(args []string) {
 			toolPolicy.WorkspaceRoot = workspaceRoot
 			toolPolicy.AllowedPaths = allowedPaths
 			toolExec := tool.NewExecutor(toolReg, toolPolicy)
+			toolExec.SetApprovalStore(approval.NewStore("runs"))
 
 			convCtx := &conversationContext{
 				router:      rtr,
@@ -574,6 +579,23 @@ func executeServe(args []string) {
 	go startHealthServer(*portFlag, cfg, agentReg, sessMgr, discordBots)
 	fmt.Printf("  Health: http://localhost:%d/health\n", *portFlag)
 
+	if cfg.FactoryMonitor.Enabled {
+		if len(discordBots) == 0 {
+			log.Printf("[FACTORY-MONITOR] WARN enabled but no Discord bot is configured")
+		} else if natsConn == nil {
+			log.Printf("[FACTORY-MONITOR] WARN enabled but NATS is not connected")
+		} else {
+			factoryMon = factorymonitor.New(factorymonitor.Config{
+				Root:       cfg.FactoryMonitor.Root,
+				PollEvery:  time.Duration(cfg.FactoryMonitor.PollSeconds) * time.Second,
+				StuckAfter: time.Duration(cfg.FactoryMonitor.StuckAfterMinutes) * time.Minute,
+			}, &natsPublisherAdapter{conn: natsConn})
+			startFactoryMonitorNotifications(natsConn, discordBots[0], cfg.FactoryMonitor.NotifyChannelID)
+			go factoryMon.Start(ctx)
+			fmt.Printf("  Factory monitor: %s -> Discord channel %s\n", cfg.FactoryMonitor.Root, cfg.FactoryMonitor.NotifyChannelID)
+		}
+	}
+
 	fmt.Println()
 	fmt.Println("🔮 Prism is running. Press Ctrl+C to stop.")
 
@@ -616,6 +638,7 @@ func executeServe(args []string) {
 			ctxBuildr,
 			planMgr,
 			improveMgr,
+			factoryMon,
 		)
 		if err := wakeHandler.Start(); err != nil {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
@@ -751,16 +774,46 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
+	finalSent := false
+	finalStatus := "failed"
+	finalMessage := "I stopped before completing this task."
+	runID := ""
+	var runCtx ctxcontext.Context
+	sendFinal := func(status, message string) {
+		if finalSent {
+			return
+		}
+		finalSent = true
+		cc.sendFinalReport(msg.ChannelID, status, runID, message)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("[ERROR] panic while handling Discord message: %v", recovered)
+			sendFinal("failed", fmt.Sprintf("Task failed unexpectedly: %v", recovered))
+			return
+		}
+		if finalSent {
+			return
+		}
+		if runCtx != nil && runCtx.Err() == ctxcontext.DeadlineExceeded {
+			sendFinal("timed_out", "Task timed out before I could finish. No completion was confirmed.")
+			return
+		}
+		sendFinal(finalStatus, finalMessage)
+	}()
+
 	// Step 3: Find or create a session (handler-level)
 	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
 	if err != nil {
 		log.Printf("[ERROR] find session: %v", err)
+		finalMessage = "I could not load the conversation session."
 		return
 	}
 	if sess == nil {
 		sess, err = cc.sessMgr.Create(result.AgentID, "discord", msg.ChannelID, msg.UserID)
 		if err != nil {
 			log.Printf("[ERROR] create session: %v", err)
+			finalMessage = "I could not create a conversation session."
 			return
 		}
 	}
@@ -769,6 +822,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	_, err = cc.sessMgr.AddMessage(sess.ID, "user", sanitizedContent, "")
 	if err != nil {
 		log.Printf("[ERROR] add user message: %v", err)
+		finalMessage = "I could not save your message to the session."
 		return
 	}
 
@@ -776,20 +830,21 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	agentCfg := cc.findAgentConfig(result.AgentID)
 	if agentCfg == nil {
 		log.Printf("[ERROR] no config for agent %s", result.AgentID)
-		cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+		sendFinal("failed", "I'm not configured properly. Please contact the administrator.")
 		return
 	}
 
 	llmProvider, err := cc.providers.Get(agentCfg.Model)
 	if err != nil {
 		log.Printf("[ERROR] no provider for model %s: %v", agentCfg.Model, err)
-		cc.sendError(msg.ChannelID, "I can't reach my language model right now. Please try again in a moment.")
+		sendFinal("failed", "I can't reach my language model right now. Please try again in a moment.")
 		return
 	}
 
 	// Step 5: Create a run with proper context for cancellation and timeout
-	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 60*time.Second)
+	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), serveLLMTimeout(cc.cfg))
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
+	runID = run.ID
 	run.Cancel = runCancel
 	cc.cancelReg.Register(sess.ID, runCancel)
 	defer func() {
@@ -940,7 +995,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	finalRC, err := pipeline.Run(runCtx, rc)
 	if err != nil {
 		log.Printf("[ERROR] pipeline failed (run %s): %v", run.ID, err)
-		cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+		sendFinal("failed", "I'm having trouble thinking right now. Please try again in a moment.")
 		return
 	}
 
@@ -975,6 +1030,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				agentCfg,
 				msg.ChannelID,
 				placeholderMsgID,
+				run.ID,
 			)
 			if toolErr != nil {
 				log.Printf("[TOOL-CHAT] tool loop failed: %v", toolErr)
@@ -1009,6 +1065,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 					agentCfg,
 					msg.ChannelID,
 					placeholderMsgID,
+					run.ID,
 				)
 				if toolErr != nil {
 					log.Printf("[TOOL] tool loop failed: %v", toolErr)
@@ -1039,11 +1096,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			log.Printf("[ERROR] stage %s failed (run %s): %s", stageName, run.ID, stageResult.Error)
 			switch stageName {
 			case "routing":
-				cc.sendError(msg.ChannelID, "I'm not configured properly. Please contact the administrator.")
+				sendFinal("failed", "I'm not configured properly. Please contact the administrator.")
 			case "llm":
-				cc.sendError(msg.ChannelID, "I'm having trouble thinking right now. Please try again in a moment.")
+				if runCtx.Err() == ctxcontext.DeadlineExceeded {
+					sendFinal("timed_out", "Task timed out before I could finish. No completion was confirmed.")
+				} else {
+					sendFinal("failed", "I'm having trouble thinking right now. Please try again in a moment.")
+				}
 			default:
-				cc.sendError(msg.ChannelID, "Something went wrong processing your message. Please try again.")
+				sendFinal("failed", "Something went wrong processing your message. Please try again.")
 			}
 			return
 		}
@@ -1070,6 +1131,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		})
 		if err != nil {
 			log.Printf("[ERROR] failed to send Discord response: %v", err)
+			finalMessage = "I completed the task but could not send the result to Discord."
+		} else {
+			finalStatus = "completed"
+			finalSent = true
 		}
 	}
 
@@ -1160,6 +1225,30 @@ func (cc *conversationContext) sendError(channelID, message string) {
 	if err != nil {
 		log.Printf("[ERROR] failed to send error message to Discord: %v", err)
 	}
+}
+
+func (cc *conversationContext) sendFinalReport(channelID, status, runID, message string) {
+	statusLabel := strings.ToUpper(strings.TrimSpace(status))
+	if statusLabel == "" {
+		statusLabel = "FAILED"
+	}
+	content := "Task " + statusLabel
+	if runID != "" {
+		content += " (run " + runID + ")"
+	}
+	if strings.TrimSpace(message) != "" {
+		content += ": " + strings.TrimSpace(message)
+	}
+	if err := cc.bot.Send(&discordbot.OutboundMessage{ChannelID: channelID, Content: content}); err != nil {
+		log.Printf("[ERROR] failed to send final report to Discord: %v", err)
+	}
+}
+
+func serveLLMTimeout(cfg *orchestrator.Config) time.Duration {
+	if cfg != nil && cfg.Prism.LLMTimeoutSeconds > 0 {
+		return time.Duration(cfg.Prism.LLMTimeoutSeconds) * time.Second
+	}
+	return 1200 * time.Second
 }
 
 // V21: Events use per-agent namespace prefixes (<agent-id>.*).

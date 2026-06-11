@@ -432,3 +432,41 @@ func TestValidateCodexRejectsBadApprovalPolicy(t *testing.T) {
 		t.Fatal("expected validation error for bad codex approval policy")
 	}
 }
+
+func TestValidateFactoryMonitorDefaultsAndRequiresChannel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.FactoryMonitor.Enabled = true
+	cfg.FactoryMonitor.NotifyChannelID = "1496591599940010055"
+	cfg.FactoryMonitor.PollSeconds = 0
+	cfg.FactoryMonitor.StuckAfterMinutes = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected factory monitor config to validate: %v", err)
+	}
+	if cfg.FactoryMonitor.PollSeconds != 30 {
+		t.Fatalf("poll_seconds = %d, want 30", cfg.FactoryMonitor.PollSeconds)
+	}
+	if cfg.FactoryMonitor.StuckAfterMinutes != 30 {
+		t.Fatalf("stuck_after_minutes = %d, want 30", cfg.FactoryMonitor.StuckAfterMinutes)
+	}
+
+	cfg.FactoryMonitor.NotifyChannelID = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for missing factory monitor channel")
+	}
+}
+
+func TestResolveEnvExpandsFactoryMonitorRoot(t *testing.T) {
+	t.Setenv("PRISM_TEST_FACTORY_ROOT", "D:/factory")
+	cfg, err := LoadConfigFromBytes([]byte(`
+factory_monitor:
+  enabled: true
+  root: "${PRISM_TEST_FACTORY_ROOT}"
+  notify_channel_id: "channel"
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.FactoryMonitor.Root != "D:/factory" {
+		t.Fatalf("factory monitor root = %q", cfg.FactoryMonitor.Root)
+	}
+}

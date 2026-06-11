@@ -24,7 +24,7 @@ const toolUsageGuidance = "You have tools available for reading files, searching
 	"Do NOT call tools just because a topic was discussed earlier — only call tools if THIS specific message asks you to read/search/inspect something. " +
 	"If you can answer from your own knowledge, respond directly without tools. " +
 	"After receiving tool results, give your final answer rather than calling more tools. " +
-	"If a tool returns an error, explain the error instead of retrying."
+					"If a tool returns an error, explain the error instead of retrying."
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.
@@ -45,11 +45,9 @@ func (cc *conversationContext) runToolLoop(
 	agentCfg *orchestrator.AgentConfig,
 	channelID string,
 	placeholderMsgID string,
+	runID string,
 ) (string, []toolCallSummary, error) {
-	// Create a fresh context with its own timeout for the tool loop.
-	// Derive from parentCtx so cancellation (server shutdown, etc.) propagates.
-	ctx, cancel := context.WithTimeout(parentCtx, toolLoopTimeout)
-	defer cancel()
+	ctx := parentCtx
 
 	var summaries []toolCallSummary
 	currentPrompt := prompt
@@ -84,7 +82,7 @@ func (cc *conversationContext) runToolLoop(
 			log.Printf("[TOOL] iteration %d: agent requests tool %q", i+1, parsed.ToolName)
 
 			// Execute the tool
-			toolResult, approvalNeeded, err := cc.executeTool(ctx, parsed, agentCfg)
+			toolResult, approvalNeeded, err := cc.executeTool(ctx, parsed, agentCfg, runID)
 			if err != nil {
 				log.Printf("[TOOL] tool %q failed: %v", parsed.ToolName, err)
 				// Feed the error back to the LLM so it can try a different approach
@@ -106,8 +104,9 @@ func (cc *conversationContext) runToolLoop(
 			if approvalNeeded {
 				log.Printf("[TOOL] tool %q requires approval — pausing for human review", parsed.ToolName)
 				summary.Status = "pending_approval"
+				summary.Result = formatToolResult(toolResult)
 				summaries = append(summaries, summary)
-				return formatApprovalMessage(parsed), summaries, nil
+				return formatApprovalMessage(parsed, toolResult), summaries, nil
 			}
 
 			resultStr := formatToolResult(toolResult)
@@ -171,7 +170,7 @@ func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt st
 }
 
 // executeTool runs a tool with policy checks and returns the typed result.
-func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.AgentResponse, agentCfg *orchestrator.AgentConfig) (tool.ToolResult, bool, error) {
+func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.AgentResponse, agentCfg *orchestrator.AgentConfig, runID string) (tool.ToolResult, bool, error) {
 	if cc.toolExec == nil {
 		return tool.ToolResult{}, false, fmt.Errorf("tool execution not available")
 	}
@@ -181,10 +180,6 @@ func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.Age
 
 	if policyResult.Decision == tool.PolicyDenied {
 		return tool.ToolResult{}, false, fmt.Errorf("tool %q denied by policy: %s", parsed.ToolName, policyResult.Reason)
-	}
-
-	if policyResult.Decision == tool.PolicyRequiresApproval {
-		return tool.ToolResult{}, true, nil // approval needed
 	}
 
 	// V32: Guard rail — check if plan exists for code mutations
@@ -199,12 +194,24 @@ func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.Age
 	}
 
 	// Execute the tool
-	result, err := cc.toolExec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "", "", parsed.ToolInput)
+	input := parsed.ToolInput
+	if input == nil {
+		input = map[string]any{}
+	}
+	if runID != "" {
+		inputWithRun := make(map[string]any, len(input)+1)
+		for k, v := range input {
+			inputWithRun[k] = v
+		}
+		inputWithRun["_run_id"] = runID
+		input = inputWithRun
+	}
+	result, err := cc.toolExec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "prism", runID, input)
 	if err != nil {
 		return tool.ToolResult{}, false, err
 	}
 
-	return result, false, nil
+	return result, policyResult.Decision == tool.PolicyRequiresApproval, nil
 }
 
 // toolCallSummary records a single tool call in the loop.
@@ -266,9 +273,13 @@ func formatToolErrorPrompt(toolName string, err error) string {
 }
 
 // formatApprovalMessage creates a human-readable message for Discord when a tool needs approval.
-func formatApprovalMessage(parsed agent.AgentResponse) string {
+func formatApprovalMessage(parsed agent.AgentResponse, result tool.ToolResult) string {
 	action := formatToolAction(parsed)
-	return fmt.Sprintf("I need your approval to %s. React with ✅ to approve or ❌ to deny.", action)
+	details := formatApprovalOutput(result.Output)
+	if details == "" {
+		return fmt.Sprintf("I need your approval to %s.", action)
+	}
+	return fmt.Sprintf("I need your approval to %s.\n\n%s", action, details)
 }
 
 // formatToolAction creates a human-readable description of what a tool wants to do.

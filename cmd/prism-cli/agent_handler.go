@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
+	ctxcontext "context"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/remembrance"
-	ctxcontext "context"
 )
 
 // handleAgentMessage processes an incoming message from another bot agent.
@@ -90,7 +90,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	}
 
 	// Build the full prompt — agent messages always use "agent" state action
-	prompt := cc.buildPrompt(sess, agentCfg, "agent", nil)	// Agent messages have no channel context
+	prompt := cc.buildPrompt(sess, agentCfg, "agent", nil) // Agent messages have no channel context
 
 	// Inject Remembrance context
 	if cc.remClient != nil {
@@ -154,6 +154,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 				agentCfg,
 				msg.ChannelID,
 				"", // NO placeholder — critical for agent-to-agent
+				"",
 			)
 			if toolErr != nil {
 				log.Printf("[AGENT-TOOL-CHAT] tool loop failed: %v", toolErr)
@@ -177,10 +178,10 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 				return
 			}
 			resp, genErr := llmProvider.Generate(runCtx, provider.GenerateRequest{
-				Prompt:  prompt,
-				Model:   agentCfg.Model,
-				Agent:   agentCfg.ID,
-				RunID:   sess.ID,
+				Prompt: prompt,
+				Model:  agentCfg.Model,
+				Agent:  agentCfg.ID,
+				RunID:  sess.ID,
 			})
 			if genErr != nil {
 				log.Printf("[ERROR] agent Generate failed: %v", genErr)
@@ -198,6 +199,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 					agentCfg,
 					msg.ChannelID,
 					"", // NO placeholder
+					"",
 				)
 				if toolErr != nil {
 					log.Printf("[AGENT-TOOL] tool loop failed: %v", toolErr)
@@ -237,10 +239,10 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			response = chatResp.Content
 		} else {
 			resp, genErr := llmProvider.Generate(runCtx, provider.GenerateRequest{
-				Prompt:  prompt,
-				Model:   agentCfg.Model,
-				Agent:   agentCfg.ID,
-				RunID:   sess.ID,
+				Prompt: prompt,
+				Model:  agentCfg.Model,
+				Agent:  agentCfg.ID,
+				RunID:  sess.ID,
 			})
 			if genErr != nil {
 				log.Printf("[ERROR] agent Generate failed: %v", genErr)

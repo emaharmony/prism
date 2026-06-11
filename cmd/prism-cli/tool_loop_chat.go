@@ -28,9 +28,9 @@ func (cc *conversationContext) runToolLoopChat(
 	agentCfg *orchestrator.AgentConfig,
 	channelID string,
 	placeholderMsgID string,
+	runID string,
 ) (string, []toolCallSummary, error) {
-	ctx, cancel := stdctx.WithTimeout(parentCtx, chatToolLoopTimeout)
-	defer cancel()
+	ctx := parentCtx
 
 	var summaries []toolCallSummary
 	currentMessages := make([]provider.ChatMessage, len(messages))
@@ -110,11 +110,11 @@ func (cc *conversationContext) runToolLoopChat(
 
 		// Execute each tool call and feed results back
 		for _, tc := range response.ToolCalls {
-			toolResult, summary := cc.executeChatTool(ctx, tc, agentCfg)
+			toolResult, summary := cc.executeChatTool(ctx, tc, agentCfg, runID)
 
 			// Build the tool result message
 			currentMessages = append(currentMessages, provider.ChatMessage{
-				Role:   "tool",
+				Role:    "tool",
 				Content: toolResult,
 				ToolID:  tc.ID,
 			})
@@ -124,7 +124,7 @@ func (cc *conversationContext) runToolLoopChat(
 			// Track successful tool results as potential fallback content.
 			// If the model never produces a text response, we can use
 			// a synthesis of tool results to avoid sending back nothing.
-			if summary.Status == "success" {
+			if summary.Status == "success" || summary.Status == "approval_needed" {
 				lastContent = fmt.Sprintf("Based on the information I gathered: %s", summary.Result)
 			}
 		}
@@ -138,7 +138,7 @@ func (cc *conversationContext) runToolLoopChat(
 	// Build a synthesis prompt from the tool summaries
 	var summaryTexts []string
 	for _, s := range summaries {
-		if s.Status == "success" {
+		if s.Status == "success" || s.Status == "approval_needed" {
 			summaryTexts = append(summaryTexts, fmt.Sprintf("- %s: %s", s.Tool, s.Result))
 		} else {
 			summaryTexts = append(summaryTexts, fmt.Sprintf("- %s: (error: %s)", s.Tool, s.Error))
@@ -149,7 +149,7 @@ func (cc *conversationContext) runToolLoopChat(
 		return "", summaries, fmt.Errorf("chat tool loop exceeded max iterations (%d) with no successful tool results", maxChatToolIterations)
 	}
 
-	synthesisPrompt := fmt.Sprintf("You have gathered the following information using tools but reached the iteration limit. " +
+	synthesisPrompt := fmt.Sprintf("You have gathered the following information using tools but reached the iteration limit. "+
 		"Please provide a comprehensive answer based on this data:\n\n%s", strings.Join(summaryTexts, "\n"))
 
 	// Make a final LLM call with no tools
@@ -210,6 +210,7 @@ func (cc *conversationContext) executeChatTool(
 	ctx stdctx.Context,
 	tc provider.ToolCall,
 	agentCfg *orchestrator.AgentConfig,
+	runID string,
 ) (string, toolCallSummary) {
 	// V32: Guard rail — check if plan exists for code mutations
 	if cc.guardian != nil {
@@ -224,11 +225,15 @@ func (cc *conversationContext) executeChatTool(
 		}
 	}
 
-	// Execute the tool via the registry
-	result, execErr := cc.toolExec.Registry.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
+	input := make(map[string]any, len(tc.Function.Arguments)+1)
+	for k, v := range tc.Function.Arguments {
+		input[k] = v
+	}
+	if runID != "" {
+		input["_run_id"] = runID
+	}
 
-	// Check policy for mutation tools
-	policyResult := tool.EvaluatePolicy(cc.toolExec.Policy, tc.Function.Name, tc.Function.Arguments)
+	result, execErr := cc.toolExec.ExecuteWithPolicy(ctx, tc.Function.Name, agentCfg.ID, "prism", runID, input)
 
 	status := "success"
 	resultStr := ""
@@ -240,19 +245,25 @@ func (cc *conversationContext) executeChatTool(
 		// IMPORTANT: Check for known content keys first to avoid
 		// Go's random map iteration picking "path" or "size" before "content".
 		if result.Success {
+			if decision, _ := result.Output["policy_decision"].(string); decision == string(tool.PolicyRequiresApproval) {
+				status = "approval_needed"
+				resultStr = formatApprovalOutput(result.Output)
+			}
 			// Priority: content > output > result > text > message > body
-			contentKeys := []string{"content", "output", "result", "text", "message", "body"}
-			for _, key := range contentKeys {
-				if v, exists := result.Output[key]; exists {
-					if s, ok := v.(string); ok && s != "" {
-						resultStr = s
-						break
-					}
-					// Also handle non-string content by JSON-encoding
-					if resultStr == "" {
-						if b, jsonErr := json.Marshal(v); jsonErr == nil {
-							resultStr = string(b)
+			if resultStr == "" {
+				contentKeys := []string{"content", "output", "result", "text", "message", "body"}
+				for _, key := range contentKeys {
+					if v, exists := result.Output[key]; exists {
+						if s, ok := v.(string); ok && s != "" {
+							resultStr = s
 							break
+						}
+						// Also handle non-string content by JSON-encoding
+						if resultStr == "" {
+							if b, jsonErr := json.Marshal(v); jsonErr == nil {
+								resultStr = string(b)
+								break
+							}
 						}
 					}
 				}
@@ -272,11 +283,6 @@ func (cc *conversationContext) executeChatTool(
 		}
 	}
 
-	if policyResult.Decision == tool.PolicyRequiresApproval {
-		status = "approval_needed"
-		resultStr = "This action requires human approval. An approval request has been created."
-	}
-
 	summary := toolCallSummary{
 		Tool:   tc.Function.Name,
 		Input:  tc.Function.Arguments,
@@ -288,6 +294,27 @@ func (cc *conversationContext) executeChatTool(
 	}
 
 	return resultStr, summary
+}
+
+func formatApprovalOutput(output map[string]any) string {
+	approvalID, _ := output["approval_id"].(string)
+	runID, _ := output["run_id"].(string)
+	targetPath, _ := output["target_path"].(string)
+	instruction, _ := output["instruction"].(string)
+	parts := []string{"This action requires human approval."}
+	if approvalID != "" {
+		parts = append(parts, "Approval ID: "+approvalID)
+	}
+	if runID != "" {
+		parts = append(parts, "Run ID: "+runID)
+	}
+	if targetPath != "" {
+		parts = append(parts, "Target: "+targetPath)
+	}
+	if instruction != "" {
+		parts = append(parts, instruction)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // buildMessages constructs a ChatMessage array from session history and workspace context.
