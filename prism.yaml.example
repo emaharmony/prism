@@ -25,6 +25,15 @@ prism:
   llm_timeout_seconds: 1200
   # Log level: debug, info, warn, error
   log_level: "info"
+  scheduler:
+    enabled: false
+    jobs:
+      - name: "factory-status-digest"
+        schedule: "*/15 * * * *"
+        event: "prism.task.scheduled"
+        payload:
+          action: "factory_status_digest"
+        enabled: false
 
 bridge:
   # Set true after PRISM_BRIDGE_SECRET is configured on both Prism environments.
@@ -74,6 +83,13 @@ bridge:
     playtest_mode: "none"
     enable_ui_generation: false
     ui_generation_dry_run: true
+
+factory_monitor:
+  enabled: false
+  root: "D:/_projects_/roblox-factory"
+  notify_channel_id: ""
+  poll_seconds: 30
+  stuck_after_minutes: 30
 
 codex:
   # Uses the local Codex CLI login session. Run `codex login` before enabling.

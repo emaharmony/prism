@@ -139,19 +139,10 @@ func evaluateV4ProposalPolicy(cfg PolicyConfig, toolName string, input map[strin
 		return PolicyResult{Decision: PolicyDenied, Reason: "path traversal with '..' is blocked"}
 	}
 
-	// Block absolute paths
-	if safety.IsAbsolutePath(pathStr) {
-		return PolicyResult{Decision: PolicyDenied, Reason: "absolute paths are not allowed"}
-	}
-
-	// Resolve and check workspace bounds
-	absRoot, err := filepath.Abs(cfg.WorkspaceRoot)
-	if err != nil {
-		return PolicyResult{Decision: PolicyDenied, Reason: "invalid workspace root"}
-	}
-	absPath := filepath.Clean(filepath.Join(absRoot, pathStr))
-	if !safety.IsWithinRoot(absPath, absRoot) {
-		return PolicyResult{Decision: PolicyDenied, Reason: "path is outside the workspace root"}
+	// Resolve and check configured bounds. Relative paths resolve against the
+	// workspace root; absolute paths are allowed only inside configured roots.
+	if _, err := safety.ResolveAndContainMulti(cfg.AllRoots(), pathStr); err != nil {
+		return PolicyResult{Decision: PolicyDenied, Reason: err.Error()}
 	}
 
 	// Check content parameter exists

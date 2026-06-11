@@ -67,6 +67,41 @@ func TestExecutorApplyApprovedWrites(t *testing.T) {
 	}
 }
 
+func TestExecutorApplyApprovedAbsolutePathWithinAllowedRoot(t *testing.T) {
+	workspace := t.TempDir()
+	allowedRoot := t.TempDir()
+	runsDir := t.TempDir()
+	store := approval.NewStore(runsDir)
+
+	targetPath := filepath.Join(allowedRoot, "clear-me.txt")
+	if err := os.WriteFile(targetPath, []byte("delete me"), 0644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_clear", "corr_clear", "test-cli", "prism", "write_file", targetPath, "", policy)
+	if err := store.Save(a); err != nil {
+		t.Fatalf("save approval: %v", err)
+	}
+
+	executor := NewExecutor(workspace, store, allowedRoot)
+	result, err := executor.ApplyWithRun(context.Background(), "run_clear", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Message)
+	}
+
+	data, readErr := os.ReadFile(targetPath)
+	if readErr != nil {
+		t.Fatalf("expected file to exist: %v", readErr)
+	}
+	if string(data) != "" {
+		t.Fatalf("expected file to be cleared, got %q", string(data))
+	}
+}
+
 func TestExecutorDeniedApprovalDoesNotWrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := approval.NewStore(tmpDir)

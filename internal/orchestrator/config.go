@@ -33,6 +33,9 @@ type Config struct {
 	// Autopatch configures diagnose-and-propose patch tasks.
 	Autopatch AutopatchConfig `yaml:"autopatch"`
 
+	// FactoryMonitor configures local Roblox Factory status notifications.
+	FactoryMonitor FactoryMonitorConfig `yaml:"factory_monitor"`
+
 	// Agents defines the agents Prism should register.
 	// Each agent gets its own event namespace based on its ID.
 	Agents []AgentConfig `yaml:"agents"`
@@ -169,6 +172,15 @@ type AutopatchConfig struct {
 	WorkerOrder          []string `yaml:"worker_order"`
 	LocalAgent           string   `yaml:"local_agent"`
 	WorktreeRoot         string   `yaml:"worktree_root"`
+}
+
+// FactoryMonitorConfig configures local Factory queue status notifications.
+type FactoryMonitorConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	Root              string `yaml:"root"`
+	NotifyChannelID   string `yaml:"notify_channel_id"`
+	PollSeconds       int    `yaml:"poll_seconds"`
+	StuckAfterMinutes int    `yaml:"stuck_after_minutes"`
 }
 
 // FactoryBridgeConfig configures report/validation-only handoff to Roblox Factory.
@@ -505,6 +517,12 @@ func DefaultConfig() *Config {
 			LocalAgent:           "forge",
 			WorktreeRoot:         filepath.Join(".prism", "worktrees"),
 		},
+		FactoryMonitor: FactoryMonitorConfig{
+			Enabled:           false,
+			Root:              `D:\_projects_\roblox-factory`,
+			PollSeconds:       30,
+			StuckAfterMinutes: 30,
+		},
 	}
 }
 
@@ -636,6 +654,26 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if c.FactoryMonitor.PollSeconds == 0 {
+		c.FactoryMonitor.PollSeconds = 30
+	}
+	if c.FactoryMonitor.StuckAfterMinutes == 0 {
+		c.FactoryMonitor.StuckAfterMinutes = 30
+	}
+	if c.FactoryMonitor.Enabled {
+		if c.FactoryMonitor.Root == "" {
+			return fmt.Errorf("config: factory_monitor.root is required when factory monitor is enabled")
+		}
+		if c.FactoryMonitor.NotifyChannelID == "" {
+			return fmt.Errorf("config: factory_monitor.notify_channel_id is required when factory monitor is enabled")
+		}
+		if c.FactoryMonitor.PollSeconds < 1 {
+			return fmt.Errorf("config: factory_monitor.poll_seconds must be >= 1")
+		}
+		if c.FactoryMonitor.StuckAfterMinutes < 1 {
+			return fmt.Errorf("config: factory_monitor.stuck_after_minutes must be >= 1")
+		}
+	}
 	if c.Prism.InstanceID != "" && !isValidAgentID(c.Prism.InstanceID) {
 		return fmt.Errorf("config: prism.instance_id %q must be alphanumeric + hyphens only", c.Prism.InstanceID)
 	}
@@ -757,6 +795,7 @@ func (c *Config) ResolveEnv() {
 	c.Bridge.Secret = os.ExpandEnv(c.Bridge.Secret)
 	c.Codex.Executable = os.ExpandEnv(c.Codex.Executable)
 	c.Codex.Workspace = os.ExpandEnv(c.Codex.Workspace)
+	c.FactoryMonitor.Root = os.ExpandEnv(c.FactoryMonitor.Root)
 }
 
 // agentIDPattern enforces alphanumeric + hyphens, no dots.

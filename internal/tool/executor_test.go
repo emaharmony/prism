@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/emaharmony/prism/internal/approval"
 )
 
 func TestExecutorEchoApproved(t *testing.T) {
@@ -169,6 +171,54 @@ func TestExecutorWriteFileDryRunNoDiskWrite(t *testing.T) {
 	// Verify the result indicates no write
 	if result.Output["written"] != false {
 		t.Error("write_file_dry_run result should have written=false")
+	}
+}
+
+func TestExecutorWriteFileProposalPersistsEmptyContentApproval(t *testing.T) {
+	workspace := t.TempDir()
+	allowedRoot := t.TempDir()
+	runsDir := t.TempDir()
+	targetPath := filepath.Join(allowedRoot, "clear-me.txt")
+
+	reg := NewRegistry()
+	RegisterBuiltinsV4(reg, workspace, 1024*1024, allowedRoot)
+	cfg := PolicyConfig{
+		WorkspaceRoot: workspace,
+		AllowedPaths:  []string{allowedRoot},
+		MaxFileSize:   1024 * 1024,
+	}
+	store := approval.NewStore(runsDir)
+	exec := NewExecutor(reg, cfg)
+	exec.SetApprovalStore(store)
+
+	result, err := exec.ExecuteWithPolicy(context.Background(), "write_file_proposal", "astraea", "prism", "corr_test", map[string]any{
+		"_run_id": "run_test",
+		"path":    targetPath,
+		"content": "",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("write_file_proposal should succeed, got error: %s", result.Error)
+	}
+	approvalID, _ := result.Output["approval_id"].(string)
+	if approvalID == "" {
+		t.Fatal("expected approval_id in tool result")
+	}
+
+	a, err := store.Load("run_test", approvalID)
+	if err != nil {
+		t.Fatalf("expected persisted approval: %v", err)
+	}
+	if a.Content != "" {
+		t.Fatalf("expected empty proposed content, got %q", a.Content)
+	}
+	if a.TargetPath != targetPath {
+		t.Fatalf("target path = %q, want %q", a.TargetPath, targetPath)
+	}
+	if a.Status != approval.StatusPending {
+		t.Fatalf("status = %q, want pending", a.Status)
 	}
 }
 

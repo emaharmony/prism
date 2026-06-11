@@ -36,8 +36,10 @@ import (
 // Policy: always allowed (read-only, no filesystem access).
 type EchoTool struct{}
 
-func (t *EchoTool) Name() string        { return "echo" }
-func (t *EchoTool) Description() string { return "Returns the input text unchanged. Useful for testing and verification." }
+func (t *EchoTool) Name() string { return "echo" }
+func (t *EchoTool) Description() string {
+	return "Returns the input text unchanged. Useful for testing and verification."
+}
 func (t *EchoTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -74,8 +76,10 @@ type ListDirTool struct {
 	AllowedPaths []string
 }
 
-func (t *ListDirTool) Name() string        { return "list_dir" }
-func (t *ListDirTool) Description() string { return "Lists files and directories under a given path within the workspace root." }
+func (t *ListDirTool) Name() string { return "list_dir" }
+func (t *ListDirTool) Description() string {
+	return "Lists files and directories under a given path within the workspace root."
+}
 func (t *ListDirTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -127,9 +131,9 @@ func (t *ListDirTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 	return ToolResult{
 		Success: true,
 		Output: map[string]any{
-			"path":   pathVal,
-			"files":  names,
-			"count":  len(names),
+			"path":  pathVal,
+			"files": names,
+			"count": len(names),
 		},
 	}, nil
 }
@@ -149,8 +153,10 @@ type ReadFileTool struct {
 	MaxFileSize int64
 }
 
-func (t *ReadFileTool) Name() string        { return "read_file" }
-func (t *ReadFileTool) Description() string { return "Reads a text file within the workspace root. Path traversal and file size limits are enforced by policy." }
+func (t *ReadFileTool) Name() string { return "read_file" }
+func (t *ReadFileTool) Description() string {
+	return "Reads a text file within the workspace root. Path traversal and file size limits are enforced by policy."
+}
 func (t *ReadFileTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -241,8 +247,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 // in the preview field.
 type WriteFileDryRun struct{}
 
-func (t *WriteFileDryRun) Name() string        { return "write_file_dry_run" }
-func (t *WriteFileDryRun) Description() string { return "Previews a file write diff without writing to disk. No side effects." }
+func (t *WriteFileDryRun) Name() string { return "write_file_dry_run" }
+func (t *WriteFileDryRun) Description() string {
+	return "Previews a file write diff without writing to disk. No side effects."
+}
 func (t *WriteFileDryRun) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -287,7 +295,7 @@ func (t *WriteFileDryRun) Execute(ctx context.Context, input map[string]any) (To
 			"content_length": len(content),
 			"lines":          lines,
 			"preview_diff":   preview,
-			"written":         false,
+			"written":        false,
 		},
 	}, nil
 }
@@ -307,35 +315,31 @@ func (t *WriteFileDryRun) Execute(ctx context.Context, input map[string]any) (To
 // Direct write_file without proposal → denied by policy.
 type WriteFileProposal struct {
 	WorkspaceRoot string
-	// ApprovalStore is used to persist the approval artifact.
-	ApprovalStore ApprovalStorer
+	AllowedPaths  []string
 	// Emit is called to emit events.
 	Emit func(eventType, source string, payload map[string]any)
 }
 
-// ApprovalStorer is the minimal interface needed to persist an approval.
-type ApprovalStorer interface {
-	Save(a any) error
-}
-
 // ApprovalProxy wraps an approval.Approval for storage.
 type ApprovalProxy struct {
-	ApprovalID    string       `json:"approval_id"`
-	RunID         string       `json:"run_id"`
-	CorrelationID string       `json:"correlation_id"`
-	Status        string       `json:"status"`
-	RequestedBy   string       `json:"requested_by"`
-	Project       string       `json:"project"`
-	MutationType  string       `json:"mutation_type"`
-	TargetPath    string       `json:"target_path"`
-	Content       string       `json:"content,omitempty"`
-	Preview       string       `json:"preview,omitempty"`
-	CreatedAt     string       `json:"created_at"`
+	ApprovalID    string         `json:"approval_id"`
+	RunID         string         `json:"run_id"`
+	CorrelationID string         `json:"correlation_id"`
+	Status        string         `json:"status"`
+	RequestedBy   string         `json:"requested_by"`
+	Project       string         `json:"project"`
+	MutationType  string         `json:"mutation_type"`
+	TargetPath    string         `json:"target_path"`
+	Content       string         `json:"content,omitempty"`
+	Preview       string         `json:"preview,omitempty"`
+	CreatedAt     string         `json:"created_at"`
 	Policy        PolicyDecision `json:"policy"`
 }
 
-func (t *WriteFileProposal) Name() string        { return "write_file_proposal" }
-func (t *WriteFileProposal) Description() string { return "Proposes a file write for approval. Does not write to disk — returns an approval_id for the approval workflow." }
+func (t *WriteFileProposal) Name() string { return "write_file_proposal" }
+func (t *WriteFileProposal) Description() string {
+	return "Proposes a file write for approval. Does not write to disk — returns an approval_id for the approval workflow."
+}
 func (t *WriteFileProposal) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -364,33 +368,14 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 		}, nil
 	}
 
-	// Validate path safety
+	// Validate path safety. Relative paths resolve against WorkspaceRoot;
+	// absolute paths are allowed only when they stay inside configured roots.
 	if strings.Contains(pathVal, "..") {
 		return ToolResult{Success: false, Error: "path traversal blocked"}, nil
 	}
-	if filepath.IsAbs(pathVal) {
-		return ToolResult{Success: false, Error: "absolute paths not allowed"}, nil
-	}
-
-	// Defense-in-depth: resolve symlinks in the target path
-	absRoot, err := filepath.Abs(t.WorkspaceRoot)
-	if err != nil {
-		return ToolResult{Success: false, Error: "invalid workspace root"}, nil
-	}
-	resolvedRoot, _ := filepath.EvalSymlinks(absRoot)
-	if resolvedRoot == "" {
-		resolvedRoot = absRoot
-	}
-	absPath := filepath.Clean(filepath.Join(resolvedRoot, pathVal))
-	// For write targets that don't exist yet, resolve parent
-	parentDir := filepath.Dir(absPath)
-	resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
-	if parentErr != nil {
-		return ToolResult{Success: false, Error: "cannot resolve parent directory for write target"}, nil
-	}
-	resolvedAbsPath := filepath.Join(resolvedParent, filepath.Base(absPath))
-	if !safety.IsWithinRoot(resolvedAbsPath, resolvedRoot) {
-		return ToolResult{Success: false, Error: "path is outside workspace root (symlink escape blocked)"}, nil
+	roots := append([]string{t.WorkspaceRoot}, t.AllowedPaths...)
+	if _, err := safety.ResolveAndContainMulti(roots, pathVal); err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
 
 	// Check content size
@@ -400,10 +385,7 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 	}
 
 	// Generate approval ID and create artifact
-	approvalID := "appr_" + fmt.Sprintf("%d", len(pathVal)+len(content))
-	// Actually use ULID
-	now := time.Now()
-	approvalID = fmt.Sprintf("appr_%d", now.UnixNano())
+	approvalID := fmt.Sprintf("appr_%d", time.Now().UnixNano())
 
 	// Build preview
 	previewLen := len(content)
@@ -437,13 +419,13 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 	return ToolResult{
 		Success: true,
 		Output: map[string]any{
-			"approval_id":     approvalID,
-			"mutation_type":   "write_file",
-			"target_path":     pathVal,
-			"content_length":  len(content),
-			"preview":         preview,
-			"status":          "pending_approval",
-			"instruction":     "Use 'prism approval approve <approval_id> --by <name>' or 'prism approval deny <approval_id> --by <name>' to proceed.",
+			"approval_id":    approvalID,
+			"mutation_type":  "write_file",
+			"target_path":    pathVal,
+			"content_length": len(content),
+			"preview":        preview,
+			"status":         "pending_approval",
+			"instruction":    "Use 'prism approval approve <approval_id> --by <name>' or 'prism approval deny <approval_id> --by <name>' to proceed.",
 		},
 	}, nil
 }
@@ -461,14 +443,14 @@ type ReadProjectTool struct {
 	MaxFileSize   int64
 }
 
-func (t *ReadProjectTool) Name() string        { return "read_project" }
+func (t *ReadProjectTool) Name() string { return "read_project" }
 func (t *ReadProjectTool) Description() string {
 	return "Recursively reads a project directory and returns all text file contents. Skips .git, node_modules, vendor, binary files, and large files. Use this to understand a whole project at once."
 }
 func (t *ReadProjectTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path":   {Type: "string", Description: "Root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (use '.' for entire workspace)", Required: true},
+			"path":      {Type: "string", Description: "Root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (use '.' for entire workspace)", Required: true},
 			"max_files": {Type: "integer", Description: "Maximum number of files to read (default 50)", Required: false},
 		},
 		Output: ParamSpec{Type: "object", Description: "Map of file paths to their contents, plus file count and total size"},
@@ -658,7 +640,7 @@ func RegisterBuiltins(registry *Registry, workspaceRoot string, maxFileSize int6
 // V28 mutation tools (git_add, git_commit, git_push) require approval.
 func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize int64, allowedPaths ...string) *Registry {
 	RegisterBuiltins(registry, workspaceRoot, maxFileSize, allowedPaths...)
-	registry.Register(&WriteFileProposal{WorkspaceRoot: workspaceRoot})
+	registry.Register(&WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
 
 	// V28: Git mutation tools (requires approval)
 	registry.Register(&GitAddTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})

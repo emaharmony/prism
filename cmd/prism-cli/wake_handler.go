@@ -19,8 +19,9 @@ import (
 	"strings"
 	"time"
 
-	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
+	contextpkg "github.com/emaharmony/prism/internal/context"
+	"github.com/emaharmony/prism/internal/factorymonitor"
 	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/plan"
@@ -32,15 +33,16 @@ import (
 
 // WakeHandler subscribes to scheduler events and triggers LLM inference.
 type WakeHandler struct {
-	cfg         *orchestrator.Config
-	providers   *provider.ProviderRegistry
-	sessMgr     *session.Manager
-	stateMgr    *state.Manager
-	natsConn    *nats.Conn
-	bot         discordBotClient
-	ctxBuilder  *contextpkg.Builder
-	planMgr     *plan.Manager
-	improveMgr  *improve.Manager
+	cfg        *orchestrator.Config
+	providers  *provider.ProviderRegistry
+	sessMgr    *session.Manager
+	stateMgr   *state.Manager
+	natsConn   *nats.Conn
+	bot        discordBotClient
+	ctxBuilder *contextpkg.Builder
+	planMgr    *plan.Manager
+	improveMgr *improve.Manager
+	factoryMon *factorymonitor.Monitor
 }
 
 // wakeAction defines a scheduled action prompt.
@@ -87,6 +89,12 @@ Be concise — this is a status report, not a novel.`,
 		MaxTokens: 1024,
 		SkipLLM:   true, // Run gh pr list directly, then optionally summarize
 	},
+	"factory_status_digest": {
+		Prompt:    `Report the current Roblox Factory queue status.`,
+		ChannelID: "1496591599940010055",
+		MaxTokens: 512,
+		SkipLLM:   true,
+	},
 	"auto_patch": {
 		Prompt: `You are the auto-patch agent. Your job is to review improvement proposals and create fixes.
 
@@ -130,9 +138,10 @@ func NewWakeHandler(
 	stateMgr *state.Manager,
 	natsConn *nats.Conn,
 	bot discordBotClient,
-	ctxBuilder  *contextpkg.Builder,
-	planMgr     *plan.Manager,
-	improveMgr  *improve.Manager,
+	ctxBuilder *contextpkg.Builder,
+	planMgr *plan.Manager,
+	improveMgr *improve.Manager,
+	factoryMon *factorymonitor.Monitor,
 ) *WakeHandler {
 	return &WakeHandler{
 		cfg:        cfg,
@@ -144,6 +153,7 @@ func NewWakeHandler(
 		ctxBuilder: ctxBuilder,
 		planMgr:    planMgr,
 		improveMgr: improveMgr,
+		factoryMon: factoryMon,
 	}
 }
 
@@ -285,9 +295,9 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 	if chatErr == nil {
 		// Use ChatProvider (preferred path — same as Discord serve)
 		resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
-			RunID:       fmt.Sprintf("wake-%s-%d", action, time.Now().Unix()),
-			Agent:       agentCfg.ID,
-			Model:       model,
+			RunID: fmt.Sprintf("wake-%s-%d", action, time.Now().Unix()),
+			Agent: agentCfg.ID,
+			Model: model,
 			Messages: []provider.ChatMessage{
 				{Role: "system", Content: systemPrompt},
 				{Role: "user", Content: userPrompt},
@@ -380,6 +390,8 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 	switch action {
 	case "check_prs":
 		resultContent = wh.checkPRStatus()
+	case "factory_status_digest":
+		resultContent = wh.factoryStatusDigest()
 	default:
 		log.Printf("[WAKE] WARN unknown direct action %q", action)
 		return
@@ -403,6 +415,14 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 		})
 	}
 	log.Printf("[WAKE] completed direct action %q", action)
+}
+
+func (wh *WakeHandler) factoryStatusDigest() string {
+	if wh.factoryMon == nil {
+		return "Factory monitor is not enabled."
+	}
+	wh.factoryMon.PublishDigest()
+	return ""
 }
 
 // checkPRStatus runs gh pr list and formats the results.
@@ -449,13 +469,13 @@ func (wh *WakeHandler) formatPRList(jsonOutput string) string {
 		Name  string `json:"name"`
 	}
 	type PR struct {
-		Number          int             `json:"number"`
-		Title           string          `json:"title"`
-		Author          PRAuthor        `json:"author"`
-		UpdatedAt       string          `json:"updatedAt"`
-		ReviewDecision  string          `json:"reviewDecision"`
+		Number            int             `json:"number"`
+		Title             string          `json:"title"`
+		Author            PRAuthor        `json:"author"`
+		UpdatedAt         string          `json:"updatedAt"`
+		ReviewDecision    string          `json:"reviewDecision"`
 		StatusCheckRollup []PRStatusCheck `json:"statusCheckRollup"`
-		Labels          []PRLabel       `json:"labels"`
+		Labels            []PRLabel       `json:"labels"`
 	}
 
 	var prs []PR
