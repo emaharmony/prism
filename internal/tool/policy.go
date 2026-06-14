@@ -37,9 +37,20 @@ type PolicyConfig struct {
 	// The workspace root is always implicitly included. Paths are resolved to
 	// absolute paths at evaluation time.
 	AllowedPaths []string
+	// ReadRoots is the recursive root list for read/search/list tools. If empty,
+	// AllowedPaths is used for backward compatibility.
+	ReadRoots []string
+	// WriteRoots is the recursive root list for approval-gated mutations. If
+	// empty, AllowedPaths is used for backward compatibility.
+	WriteRoots []string
 	// MaxFileSize is the maximum file size in bytes that read_file will allow.
 	// Defaults to 1MB if zero.
 	MaxFileSize int64
+	// OrchestratorAgentID is the only agent allowed to request mutation
+	// proposals by default. Empty preserves legacy behavior.
+	OrchestratorAgentID string
+	// WriteAgents explicitly allows extra agents to request mutation proposals.
+	WriteAgents map[string]bool
 }
 
 // DefaultPolicyConfig returns a PolicyConfig with sensible defaults.
@@ -56,6 +67,47 @@ func (pc PolicyConfig) AllRoots() []string {
 	roots := []string{pc.WorkspaceRoot}
 	roots = append(roots, pc.AllowedPaths...)
 	return roots
+}
+
+// ReadAllowedPaths returns non-workspace roots for read-only tools.
+func (pc PolicyConfig) ReadAllowedPaths() []string {
+	if len(pc.ReadRoots) > 0 {
+		return append([]string(nil), pc.ReadRoots...)
+	}
+	return append([]string(nil), pc.AllowedPaths...)
+}
+
+// WriteAllowedPaths returns non-workspace roots for approval-gated mutations.
+func (pc PolicyConfig) WriteAllowedPaths() []string {
+	if len(pc.WriteRoots) > 0 {
+		return append([]string(nil), pc.WriteRoots...)
+	}
+	return append([]string(nil), pc.AllowedPaths...)
+}
+
+// ReadRootsAll returns workspace plus configured read roots.
+func (pc PolicyConfig) ReadRootsAll() []string {
+	roots := []string{pc.WorkspaceRoot}
+	roots = append(roots, pc.ReadAllowedPaths()...)
+	return roots
+}
+
+// WriteRootsAll returns workspace plus configured write roots.
+func (pc PolicyConfig) WriteRootsAll() []string {
+	roots := []string{pc.WorkspaceRoot}
+	roots = append(roots, pc.WriteAllowedPaths()...)
+	return roots
+}
+
+// CanAgentProposeWrites reports whether an agent may request approval-gated mutations.
+func (pc PolicyConfig) CanAgentProposeWrites(agentID string) bool {
+	if pc.WriteAgents != nil && pc.WriteAgents[agentID] {
+		return true
+	}
+	if pc.OrchestratorAgentID == "" {
+		return true
+	}
+	return agentID == pc.OrchestratorAgentID
 }
 
 // PolicyResult captures the decision and reason for a policy evaluation.
@@ -78,6 +130,11 @@ type PolicyResult struct {
 //   - anything else → denied
 //   - Path traversal with ".." or absolute paths outside workspace → denied
 func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
+	return EvaluatePolicyForAgent(cfg, toolName, "", input)
+}
+
+// EvaluatePolicyForAgent checks whether a tool call is allowed for the given agent.
+func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input map[string]any) PolicyResult {
 	switch toolName {
 	case "echo":
 		return PolicyResult{Decision: PolicyApproved, Reason: "echo is always approved"}
@@ -86,6 +143,9 @@ func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) Pol
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 
 	case "write_file_proposal":
+		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose file mutations; route write requests through the orchestrator", agentID)}
+		}
 		return evaluateV4ProposalPolicy(cfg, toolName, input)
 
 	case "apply_patch_proposal":
@@ -115,6 +175,9 @@ func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) Pol
 
 	// V28: Git mutation tools — require approval
 	case "git_add", "git_commit", "git_push":
+		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose git mutations; route write requests through the orchestrator", agentID)}
+		}
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s is a git mutation, requires approval", toolName)}
 
 	default:
@@ -141,7 +204,7 @@ func evaluateV4ProposalPolicy(cfg PolicyConfig, toolName string, input map[strin
 
 	// Resolve and check configured bounds. Relative paths resolve against the
 	// workspace root; absolute paths are allowed only inside configured roots.
-	if _, err := safety.ResolveAndContainMulti(cfg.AllRoots(), pathStr); err != nil {
+	if _, err := safety.ResolveAndContainMulti(cfg.WriteRootsAll(), pathStr); err != nil {
 		return PolicyResult{Decision: PolicyDenied, Reason: err.Error()}
 	}
 
@@ -181,7 +244,7 @@ func evaluatePathPolicy(cfg PolicyConfig, toolName string, input map[string]any)
 	}
 
 	// Resolve all allowed roots to absolute form
-	allRoots := cfg.AllRoots()
+	allRoots := cfg.ReadRootsAll()
 	absRoots := make([]string, len(allRoots))
 	for i, r := range allRoots {
 		absR, err := filepath.Abs(r)

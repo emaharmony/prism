@@ -276,6 +276,7 @@ func main() {
 			approvalApproveRun := approvalApproveCmd.String("run", "", "Run ID (required)")
 			approvalApproveWorkspace := approvalApproveCmd.String("workspace", ".", "Workspace root directory")
 			approvalApproveRunsDir := approvalApproveCmd.String("run-dir", "./runs", "Directory for run outputs")
+			approvalApproveConfig := approvalApproveCmd.String("config", "prism.yaml", "Path to prism.yaml for write_roots")
 			approvalValidate := approvalApproveCmd.Bool("validate", false, "Run validation and review after approving the mutation")
 			approvalApproveCmd.Parse(os.Args[4:])
 
@@ -285,9 +286,9 @@ func main() {
 			}
 			approveID := os.Args[3]
 			if *approvalValidate {
-				executeApprovalApproveWithValidation(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir)
+				executeApprovalApproveWithValidation(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir, *approvalApproveConfig)
 			} else {
-				executeApprovalApprove(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir)
+				executeApprovalApprove(approveID, *approvalApproveBy, *approvalApproveRun, *approvalApproveWorkspace, *approvalApproveRunsDir, *approvalApproveConfig)
 			}
 
 		case "deny":

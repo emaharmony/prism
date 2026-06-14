@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
 	"gopkg.in/yaml.v3"
@@ -48,6 +49,9 @@ type Config struct {
 
 	// Sessions configures session management.
 	Sessions SessionConfig `yaml:"sessions"`
+
+	// Users maps external channel identities to stable owner identities.
+	Users []UserConfig `yaml:"users"`
 
 	// Remembrance configures the memory service.
 	Remembrance RemembranceConfig `yaml:"remembrance"`
@@ -95,6 +99,14 @@ type PrismConfig struct {
 	// The workspace root is always implicitly allowed.
 	// Example: ["/Users/ema/projects/repos", "/tmp/prism-data"]
 	AllowedPaths []string `yaml:"allowed_paths"`
+
+	// ReadRoots grants recursive read/search/list access beyond the workspace root.
+	// When empty, AllowedPaths is used for backward compatibility.
+	ReadRoots []string `yaml:"read_roots"`
+
+	// WriteRoots grants recursive approval-gated mutation access beyond the workspace root.
+	// When empty, AllowedPaths is used for backward compatibility.
+	WriteRoots []string `yaml:"write_roots"`
 
 	// Scheduler configures cron-style scheduled tasks that fire NATS events.
 	// V32: Event-driven wake replaces heartbeat babysitting.
@@ -329,6 +341,74 @@ type ChannelConfig struct {
 	Channels []string `yaml:"channels"`
 }
 
+// UserConfig maps channel-specific user IDs to one durable Prism owner ID.
+type UserConfig struct {
+	ID          string              `yaml:"id"`
+	DisplayName string              `yaml:"display_name"`
+	Default     bool                `yaml:"default"`
+	Aliases     map[string][]string `yaml:"aliases"`
+}
+
+// ResolveOwnerID maps an external channel user ID to a stable owner ID.
+// If no alias matches, the configured default owner is used. If no default is
+// configured, Prism falls back to the external ID to avoid cross-user leakage.
+func (c *Config) ResolveOwnerID(channelType, externalID string) string {
+	if c == nil {
+		return externalID
+	}
+	for _, u := range c.Users {
+		if userHasAlias(u, channelType, externalID) {
+			return u.ID
+		}
+	}
+	for _, u := range c.Users {
+		if u.Default && u.ID != "" {
+			return u.ID
+		}
+	}
+	return externalID
+}
+
+// OwnerAliases returns all known local and external IDs that may appear in old
+// session rows for the same owner.
+func (c *Config) OwnerAliases(ownerID string) []string {
+	seen := map[string]bool{}
+	var aliases []string
+	add := func(v string) {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			aliases = append(aliases, v)
+		}
+	}
+	add(ownerID)
+	if c == nil {
+		return aliases
+	}
+	for _, u := range c.Users {
+		if u.ID != ownerID {
+			continue
+		}
+		for _, values := range u.Aliases {
+			for _, v := range values {
+				add(v)
+			}
+		}
+	}
+	return aliases
+}
+
+func userHasAlias(u UserConfig, channelType, externalID string) bool {
+	if u.ID == externalID {
+		return true
+	}
+	for _, v := range u.Aliases[channelType] {
+		if v == externalID {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveChannelRole returns the state action key for a given channel ID.
 // Returns empty string if no role is configured for the channel.
 func (c *Config) ResolveChannelRole(channelID string) string {
@@ -391,6 +471,35 @@ type SessionConfig struct {
 	// CompactionStrategy controls how sessions are compacted.
 	// "truncate" removes oldest messages (V20). "summarize" uses Remembrance (V21).
 	CompactionStrategy string `yaml:"compaction_strategy"`
+
+	// Persistence enables durable resume of prior sessions from SQLite.
+	Persistence bool `yaml:"persistence"`
+
+	// ResumeAfterIdle reuses the latest session even after IdleTimeoutMinutes.
+	ResumeAfterIdle bool `yaml:"resume_after_idle"`
+
+	// KeepArchivedMessages preserves compacted messages in SQLite instead of deleting them.
+	KeepArchivedMessages bool `yaml:"keep_archived_messages"`
+
+	// ContinuityScope controls session reuse. "owner_agent" keeps one live
+	// conversation per owner and agent across channels. "channel_user" preserves
+	// the historical channel+user behavior.
+	ContinuityScope string `yaml:"continuity_scope"`
+
+	// RecallWindowMode controls recent local memory bounds. "calendar_week"
+	// recalls from the current week start. "rolling_days" uses ShortTermWindowDays.
+	RecallWindowMode string `yaml:"recall_window_mode"`
+
+	// RecallTimezone is the IANA timezone for calendar week recall. "Local"
+	// uses the machine local timezone.
+	RecallTimezone string `yaml:"recall_timezone"`
+
+	// ShortTermWindowDays controls local recent-memory lookup across sessions.
+	ShortTermWindowDays int `yaml:"short_term_window_days"`
+
+	// VerbatimRecentMessages caps exact recent local memory injected from other
+	// sessions. Current session history remains controlled by MaxContextMessages.
+	VerbatimRecentMessages int `yaml:"verbatim_recent_messages"`
 }
 
 // RemembranceConfig configures the memory service connection.
@@ -420,10 +529,18 @@ func DefaultConfig() *Config {
 			LLMTimeoutSeconds:  1200,
 		},
 		Sessions: SessionConfig{
-			IdleTimeoutMinutes: 30,
-			DailyResetHour:     4,
-			MaxContextMessages: 100,
-			CompactionStrategy: "truncate",
+			IdleTimeoutMinutes:     30,
+			DailyResetHour:         4,
+			MaxContextMessages:     100,
+			CompactionStrategy:     "summarize",
+			Persistence:            true,
+			ResumeAfterIdle:        true,
+			KeepArchivedMessages:   true,
+			ContinuityScope:        "owner_agent",
+			RecallWindowMode:       "calendar_week",
+			RecallTimezone:         "Local",
+			ShortTermWindowDays:    7,
+			VerbatimRecentMessages: 40,
 		},
 		Remembrance: RemembranceConfig{
 			Enabled:        false,
@@ -584,6 +701,32 @@ func (c *Config) Validate() error {
 	}
 	if c.Sessions.CompactionStrategy != "truncate" && c.Sessions.CompactionStrategy != "summarize" {
 		return fmt.Errorf("config: compaction_strategy must be 'truncate' or 'summarize'")
+	}
+	if c.Sessions.ContinuityScope == "" {
+		c.Sessions.ContinuityScope = "owner_agent"
+	}
+	if c.Sessions.ContinuityScope != "owner_agent" && c.Sessions.ContinuityScope != "channel_user" {
+		return fmt.Errorf("config: continuity_scope must be 'owner_agent' or 'channel_user'")
+	}
+	if c.Sessions.RecallWindowMode == "" {
+		c.Sessions.RecallWindowMode = "calendar_week"
+	}
+	if c.Sessions.RecallWindowMode != "calendar_week" && c.Sessions.RecallWindowMode != "rolling_days" {
+		return fmt.Errorf("config: recall_window_mode must be 'calendar_week' or 'rolling_days'")
+	}
+	if c.Sessions.RecallTimezone == "" {
+		c.Sessions.RecallTimezone = "Local"
+	}
+	if c.Sessions.RecallTimezone != "Local" {
+		if _, err := time.LoadLocation(c.Sessions.RecallTimezone); err != nil {
+			return fmt.Errorf("config: recall_timezone %q is invalid: %w", c.Sessions.RecallTimezone, err)
+		}
+	}
+	if c.Sessions.ShortTermWindowDays < 0 {
+		return fmt.Errorf("config: short_term_window_days must be >= 0")
+	}
+	if c.Sessions.VerbatimRecentMessages < 0 {
+		return fmt.Errorf("config: verbatim_recent_messages must be >= 0")
 	}
 	if c.Prism.LLMTimeoutSeconds < 0 {
 		return fmt.Errorf("config: llm_timeout_seconds must be >= 0")
@@ -796,6 +939,39 @@ func (c *Config) ResolveEnv() {
 	c.Codex.Executable = os.ExpandEnv(c.Codex.Executable)
 	c.Codex.Workspace = os.ExpandEnv(c.Codex.Workspace)
 	c.FactoryMonitor.Root = os.ExpandEnv(c.FactoryMonitor.Root)
+	expandList(c.Prism.AllowedPaths)
+	expandList(c.Prism.ReadRoots)
+	expandList(c.Prism.WriteRoots)
+}
+
+// EffectiveReadRoots returns configured recursive read roots. New read_roots
+// takes precedence; allowed_paths remains the legacy alias.
+func (c *Config) EffectiveReadRoots() []string {
+	if c == nil {
+		return nil
+	}
+	if len(c.Prism.ReadRoots) > 0 {
+		return append([]string(nil), c.Prism.ReadRoots...)
+	}
+	return append([]string(nil), c.Prism.AllowedPaths...)
+}
+
+// EffectiveWriteRoots returns configured recursive approval-gated write roots.
+// New write_roots takes precedence; allowed_paths remains the legacy alias.
+func (c *Config) EffectiveWriteRoots() []string {
+	if c == nil {
+		return nil
+	}
+	if len(c.Prism.WriteRoots) > 0 {
+		return append([]string(nil), c.Prism.WriteRoots...)
+	}
+	return append([]string(nil), c.Prism.AllowedPaths...)
+}
+
+func expandList(values []string) {
+	for i := range values {
+		values[i] = os.ExpandEnv(values[i])
+	}
 }
 
 // agentIDPattern enforces alphanumeric + hyphens, no dots.

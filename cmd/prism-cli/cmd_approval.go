@@ -25,6 +25,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/mutation"
+	"github.com/emaharmony/prism/internal/orchestrator"
 )
 
 // executeApprovalList shows all approvals, optionally filtered to a single run.
@@ -143,7 +144,7 @@ func executeApprovalShow(approvalID, runID, runsDir string) {
 //
 // This is the human-in-the-loop gate: the AI proposed, Prism validated, and
 // now the human decides. No LLM self-approval — ever.
-func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir string) {
+func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir, configPath string) {
 	if approvedBy == "" {
 		fmt.Fprintln(os.Stderr, "Error: --by flag is required")
 		os.Exit(1)
@@ -154,7 +155,8 @@ func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir st
 	}
 
 	store := approval.NewStore(runsDir)
-	executor := mutation.NewExecutor(workspace, store)
+	writeRoots := approvalWriteRoots(configPath)
+	executor := mutation.NewExecutor(workspace, store, writeRoots...)
 
 	// Print events as they happen (CLI doesn't have NATS bus)
 	executor.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -231,4 +233,19 @@ func executeApprovalDeny(approvalID, deniedBy, reason, runID, runsDir string) {
 	}
 	fmt.Println("  (No files were written)")
 	fmt.Println("═══════════════════════════════════════════")
+}
+
+func approvalWriteRoots(configPath string) []string {
+	if configPath == "" {
+		configPath = "prism.yaml"
+	}
+	cfg, err := orchestrator.LoadConfig(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "Error loading config %q: %v\n", configPath, err)
+		os.Exit(1)
+	}
+	return configuredWriteRoots(cfg)
 }

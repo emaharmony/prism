@@ -17,8 +17,26 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Sessions.MaxContextMessages != 100 {
 		t.Errorf("expected default max context 100, got %d", cfg.Sessions.MaxContextMessages)
 	}
-	if cfg.Sessions.CompactionStrategy != "truncate" {
-		t.Errorf("expected default compaction 'truncate', got %q", cfg.Sessions.CompactionStrategy)
+	if cfg.Sessions.CompactionStrategy != "summarize" {
+		t.Errorf("expected default compaction 'summarize', got %q", cfg.Sessions.CompactionStrategy)
+	}
+	if !cfg.Sessions.Persistence {
+		t.Error("expected session persistence enabled by default")
+	}
+	if !cfg.Sessions.ResumeAfterIdle {
+		t.Error("expected resume_after_idle enabled by default")
+	}
+	if !cfg.Sessions.KeepArchivedMessages {
+		t.Error("expected keep_archived_messages enabled by default")
+	}
+	if cfg.Sessions.ContinuityScope != "owner_agent" {
+		t.Errorf("expected continuity_scope owner_agent, got %q", cfg.Sessions.ContinuityScope)
+	}
+	if cfg.Sessions.RecallWindowMode != "calendar_week" {
+		t.Errorf("expected recall_window_mode calendar_week, got %q", cfg.Sessions.RecallWindowMode)
+	}
+	if cfg.Sessions.RecallTimezone != "Local" {
+		t.Errorf("expected recall_timezone Local, got %q", cfg.Sessions.RecallTimezone)
 	}
 	if cfg.Remembrance.Enabled != false {
 		t.Error("expected remembrance disabled by default")
@@ -468,5 +486,93 @@ factory_monitor:
 	}
 	if cfg.FactoryMonitor.Root != "D:/factory" {
 		t.Fatalf("factory monitor root = %q", cfg.FactoryMonitor.Root)
+	}
+}
+
+func TestEffectiveRootsPreferSplitConfig(t *testing.T) {
+	cfg, err := LoadConfigFromBytes([]byte(`
+prism:
+  allowed_paths:
+    - legacy
+  read_roots:
+    - reads
+  write_roots:
+    - writes
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.EffectiveReadRoots(); len(got) != 1 || got[0] != "reads" {
+		t.Fatalf("read roots = %v", got)
+	}
+	if got := cfg.EffectiveWriteRoots(); len(got) != 1 || got[0] != "writes" {
+		t.Fatalf("write roots = %v", got)
+	}
+}
+
+func TestEffectiveRootsFallbackToAllowedPaths(t *testing.T) {
+	cfg, err := LoadConfigFromBytes([]byte(`
+prism:
+  allowed_paths:
+    - legacy
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.EffectiveReadRoots(); len(got) != 1 || got[0] != "legacy" {
+		t.Fatalf("read roots = %v", got)
+	}
+	if got := cfg.EffectiveWriteRoots(); len(got) != 1 || got[0] != "legacy" {
+		t.Fatalf("write roots = %v", got)
+	}
+}
+
+func TestResolveOwnerIDUsesAliasesAndDefault(t *testing.T) {
+	cfg, err := LoadConfigFromBytes([]byte(`
+users:
+  - id: ema
+    display_name: Ema
+    default: true
+    aliases:
+      discord:
+        - "123"
+      cli:
+        - local-user
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if got := cfg.ResolveOwnerID("discord", "123"); got != "ema" {
+		t.Fatalf("discord alias owner = %q", got)
+	}
+	if got := cfg.ResolveOwnerID("cli", "local-user"); got != "ema" {
+		t.Fatalf("cli alias owner = %q", got)
+	}
+	if got := cfg.ResolveOwnerID("discord", "unknown"); got != "ema" {
+		t.Fatalf("default owner = %q", got)
+	}
+	aliases := cfg.OwnerAliases("ema")
+	if len(aliases) != 3 {
+		t.Fatalf("aliases = %v", aliases)
+	}
+}
+
+func TestValidateSessionRecallConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Sessions.RecallWindowMode = "invalid"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid recall_window_mode error")
+	}
+
+	cfg = DefaultConfig()
+	cfg.Sessions.ContinuityScope = "invalid"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid continuity_scope error")
+	}
+
+	cfg = DefaultConfig()
+	cfg.Sessions.RecallTimezone = "Not/AZone"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid recall_timezone error")
 	}
 }

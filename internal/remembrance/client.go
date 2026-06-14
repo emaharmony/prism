@@ -105,6 +105,7 @@ type DreamResponse struct {
 // Matches the Python ContextPack model.
 type ContextPackResponse struct {
 	ProjectID        string         `json:"project_id"`
+	OwnerID          string         `json:"owner_id,omitempty"`
 	AgentID          string         `json:"agent_id"`
 	Task             string         `json:"task"`
 	SelectedMemories []string       `json:"selected_memories"`
@@ -125,11 +126,40 @@ type ContextDetail struct {
 
 // ContextMemory represents a single memory in the context response.
 type ContextMemory struct {
-	MemoryID string  `json:"memory_id"`
-	Title    string  `json:"title"`
-	Summary  string  `json:"summary"`
-	Score    float64 `json:"score"`
-	Reason   string  `json:"reason"`
+	MemoryID   string  `json:"memory_id"`
+	Scope      string  `json:"scope,omitempty"`
+	Title      string  `json:"title"`
+	Summary    string  `json:"summary"`
+	Score      float64 `json:"score"`
+	Reason     string  `json:"reason"`
+	Confidence float64 `json:"confidence,omitempty"`
+}
+
+type BuildContextRequest struct {
+	OwnerID            string `json:"owner_id,omitempty"`
+	AgentID            string `json:"agent_id"`
+	ProjectID          string `json:"project_id"`
+	Task               string `json:"task"`
+	LocalRecentSummary string `json:"local_recent_summary,omitempty"`
+	ChannelContext     string `json:"channel_context,omitempty"`
+	MaxTokens          int    `json:"max_tokens,omitempty"`
+}
+
+type CaptureRequest struct {
+	OwnerID         string   `json:"owner_id,omitempty"`
+	AgentID         string   `json:"agent_id,omitempty"`
+	SessionID       string   `json:"session_id,omitempty"`
+	MessageIDs      []string `json:"message_ids,omitempty"`
+	Scope           string   `json:"scope"`
+	Category        string   `json:"category"`
+	Summary         string   `json:"summary"`
+	SourceRef       string   `json:"source_ref,omitempty"`
+	ImportanceScore float64  `json:"importance_score"`
+	ProjectID       string   `json:"project_id"`
+	Title           string   `json:"title"`
+	Content         string   `json:"content"`
+	SourceType      string   `json:"source_type"`
+	SourceAgent     string   `json:"source_agent,omitempty"`
 }
 
 // ── Client ───────────────────────────────────────────────────────
@@ -167,18 +197,29 @@ func NewClientWithTimeout(baseURL string, timeout time.Duration) *Client {
 // BuildContext requests context from Remembrance for a task.
 // POSTs to /v1/context/build with the agent's task.
 func (c *Client) BuildContext(task, project, agent string, maxTokens int) (*ContextPackResponse, error) {
-	body := map[string]any{
-		"task":       task,
-		"project_id": project,
-		"agent_id":   agent,
-	}
-	if maxTokens > 0 {
-		body["max_tokens"] = maxTokens
-	}
 	if project == "" {
-		body["project_id"] = "prism"
+		project = "prism"
 	}
+	return c.BuildContextWithOptions(BuildContextRequest{
+		Task:      task,
+		ProjectID: project,
+		AgentID:   agent,
+		MaxTokens: maxTokens,
+	})
+}
 
+func (c *Client) BuildContextWithOptions(req BuildContextRequest) (*ContextPackResponse, error) {
+	if req.ProjectID == "" {
+		req.ProjectID = "prism"
+	}
+	bodyBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal context request: %w", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
+		return nil, fmt.Errorf("failed to encode context request: %w", err)
+	}
 	result, err := c.doPost(c.BaseURL+"/v1/context/build", body)
 	if err != nil {
 		return nil, err
@@ -211,24 +252,56 @@ func (c *Client) IsAvailable() bool {
 // Capture sends a conversation to Remembrance for ingestion.
 // POSTs to /v1/memory/ingest with the conversation text.
 func (c *Client) Capture(text, source, category, tier string) (map[string]any, error) {
-	body := map[string]any{
-		"content":           text,
-		"category":           "conversation",
-		"title":              "auto-captured",
-		"summary":             truncate(text, 200),
-		"source_type":         "agent", // always "agent" for auto-captured conversations
-		"source_agent":        source,    // e.g. "prism:lumi" for agent attribution
-		"scope":               "project",
-		"importance_score":    0.5,
-		"project_id":          "prism", // default project for auto-captured conversations
+	req := CaptureRequest{
+		Content:         text,
+		Category:        "conversation",
+		Title:           "auto-captured",
+		Summary:         truncate(text, 200),
+		SourceType:      "agent",
+		SourceAgent:     source,
+		Scope:           "project",
+		ImportanceScore: 0.5,
+		ProjectID:       "prism",
 	}
 	if category != "" {
-		body["category"] = category
+		req.Category = category
 	}
 	if tier != "" {
-		body["scope"] = tier
+		req.Scope = tier
 	}
+	return c.CaptureWithMetadata(req)
+}
 
+func (c *Client) CaptureWithMetadata(req CaptureRequest) (map[string]any, error) {
+	if req.ProjectID == "" {
+		req.ProjectID = "prism"
+	}
+	if req.Category == "" {
+		req.Category = "conversation"
+	}
+	if req.Scope == "" {
+		req.Scope = "project"
+	}
+	if req.Title == "" {
+		req.Title = "auto-captured"
+	}
+	if req.Summary == "" {
+		req.Summary = truncate(req.Content, 200)
+	}
+	if req.SourceType == "" {
+		req.SourceType = "agent"
+	}
+	if req.ImportanceScore == 0 {
+		req.ImportanceScore = 0.5
+	}
+	bodyBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal capture request: %w", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
+		return nil, fmt.Errorf("failed to encode capture request: %w", err)
+	}
 	return c.doPost(c.BaseURL+"/v1/memory/ingest", body)
 }
 

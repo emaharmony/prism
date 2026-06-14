@@ -131,7 +131,7 @@ func executeValidationRun(profileName, project, runDir, runID string) {
 // If validation fails, the mutation is still applied (no auto-rollback) but
 // the status shows validation_status: failed. This is intentional —
 // rollback is a separate decision that should be made by a human.
-func executeApprovalApproveWithValidation(approvalID, approvedBy, runID, workspace, runsDir string) {
+func executeApprovalApproveWithValidation(approvalID, approvedBy, runID, workspace, runsDir, configPath string) {
 	if approvedBy == "" {
 		fmt.Fprintln(os.Stderr, "Error: --by flag is required")
 		os.Exit(1)
@@ -147,11 +147,12 @@ func executeApprovalApproveWithValidation(approvalID, approvedBy, runID, workspa
 
 	// Create a minimal runner for the V5 pipeline
 	runner := run.NewRunner(run.RunConfig{
-		Project:            "prism",
-		RunDir:             runsDir,
-		BusURL:             "nats://localhost:4222",
-		ValidationRegistry: validation.NewRegistry(),
-		Reviewer:           review.NewReviewer("lumi-deterministic"),
+		Project:              "prism",
+		RunDir:               runsDir,
+		MutationAllowedPaths: approvalWriteRoots(configPath),
+		BusURL:               "nats://localhost:4222",
+		ValidationRegistry:   validation.NewRegistry(),
+		Reviewer:             review.NewReviewer("lumi-deterministic"),
 	})
 
 	result, err := runner.ApproveWithValidation(runDir, approvalID, approvedBy, workspace)

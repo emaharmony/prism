@@ -275,3 +275,76 @@ func TestIsWithinRoot_BlocksDirectSymlinkEscape(t *testing.T) {
 		t.Error("isWithinRoot should block direct symlink escape")
 	}
 }
+
+func TestPolicyReadRootsAllowChildPaths(t *testing.T) {
+	tmpDir := t.TempDir()
+	readRoot := filepath.Join(tmpDir, "read-root")
+	child := filepath.Join(readRoot, "child")
+	if err := os.MkdirAll(child, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := PolicyConfig{WorkspaceRoot: filepath.Join(tmpDir, "workspace"), ReadRoots: []string{readRoot}}
+	result := EvaluatePolicy(cfg, "read_file", map[string]any{"path": filepath.Join(child, "notes.txt")})
+	if result.Decision != PolicyApproved {
+		t.Fatalf("read under child should be approved, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestPolicyWriteRootsAreSeparateFromReadRoots(t *testing.T) {
+	tmpDir := t.TempDir()
+	readRoot := filepath.Join(tmpDir, "read-root")
+	writeRoot := filepath.Join(tmpDir, "write-root")
+	if err := os.MkdirAll(readRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(writeRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := PolicyConfig{
+		WorkspaceRoot: filepath.Join(tmpDir, "workspace"),
+		ReadRoots:     []string{readRoot},
+		WriteRoots:    []string{writeRoot},
+	}
+
+	readOnlyWrite := EvaluatePolicy(cfg, "write_file_proposal", map[string]any{
+		"path":    filepath.Join(readRoot, "file.txt"),
+		"content": "data",
+	})
+	if readOnlyWrite.Decision != PolicyDenied {
+		t.Fatalf("write under read root should be denied, got %s", readOnlyWrite.Decision)
+	}
+
+	childWrite := EvaluatePolicy(cfg, "write_file_proposal", map[string]any{
+		"path":    filepath.Join(writeRoot, "child", "file.txt"),
+		"content": "data",
+	})
+	if childWrite.Decision != PolicyRequiresApproval {
+		t.Fatalf("write under write-root child should require approval, got %s: %s", childWrite.Decision, childWrite.Reason)
+	}
+}
+
+func TestPolicyWriteProposalRestrictedToOrchestrator(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := PolicyConfig{
+		WorkspaceRoot:       tmpDir,
+		OrchestratorAgentID: "lumi",
+	}
+
+	denied := EvaluatePolicyForAgent(cfg, "write_file_proposal", "forge", map[string]any{
+		"path":    "file.txt",
+		"content": "data",
+	})
+	if denied.Decision != PolicyDenied {
+		t.Fatalf("subagent write proposal should be denied, got %s", denied.Decision)
+	}
+
+	allowed := EvaluatePolicyForAgent(cfg, "write_file_proposal", "lumi", map[string]any{
+		"path":    "file.txt",
+		"content": "data",
+	})
+	if allowed.Decision != PolicyRequiresApproval {
+		t.Fatalf("orchestrator write proposal should require approval, got %s", allowed.Decision)
+	}
+}

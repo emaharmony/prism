@@ -287,7 +287,13 @@ prism:
   llm_timeout_seconds: 1200
   port: 8321
   log_level: "info"
-  allowed_paths: []
+  read_roots:
+    - "D:/"
+    - "C:/Users/emaha"
+  write_roots:
+    - "D:/_projects_"
+    - "D:/Projects"
+  allowed_paths: []                  # legacy alias if split roots are omitted
   scheduler:
     enabled: false
     jobs: []
@@ -349,7 +355,10 @@ actions:
 sessions:
   max_context_messages: 100
   idle_timeout_minutes: 30
-  compaction_strategy: "truncate"
+  persistence: true
+  resume_after_idle: true
+  compaction_strategy: "summarize"
+  keep_archived_messages: true
   daily_reset_hour: 4
 
 remembrance:

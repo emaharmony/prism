@@ -64,7 +64,7 @@ func (cc *conversationContext) runToolLoop(
 		}
 
 		// Call the LLM with the current prompt
-		responseText, err := cc.callLLMForToolLoop(ctx, currentPrompt, agentCfg)
+		responseText, err := cc.callLLMForToolLoop(ctx, currentPrompt, agentCfg, channelID)
 		if err != nil {
 			return "", summaries, fmt.Errorf("LLM call failed in tool loop iteration %d: %w", i+1, err)
 		}
@@ -82,7 +82,7 @@ func (cc *conversationContext) runToolLoop(
 			log.Printf("[TOOL] iteration %d: agent requests tool %q", i+1, parsed.ToolName)
 
 			// Execute the tool
-			toolResult, approvalNeeded, err := cc.executeTool(ctx, parsed, agentCfg, runID)
+			toolResult, approvalNeeded, err := cc.executeTool(ctx, parsed, agentCfg, channelID, runID)
 			if err != nil {
 				log.Printf("[TOOL] tool %q failed: %v", parsed.ToolName, err)
 				// Feed the error back to the LLM so it can try a different approach
@@ -142,11 +142,13 @@ func (cc *conversationContext) runToolLoop(
 }
 
 // callLLMForToolLoop makes an LLM call within the tool loop context.
-func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt string, agentCfg *orchestrator.AgentConfig) (string, error) {
+func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt string, agentCfg *orchestrator.AgentConfig, channelID string) (string, error) {
 	// Add tool instructions to the prompt
 	toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+	toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
+	toolInfos = filterToolInfosByChannelRole(toolInfos, cc.cfg.ResolveChannelRoleConfig(channelID))
 	if len(toolInfos) > 0 {
-		prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...)
+		prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...)
 	}
 
 	// Use the provider from the registry
@@ -170,13 +172,16 @@ func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt st
 }
 
 // executeTool runs a tool with policy checks and returns the typed result.
-func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.AgentResponse, agentCfg *orchestrator.AgentConfig, runID string) (tool.ToolResult, bool, error) {
+func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.AgentResponse, agentCfg *orchestrator.AgentConfig, channelID string, runID string) (tool.ToolResult, bool, error) {
 	if cc.toolExec == nil {
 		return tool.ToolResult{}, false, fmt.Errorf("tool execution not available")
 	}
+	if err := cc.checkChannelToolAccess(parsed.ToolName, channelID); err != nil {
+		return tool.ToolResult{}, false, err
+	}
 
 	// Check policy
-	policyResult := tool.EvaluatePolicy(cc.toolPolicy, parsed.ToolName, parsed.ToolInput)
+	policyResult := tool.EvaluatePolicyForAgent(cc.toolPolicy, parsed.ToolName, agentCfg.ID, parsed.ToolInput)
 
 	if policyResult.Decision == tool.PolicyDenied {
 		return tool.ToolResult{}, false, fmt.Errorf("tool %q denied by policy: %s", parsed.ToolName, policyResult.Reason)
