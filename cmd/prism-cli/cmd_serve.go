@@ -33,7 +33,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -238,6 +237,9 @@ func executeServe(args []string) {
 		time.Duration(cfg.Sessions.IdleTimeoutMinutes)*time.Minute,
 		cfg.Sessions.DailyResetHour,
 		cfg.Sessions.CompactionStrategy,
+		session.WithPersistence(cfg.Sessions.Persistence),
+		session.WithResumeAfterIdle(cfg.Sessions.ResumeAfterIdle),
+		session.WithKeepArchivedMessages(cfg.Sessions.KeepArchivedMessages),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting session manager: %v\n", err)
@@ -437,25 +439,16 @@ func executeServe(args []string) {
 				workspaceRoot = "."
 			}
 
-			// V30: Resolve allowed paths to absolute
-			allowedPaths := make([]string, 0, len(cfg.Prism.AllowedPaths))
-			for _, p := range cfg.Prism.AllowedPaths {
-				abs, err := filepath.Abs(p)
-				if err != nil {
-					log.Printf("[WARN] invalid allowed_path %q: %v", p, err)
-					continue
-				}
-				allowedPaths = append(allowedPaths, abs)
-				log.Printf("[TOOL] allowed path: %s", abs)
-			}
+			readRoots := configuredReadRoots(cfg)
+			writeRoots := configuredWriteRoots(cfg)
 
 			toolReg := tool.NewRegistry()
-			tool.RegisterBuiltins(toolReg, workspaceRoot, 10*1024*1024, allowedPaths...) // all read-only + project tools
-			toolReg.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths})
+			tool.RegisterBuiltinsWithRoots(toolReg, workspaceRoot, 10*1024*1024, readRoots, writeRoots) // all read-only + project tools
+			toolReg.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 			// V28: Git mutation tools (require approval)
-			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			// V32: State management tools
 			stateMgr = state.NewManager(workspaceRoot)
 			stateMgr.EnsureDir()
@@ -482,7 +475,10 @@ func executeServe(args []string) {
 			// Mutation operations require approval
 			toolPolicy.MaxFileSize = 10 * 1024 * 1024 // 10MB for serve mode
 			toolPolicy.WorkspaceRoot = workspaceRoot
-			toolPolicy.AllowedPaths = allowedPaths
+			toolPolicy.AllowedPaths = cfg.Prism.AllowedPaths
+			toolPolicy.ReadRoots = readRoots
+			toolPolicy.WriteRoots = writeRoots
+			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolExec := tool.NewExecutor(toolReg, toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore("runs"))
 
@@ -802,20 +798,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		sendFinal(finalStatus, finalMessage)
 	}()
 
-	// Step 3: Find or create a session (handler-level)
-	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, msg.UserID)
+	// Step 3: Find or create an owner-scoped session while preserving channel metadata.
+	sess, ownerID, err := getOrCreateSessionForMessage(cc.sessMgr, cc.cfg, result.AgentID, "discord", msg.ChannelID, msg.UserID)
 	if err != nil {
-		log.Printf("[ERROR] find session: %v", err)
+		log.Printf("[ERROR] load session: %v", err)
 		finalMessage = "I could not load the conversation session."
 		return
-	}
-	if sess == nil {
-		sess, err = cc.sessMgr.Create(result.AgentID, "discord", msg.ChannelID, msg.UserID)
-		if err != nil {
-			log.Printf("[ERROR] create session: %v", err)
-			finalMessage = "I could not create a conversation session."
-			return
-		}
 	}
 
 	// Add the sanitized user message to the session
@@ -861,7 +849,8 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Resolve the channel role for state action injection
 	stateActionKey := cc.cfg.ResolveChannelRole(msg.ChannelID)
 	channelRole := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
-	prompt := cc.buildPrompt(sess, agentCfg, stateActionKey, channelRole)
+	promptSession := sess
+	prompt := cc.buildPrompt(promptSession, agentCfg, stateActionKey, channelRole)
 
 	// Step 7b: Inject Remembrance context (if available, with 60s TTL cache)
 	// NOTE: This uses the same remembrance.Client as RemembranceStage but applies
@@ -872,7 +861,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		remCtx := cc.remCache.Get(cacheKey)
 		if remCtx == nil {
 			var remCtxErr error
-			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, remembrance.DefaultContextMaxTokens)
+			remCtx, remCtxErr = cc.remClient.BuildContextWithOptions(remembrance.BuildContextRequest{
+				Task:               sanitizedContent,
+				ProjectID:          "prism",
+				AgentID:            agentCfg.ID,
+				OwnerID:            ownerID,
+				LocalRecentSummary: localRecentSummary(sess),
+				ChannelContext:     channelRoleContext(channelRole),
+				MaxTokens:          remembrance.DefaultContextMaxTokens,
+			})
 			if remCtxErr != nil {
 				log.Printf("[REMEMBRANCE] context build failed: %v", remCtxErr)
 			} else if remCtx != nil {
@@ -880,24 +877,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			}
 		}
 		if remCtx != nil {
-			// Use context_markdown directly if available (Python ContextPack format)
-			if remCtx.ContextMarkdown != "" {
-				memoryBlock := "\n\n---\nRelevant context from memory:\n" + remCtx.ContextMarkdown + "\n---\n\n"
-				prompt = memoryBlock + prompt
-				log.Printf("[REMEMBRANCE] injected %d memory sources into prompt (markdown)", len(remCtx.SelectedMemories))
-			} else if remCtx.ContextJSON != nil && len(remCtx.ContextJSON.Memories) > 0 {
-				// Fallback: build from structured memories
-				var memoryParts []string
-				for _, mem := range remCtx.ContextJSON.Memories {
-					if mem.Summary != "" {
-						memoryParts = append(memoryParts, mem.Summary)
-					}
-				}
-				if len(memoryParts) > 0 {
-					memoryBlock := "\n\n---\nRelevant context from memory:\n" + strings.Join(memoryParts, "\n\n") + "\n---\n\n"
-					prompt = memoryBlock + prompt
-					log.Printf("[REMEMBRANCE] injected %d memory sources into prompt (structured)", len(remCtx.ContextJSON.Memories))
-				}
+			if memoryBlock := remembranceMemoryBlock(remCtx); memoryBlock != "" {
+				promptSession = cloneSessionWithSystemMemory(sess, memoryBlock)
+				prompt = cc.buildPrompt(promptSession, agentCfg, stateActionKey, channelRole)
+				log.Printf("[REMEMBRANCE] injected %d memory sources into shared prompt layer", len(remCtx.SelectedMemories))
 			}
 		}
 	}
@@ -923,10 +906,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Skip tool instructions if the gate excluded tools for this message
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
 		// V33: Filter tools based on channel role (read-only channels get limited tools)
 		toolInfos = filterToolInfosByChannelRole(toolInfos, channelRoleConfig)
 		if len(toolInfos) > 0 {
-			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...)
+			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...)
 		}
 	}
 
@@ -1009,8 +993,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			_ = chatProv // used via cc.runToolLoopChat which calls cc.providers.GetChatProvider internally
 			// Native tool calling path: use ChatProvider with structured messages
 			// Build messages array and tools list
-			messages := cc.buildMessages(sess, agentCfg)
+			messages := cc.buildMessages(promptSession, agentCfg)
 			chatTools := cc.buildChatTools()
+			chatTools = filterChatToolsByAgentPolicy(chatTools, cc.toolPolicy, agentCfg.ID)
 
 			// V33: Filter tools based on channel role (none, read-only, all)
 			chatTools = filterChatToolsByChannelRole(chatTools, channelRoleConfig)
@@ -1170,49 +1155,9 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		"user_id":    msg.UserID,
 	})
 
-	// Step 11: Auto-save to Remembrance (async fire-and-forget)
-	if cc.remClient != nil && responseText != "" {
-		captureAgentID := finalRC.Agent
-		captureRunID := run.ID
-		captureText := responseText
-		captureSource := fmt.Sprintf("prism:%s", captureAgentID)
-
-		// Acquire semaphore slot (non-blocking — skip if at capacity)
-		select {
-		case cc.remSem <- struct{}{}:
-			go func() {
-				defer func() { <-cc.remSem }() // Release semaphore slot
-
-				result, err := cc.remClient.Capture(
-					captureText,
-					captureSource,
-					"conversation",
-					"",
-				)
-				if err != nil {
-					log.Printf("[REMEMBRANCE] capture failed (run %s): %v", captureRunID, err)
-					return
-				}
-				if decision, ok := result["decision"]; ok {
-					log.Printf("[REMEMBRANCE] run %s: decision=%v, captured", captureRunID, decision)
-					// Track PERSIST captures for dream cycle event trigger
-					if decision == "PERSIST" || decision == "persist" {
-						atomic.AddInt64(&dreamPersistCount, 1)
-					}
-				} else {
-					log.Printf("[REMEMBRANCE] captured output from run %s", captureRunID)
-				}
-
-				// Invalidate context cache for this session so next turn gets fresh context
-				if cc.remCache != nil {
-					cacheKey := fmt.Sprintf("%s:%s", captureAgentID, sess.ID)
-					cc.remCache.Invalidate(cacheKey)
-				}
-			}()
-		default:
-			// At capacity — skip this capture
-			log.Printf("[REMEMBRANCE] skipped capture (run %s): concurrency limit reached", run.ID)
-		}
+	// Step 11: Update local summary and optionally send curated candidates to Remembrance.
+	if responseText != "" {
+		enqueueLocalMemoryUpdate(cc.sessMgr, cc.cfg, cc.remClient, cc.remSem, cc.remCache, ownerID, msg.UserID, finalRC.Agent, sess.ID, run.ID)
 	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
@@ -1737,6 +1682,33 @@ func filterToolInfosByChannelRole(toolInfos []tool.ToolInfo, channelRole *orches
 	}
 }
 
+func filterToolInfosByAgentPolicy(toolInfos []tool.ToolInfo, policy tool.PolicyConfig, agentID string) []tool.ToolInfo {
+	if policy.CanAgentProposeWrites(agentID) {
+		return toolInfos
+	}
+	filtered := make([]tool.ToolInfo, 0, len(toolInfos))
+	for _, t := range toolInfos {
+		if !mutationProposalTools[t.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+func (cc *conversationContext) checkChannelToolAccess(toolName, channelID string) error {
+	channelRole := cc.cfg.ResolveChannelRoleConfig(channelID)
+	mode := resolveToolMode(channelRole)
+	switch mode {
+	case ToolModeNone:
+		return fmt.Errorf("tool %q denied: channel role disables tools", toolName)
+	case ToolModeReadOnly:
+		if !readOnlyTools[toolName] {
+			return fmt.Errorf("tool %q denied: channel role allows read-only tools only", toolName)
+		}
+	}
+	return nil
+}
+
 // remembranceTimeout returns the configured Remembrance timeout duration,
 // falling back to the default if not set.
 func remembranceTimeout(cfg *orchestrator.Config) time.Duration {
@@ -1776,6 +1748,9 @@ func filterChatTools(tools []provider.ChatTool, filter []string) []provider.Chat
 
 // readOnlyTools is the set of tool names that are safe for read-only channels.
 var readOnlyTools = map[string]bool{
+	"echo":             true,
+	"list_dir":         true,
+	"read_file":        true,
 	"read_project":     true,
 	"search_files":     true,
 	"project_overview": true,
@@ -1785,6 +1760,14 @@ var readOnlyTools = map[string]bool{
 	"git_branch_list":  true,
 	"plan_list":        true,
 	"state_get":        true,
+}
+
+var mutationProposalTools = map[string]bool{
+	"write_file":          true,
+	"write_file_proposal": true,
+	"git_add":             true,
+	"git_commit":          true,
+	"git_push":            true,
 }
 
 // ToolMode represents the tool access level for a channel.
@@ -1829,4 +1812,17 @@ func filterChatToolsByChannelRole(tools []provider.ChatTool, channelRole *orches
 	default:
 		return tools
 	}
+}
+
+func filterChatToolsByAgentPolicy(tools []provider.ChatTool, policy tool.PolicyConfig, agentID string) []provider.ChatTool {
+	if policy.CanAgentProposeWrites(agentID) {
+		return tools
+	}
+	filtered := make([]provider.ChatTool, 0, len(tools))
+	for _, t := range tools {
+		if !mutationProposalTools[t.Function.Name] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
 }

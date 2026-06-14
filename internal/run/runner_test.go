@@ -44,6 +44,19 @@ func startTestServer(t *testing.T) (*server.Server, string) {
 	return s, url
 }
 
+func unavailableMemoryURL(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to allocate unavailable memory port: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("failed to close unavailable memory port: %v", err)
+	}
+	return fmt.Sprintf("http://%s", addr)
+}
+
 func TestV1LifecycleWithoutMemory(t *testing.T) {
 	s, busURL := startTestServer(t)
 	defer s.Shutdown()
@@ -138,8 +151,8 @@ func TestV1LifecycleWithMemoryFailure(t *testing.T) {
 		Agent:         "lumi",
 		BusURL:        busURL,
 		MemoryEnabled: true,
-		RequireMemory: false,                    // Should continue even if memory fails
-		MemoryURL:     "http://localhost:18790", // Not running
+		RequireMemory: false, // Should continue even if memory fails
+		MemoryURL:     unavailableMemoryURL(t),
 		RunDir:        filepath.Join(tmpDir, "runs"),
 	}
 
@@ -170,8 +183,8 @@ func TestV1LifecycleRequireMemoryFailure(t *testing.T) {
 		Agent:         "lumi",
 		BusURL:        busURL,
 		MemoryEnabled: true,
-		RequireMemory: true,                     // Should fail if memory is unavailable
-		MemoryURL:     "http://localhost:18790", // Not running
+		RequireMemory: true, // Should fail if memory is unavailable
+		MemoryURL:     unavailableMemoryURL(t),
 		RunDir:        filepath.Join(tmpDir, "runs"),
 	}
 
@@ -1131,8 +1144,8 @@ func TestV2MemoryFailureGraceful(t *testing.T) {
 		Agent:         "lumi",
 		BusURL:        busURL,
 		MemoryEnabled: true,
-		RequireMemory: false,                    // graceful: continue even if memory fails
-		MemoryURL:     "http://localhost:18790", // Not running
+		RequireMemory: false, // graceful: continue even if memory fails
+		MemoryURL:     unavailableMemoryURL(t),
 		RunDir:        filepath.Join(tmpDir, "runs"),
 		Provider:      mockpkg.New(),
 		Model:         "mock-model",
@@ -1193,8 +1206,8 @@ func TestV2MemoryFailureStrict(t *testing.T) {
 		Agent:         "lumi",
 		BusURL:        busURL,
 		MemoryEnabled: true,
-		RequireMemory: true,                     // strict: fail if memory unavailable
-		MemoryURL:     "http://localhost:18790", // Not running
+		RequireMemory: true, // strict: fail if memory unavailable
+		MemoryURL:     unavailableMemoryURL(t),
 		RunDir:        filepath.Join(tmpDir, "runs"),
 		Provider:      mockpkg.New(),
 		Model:         "mock-model",

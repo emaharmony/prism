@@ -19,6 +19,17 @@ prism:
   # Workspace root for context injection (SOUL.md, AGENTS.md, USER.md, etc.)
   # Defaults to $HOME/.openclaw/workspace if empty.
   workspace: ""
+  # Recursive roots for read/search/list tools. Prefer project/user roots over
+  # full system roots like C:/Windows.
+  read_roots:
+    - "D:/"
+    - "C:/Users/emaha"
+  # Recursive roots for approval-gated writes. A parent grants its children.
+  write_roots:
+    - "D:/_projects_"
+    - "D:/Projects"
+  # Legacy alias for both read and write roots when read_roots/write_roots are omitted.
+  allowed_paths: []
   # Local Ollama base URL used by serve-mode Ollama agents.
   ollama_url: "http://localhost:11434"
   # Serve-mode LLM timeout in seconds. Local models often need more than 60s.
@@ -34,6 +45,18 @@ prism:
         payload:
           action: "factory_status_digest"
         enabled: false
+
+users:
+  # Map channel-specific identities to one durable owner id. USER.md remains
+  # human-readable context; this section is the machine-readable identity map.
+  - id: "ema"
+    display_name: "Ema"
+    default: true
+    aliases:
+      discord:
+        - "YOUR_DISCORD_USER_ID"
+      cli:
+        - "local-user"
 
 bridge:
   # Set true after PRISM_BRIDGE_SECRET is configured on both Prism environments.
@@ -208,8 +231,24 @@ sessions:
   daily_reset_hour: 4
   # Maximum messages in a session before compaction
   max_context_messages: 100
-  # Compaction strategy: "truncate" (V20) or "summarize" (V21 with Remembrance)
-  compaction_strategy: "truncate"
+  # Persistent sessions resume after restart and idle timeout.
+  persistence: true
+  resume_after_idle: true
+  # Compaction strategy: "truncate" or "summarize". Both preserve archived rows
+  # when keep_archived_messages is true.
+  compaction_strategy: "summarize"
+  keep_archived_messages: true
+  # Default continuity is one recent conversation per owner+agent, even across
+  # Discord channels. Use "channel_user" for historical per-channel behavior.
+  continuity_scope: "owner_agent"
+  # Current-week local recall starts Monday 00:00 in the configured timezone.
+  # Set recall_window_mode to "rolling_days" to use short_term_window_days.
+  recall_window_mode: "calendar_week"
+  recall_timezone: "Local"
+  # Local recall window and exact transcript cap. Remembrance is lower priority
+  # long-term semantic memory, not active-session continuity.
+  short_term_window_days: 7
+  verbatim_recent_messages: 40
 
 remembrance:
   enabled: false

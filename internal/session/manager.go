@@ -2,7 +2,7 @@
 //
 // A session tracks a conversation between a user and an agent on a channel.
 // Sessions persist across messages, compact when they grow too large, and
-// reset on idle timeout or daily boundary.
+// optionally resume after idle timeout.
 //
 // V20 uses truncation compaction: when a session exceeds MaxContextMessages,
 // the oldest messages are removed. Full Remembrance-based summarization
@@ -12,7 +12,9 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,11 +39,24 @@ type Session struct {
 
 // Message is a single message within a session.
 type Message struct {
+	SessionID string    `json:"session_id,omitempty"`
 	ID        string    `json:"id"`
 	Role      string    `json:"role"` // "user", "agent", "system"
 	Content   string    `json:"content"`
 	AgentID   string    `json:"agent_id"` // which agent sent this (for agent role)
 	Timestamp time.Time `json:"timestamp"`
+	Archived  bool      `json:"archived,omitempty"`
+}
+
+// LocalSummary is Prism's deterministic short-term summary for older recent
+// local conversation. It is separate from Remembrance semantic memory.
+type LocalSummary struct {
+	OwnerID          string    `json:"owner_id"`
+	AgentID          string    `json:"agent_id"`
+	WeekStart        time.Time `json:"week_start"`
+	Summary          string    `json:"summary"`
+	SourceMessageIDs []string  `json:"source_message_ids"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Manager handles session lifecycle: create, get, update, compact, reset.
@@ -55,12 +70,35 @@ type Manager struct {
 	idleTimeout        time.Duration
 	dailyResetHour     int
 	compactionStrategy string // "truncate" (V20) or "summarize" (V21)
+	persistence        bool
+	resumeAfterIdle    bool
+	keepArchived       bool
 }
 
 var idCounter atomic.Uint64
 
+// ManagerOption customizes session persistence behavior.
+type ManagerOption func(*Manager)
+
+// WithPersistence enables durable session resume semantics.
+func WithPersistence(enabled bool) ManagerOption {
+	return func(m *Manager) { m.persistence = enabled }
+}
+
+// WithResumeAfterIdle makes FindActive return the latest session even after the
+// idle timeout. A zero or negative idle timeout also disables idle expiry.
+func WithResumeAfterIdle(enabled bool) ManagerOption {
+	return func(m *Manager) { m.resumeAfterIdle = enabled }
+}
+
+// WithKeepArchivedMessages preserves compacted messages in SQLite by marking
+// them archived instead of deleting them.
+func WithKeepArchivedMessages(enabled bool) ManagerOption {
+	return func(m *Manager) { m.keepArchived = enabled }
+}
+
 // NewManager creates a session manager with the given configuration.
-func NewManager(dbPath string, maxContextMessages int, idleTimeout time.Duration, dailyResetHour int, compactionStrategy string) (*Manager, error) {
+func NewManager(dbPath string, maxContextMessages int, idleTimeout time.Duration, dailyResetHour int, compactionStrategy string, opts ...ManagerOption) (*Manager, error) {
 	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, fmt.Errorf("session: open db: %w", err)
@@ -80,6 +118,9 @@ func NewManager(dbPath string, maxContextMessages int, idleTimeout time.Duration
 		dailyResetHour:     dailyResetHour,
 		compactionStrategy: compactionStrategy,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
 
 	if err := m.migrate(ctx(context.Background())); err != nil {
 		db.Close()
@@ -94,7 +135,7 @@ func ctx(bg context.Context) context.Context { return bg }
 
 // migrate creates the sessions and messages tables.
 func (m *Manager) migrate(_ context.Context) error {
-	_, err := m.db.Exec(`
+	if _, err := m.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
 			id TEXT PRIMARY KEY,
 			agent_id TEXT NOT NULL,
@@ -112,12 +153,60 @@ func (m *Manager) migrate(_ context.Context) error {
 			content TEXT NOT NULL,
 			agent_id TEXT NOT NULL DEFAULT '',
 			timestamp DATETIME NOT NULL,
+			archived INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		);
+		CREATE TABLE IF NOT EXISTS local_summaries (
+			owner_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			week_start DATETIME NOT NULL,
+			summary TEXT NOT NULL,
+			source_message_ids TEXT NOT NULL DEFAULT '[]',
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY (owner_id, agent_id, week_start)
 		);
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
 		CREATE INDEX IF NOT EXISTS idx_sessions_channel_user ON sessions(channel, channel_id, user_id);
-	`)
-	return err
+		CREATE INDEX IF NOT EXISTS idx_sessions_agent_user_active ON sessions(agent_id, user_id, last_active);
+		CREATE INDEX IF NOT EXISTS idx_local_summaries_owner_agent ON local_summaries(owner_id, agent_id, week_start);
+	`); err != nil {
+		return err
+	}
+	hasArchived, err := m.columnExists("messages", "archived")
+	if err != nil {
+		return err
+	}
+	if !hasArchived {
+		if _, err := m.db.Exec("ALTER TABLE messages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+	if _, err := m.db.Exec("CREATE INDEX IF NOT EXISTS idx_messages_session_archived ON messages(session_id, archived, timestamp)"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) columnExists(table, column string) (bool, error) {
+	rows, err := m.db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Create creates a new session for a user on a channel with a specific agent.
@@ -170,7 +259,7 @@ func (m *Manager) FindActive(channel, channelID, userID string) (*Session, error
 	for _, s := range m.sessions {
 		if s.Channel == channel && s.ChannelID == channelID && s.UserID == userID {
 			// Check if session has timed out
-			if time.Since(s.LastActive) > m.idleTimeout {
+			if m.sessionExpired(s.LastActive) {
 				m.mu.RUnlock()
 				return nil, nil
 			}
@@ -197,7 +286,7 @@ func (m *Manager) FindActive(channel, channelID, userID string) (*Session, error
 	}
 
 	// Check idle timeout
-	if time.Since(s.LastActive) > m.idleTimeout {
+	if m.sessionExpired(s.LastActive) {
 		return nil, nil
 	}
 
@@ -215,6 +304,141 @@ func (m *Manager) FindActive(channel, channelID, userID string) (*Session, error
 	return &s, nil
 }
 
+// FindOwnerAgent finds the newest session for an owner+agent continuity scope
+// and assembles recent local transcript from matching legacy channel sessions at
+// read time. The returned session ID is the writable latest session; old rows are
+// not rewritten or deleted.
+func (m *Manager) FindOwnerAgent(agentID, channel, channelID, ownerID string, aliases []string, recallWindow time.Duration, verbatimLimit int) (*Session, error) {
+	cutoff := time.Time{}
+	if recallWindow > 0 {
+		cutoff = time.Now().UTC().Add(-recallWindow)
+	}
+	return m.FindOwnerAgentSince(agentID, channel, channelID, ownerID, aliases, cutoff, cutoff, verbatimLimit)
+}
+
+// FindOwnerAgentSince is the cutoff-based form of FindOwnerAgent. recallStart
+// bounds transcript lookup; summaryWeekStart selects the persisted local summary.
+func (m *Manager) FindOwnerAgentSince(agentID, channel, channelID, ownerID string, aliases []string, recallStart, summaryWeekStart time.Time, verbatimLimit int) (*Session, error) {
+	m.mu.RLock()
+	var newest *Session
+	for _, s := range m.sessions {
+		if s.AgentID == agentID && aliasMatches(s.UserID, ownerID, aliases) {
+			if newest == nil || s.LastActive.After(newest.LastActive) {
+				newest = s
+			}
+		}
+	}
+	m.mu.RUnlock()
+	if newest != nil {
+		if m.sessionExpired(newest.LastActive) {
+			return nil, nil
+		}
+		if err := m.refreshOwnerAgentMessages(newest, agentID, ownerID, aliases, recallStart, summaryWeekStart, verbatimLimit); err != nil {
+			return nil, err
+		}
+		return newest, nil
+	}
+
+	query, args := ownerAgentSessionQuery(agentID, ownerID, aliases)
+	row := m.db.QueryRow(query, args...)
+
+	var s Session
+	var compactedAt sql.NullTime
+	err := row.Scan(&s.ID, &s.AgentID, &s.Channel, &s.ChannelID, &s.UserID, &s.StartedAt, &s.LastActive, &compactedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("session: find owner-agent: %w", err)
+	}
+	if compactedAt.Valid {
+		s.CompactedAt = compactedAt.Time
+	}
+	if m.sessionExpired(s.LastActive) {
+		return nil, nil
+	}
+
+	if err := m.refreshOwnerAgentMessages(&s, agentID, ownerID, aliases, recallStart, summaryWeekStart, verbatimLimit); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	m.sessions[s.ID] = &s
+	m.mu.Unlock()
+
+	return &s, nil
+}
+
+// GetOrCreateOwnerAgent returns a continuity-scoped session, creating a new
+// owner-keyed row with current channel metadata when none exists.
+func (m *Manager) GetOrCreateOwnerAgent(agentID, channel, channelID, ownerID string, aliases []string, recallWindow time.Duration, verbatimLimit int) (*Session, error) {
+	cutoff := time.Time{}
+	if recallWindow > 0 {
+		cutoff = time.Now().UTC().Add(-recallWindow)
+	}
+	return m.GetOrCreateOwnerAgentSince(agentID, channel, channelID, ownerID, aliases, cutoff, cutoff, verbatimLimit)
+}
+
+// GetOrCreateOwnerAgentSince returns a cutoff-scoped session, creating one when
+// none exists.
+func (m *Manager) GetOrCreateOwnerAgentSince(agentID, channel, channelID, ownerID string, aliases []string, recallStart, summaryWeekStart time.Time, verbatimLimit int) (*Session, error) {
+	s, err := m.FindOwnerAgentSince(agentID, channel, channelID, ownerID, aliases, recallStart, summaryWeekStart, verbatimLimit)
+	if err != nil {
+		return nil, err
+	}
+	if s != nil {
+		return s, nil
+	}
+	return m.Create(agentID, channel, channelID, ownerID)
+}
+
+func aliasMatches(userID, ownerID string, aliases []string) bool {
+	if userID == ownerID {
+		return true
+	}
+	for _, a := range aliases {
+		if userID == a {
+			return true
+		}
+	}
+	return false
+}
+
+func ownerAgentSessionQuery(agentID, ownerID string, aliases []string) (string, []any) {
+	values := normalizeAliases(ownerID, aliases)
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(values)), ",")
+	args := []any{agentID}
+	for _, v := range values {
+		args = append(args, v)
+	}
+	return fmt.Sprintf("SELECT id, agent_id, channel, channel_id, user_id, started_at, last_active, compacted_at FROM sessions WHERE agent_id = ? AND user_id IN (%s) ORDER BY last_active DESC LIMIT 1", placeholders), args
+}
+
+func normalizeAliases(ownerID string, aliases []string) []string {
+	seen := map[string]bool{}
+	var values []string
+	add := func(v string) {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			values = append(values, v)
+		}
+	}
+	add(ownerID)
+	for _, a := range aliases {
+		add(a)
+	}
+	return values
+}
+
+func (m *Manager) refreshOwnerAgentMessages(s *Session, agentID, ownerID string, aliases []string, recallStart, summaryWeekStart time.Time, verbatimLimit int) error {
+	msgs, err := m.loadOwnerAgentMessages(agentID, ownerID, aliases, recallStart, summaryWeekStart, verbatimLimit)
+	if err != nil {
+		return err
+	}
+	s.Messages = msgs
+	return nil
+}
+
 // AddMessage adds a message to a session and persists it.
 func (m *Manager) AddMessage(sessionID, role, content, agentID string) (*Message, error) {
 	m.mu.Lock()
@@ -226,6 +450,7 @@ func (m *Manager) AddMessage(sessionID, role, content, agentID string) (*Message
 	}
 
 	msg := Message{
+		SessionID: sessionID,
 		ID:        generateMessageID(),
 		Role:      role,
 		Content:   content,
@@ -266,29 +491,58 @@ func (m *Manager) AddMessage(sessionID, role, content, agentID string) (*Message
 	return &msg, nil
 }
 
-// compact truncates the oldest messages when the session exceeds the budget.
-// V20 uses truncation. V21 will use Remembrance summarization.
+func (m *Manager) sessionExpired(lastActive time.Time) bool {
+	if m.persistence || m.resumeAfterIdle || m.idleTimeout <= 0 {
+		return false
+	}
+	return time.Since(lastActive) > m.idleTimeout
+}
+
+// compact trims the in-memory prompt window when the session exceeds the budget.
+// When archival is enabled, older rows are preserved in SQLite and excluded from
+// prompt loading by archived=1.
 func (m *Manager) compact(s *Session) error {
-	if m.compactionStrategy != "truncate" {
-		// V21: Remembrance summarization goes here
+	if m.compactionStrategy != "truncate" && m.compactionStrategy != "summarize" {
 		return nil
 	}
 
-	// Keep only the most recent MaxContextMessages messages
-	excess := len(s.Messages) - m.maxContextMessages
+	var current []Message
+	for _, msg := range s.Messages {
+		if msg.SessionID == "" || msg.SessionID == s.ID {
+			current = append(current, msg)
+		}
+	}
+
+	// Keep only the most recent MaxContextMessages messages for the writable
+	// session. Owner-agent merged legacy rows are read-time context only.
+	excess := len(current) - m.maxContextMessages
 	if excess <= 0 {
 		return nil
 	}
 
-	// Remove oldest messages from memory
-	removed := s.Messages[:excess]
-	s.Messages = s.Messages[excess:]
+	removed := current[:excess]
+	removeIDs := make(map[string]bool, len(removed))
+	for _, msg := range removed {
+		removeIDs[msg.ID] = true
+	}
+	kept := s.Messages[:0]
+	for _, msg := range s.Messages {
+		if !removeIDs[msg.ID] {
+			kept = append(kept, msg)
+		}
+	}
+	s.Messages = kept
 	s.CompactedAt = time.Now().UTC()
 
-	// Remove from SQLite
 	for _, msg := range removed {
-		if _, err := m.db.Exec("DELETE FROM messages WHERE id = ?", msg.ID); err != nil {
-			return fmt.Errorf("session: delete message %s: %w", msg.ID, err)
+		if m.keepArchived || m.persistence {
+			if _, err := m.db.Exec("UPDATE messages SET archived = 1 WHERE id = ?", msg.ID); err != nil {
+				return fmt.Errorf("session: archive message %s: %w", msg.ID, err)
+			}
+		} else {
+			if _, err := m.db.Exec("DELETE FROM messages WHERE id = ?", msg.ID); err != nil {
+				return fmt.Errorf("session: delete message %s: %w", msg.ID, err)
+			}
 		}
 	}
 
@@ -333,10 +587,10 @@ func (m *Manager) loadFromDB(id string) (*Session, error) {
 	return &s, nil
 }
 
-// loadMessages loads all messages for a session from SQLite.
+// loadMessages loads non-archived prompt messages for a session from SQLite.
 func (m *Manager) loadMessages(sessionID string) ([]Message, error) {
 	rows, err := m.db.Query(
-		"SELECT id, role, content, agent_id, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp ASC",
+		"SELECT id, role, content, agent_id, timestamp, archived FROM messages WHERE session_id = ? AND archived = 0 ORDER BY timestamp ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -347,12 +601,297 @@ func (m *Manager) loadMessages(sessionID string) ([]Message, error) {
 	var msgs []Message
 	for rows.Next() {
 		var msg Message
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &msg.AgentID, &msg.Timestamp); err != nil {
+		var archived int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &msg.AgentID, &msg.Timestamp, &archived); err != nil {
 			return nil, fmt.Errorf("session: scan message: %w", err)
 		}
+		msg.SessionID = sessionID
+		msg.Archived = archived != 0
 		msgs = append(msgs, msg)
 	}
 	return msgs, nil
+}
+
+func (m *Manager) loadOwnerAgentMessages(agentID, ownerID string, aliases []string, recallStart, summaryWeekStart time.Time, verbatimLimit int) ([]Message, error) {
+	values := normalizeAliases(ownerID, aliases)
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(values)), ",")
+	args := []any{agentID}
+	for _, v := range values {
+		args = append(args, v)
+	}
+	args = append(args, recallStart)
+	limit := verbatimLimit
+	if limit <= 0 {
+		limit = m.maxContextMessages
+	}
+	if limit <= 0 {
+		limit = 40
+	}
+	args = append(args, limit)
+
+	query := fmt.Sprintf(`
+		SELECT message_id, session_id, role, content, message_agent_id, timestamp, archived FROM (
+			SELECT m.id AS message_id, m.session_id, m.role, m.content, m.agent_id AS message_agent_id, m.timestamp, m.archived
+			FROM messages m
+			JOIN sessions s ON s.id = m.session_id
+			WHERE s.agent_id = ? AND s.user_id IN (%s) AND m.archived = 0 AND m.timestamp >= ?
+			ORDER BY m.timestamp DESC
+			LIMIT ?
+		) ORDER BY timestamp ASC`, placeholders)
+
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("session: load owner-agent messages: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var msg Message
+		var archived int
+		if err := rows.Scan(&msg.ID, &msg.SessionID, &msg.Role, &msg.Content, &msg.AgentID, &msg.Timestamp, &archived); err != nil {
+			return nil, fmt.Errorf("session: scan owner-agent message: %w", err)
+		}
+		msg.Archived = archived != 0
+		msgs = append(msgs, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	summary, err := m.loadLocalSummary(ownerID, agentID, summaryWeekStart)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(summary) != "" {
+		msgs = append([]Message{{
+			ID:        "local-summary",
+			Role:      "system",
+			Content:   summary,
+			Timestamp: time.Now().UTC(),
+		}}, msgs...)
+	}
+	return msgs, nil
+}
+
+func (m *Manager) loadLocalSummary(ownerID, agentID string, weekStart time.Time) (string, error) {
+	if weekStart.IsZero() {
+		return "", nil
+	}
+	var summary string
+	err := m.db.QueryRow(
+		"SELECT summary FROM local_summaries WHERE owner_id = ? AND agent_id = ? AND week_start = ?",
+		ownerID, agentID, weekStart,
+	).Scan(&summary)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("session: load local summary: %w", err)
+	}
+	return summary, nil
+}
+
+// UpdateLocalSummary deterministically updates the persisted summary for older
+// current-window messages outside the exact verbatim window.
+func (m *Manager) UpdateLocalSummary(ownerID, agentID string, aliases []string, recallStart, weekStart time.Time, verbatimLimit int) (*LocalSummary, error) {
+	values := normalizeAliases(ownerID, aliases)
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(values)), ",")
+	args := []any{agentID}
+	for _, v := range values {
+		args = append(args, v)
+	}
+	args = append(args, recallStart)
+
+	query := fmt.Sprintf(`
+		SELECT m.id, m.role, m.content, m.agent_id, m.timestamp
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.agent_id = ? AND s.user_id IN (%s) AND m.archived = 0 AND m.timestamp >= ?
+		ORDER BY m.timestamp DESC`, placeholders)
+
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("session: load summary source messages: %w", err)
+	}
+	defer rows.Close()
+
+	type source struct {
+		id      string
+		role    string
+		content string
+		agentID string
+		ts      time.Time
+	}
+	var all []source
+	for rows.Next() {
+		var s source
+		if err := rows.Scan(&s.id, &s.role, &s.content, &s.agentID, &s.ts); err != nil {
+			return nil, fmt.Errorf("session: scan summary source message: %w", err)
+		}
+		all = append(all, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if verbatimLimit <= 0 {
+		verbatimLimit = m.maxContextMessages
+	}
+	if verbatimLimit <= 0 {
+		verbatimLimit = 40
+	}
+	if len(all) <= verbatimLimit {
+		return m.clearLocalSummary(ownerID, agentID, weekStart)
+	}
+
+	older := all[verbatimLimit:]
+	for i, j := 0, len(older)-1; i < j; i, j = i+1, j-1 {
+		older[i], older[j] = older[j], older[i]
+	}
+
+	var lines []string
+	var ids []string
+	for _, msg := range older {
+		content := strings.TrimSpace(msg.content)
+		if content == "" || msg.role == "tool" {
+			continue
+		}
+		if len(content) > 220 {
+			content = content[:220] + "..."
+		}
+		speaker := msg.role
+		if msg.role == "agent" && msg.agentID != "" {
+			speaker = msg.agentID
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", speaker, content))
+		ids = append(ids, msg.id)
+		if len(lines) >= 24 {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return m.clearLocalSummary(ownerID, agentID, weekStart)
+	}
+
+	summary := "Local rolling summary of older current-week conversation. Exact recent transcript has priority over this summary:\n" + strings.Join(lines, "\n")
+	encodedIDs, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("session: marshal summary source ids: %w", err)
+	}
+	now := time.Now().UTC()
+	if _, err := m.db.Exec(`
+		INSERT INTO local_summaries (owner_id, agent_id, week_start, summary, source_message_ids, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(owner_id, agent_id, week_start) DO UPDATE SET
+			summary = excluded.summary,
+			source_message_ids = excluded.source_message_ids,
+			updated_at = excluded.updated_at`,
+		ownerID, agentID, weekStart, summary, string(encodedIDs), now,
+	); err != nil {
+		return nil, fmt.Errorf("session: upsert local summary: %w", err)
+	}
+	return &LocalSummary{
+		OwnerID:          ownerID,
+		AgentID:          agentID,
+		WeekStart:        weekStart,
+		Summary:          summary,
+		SourceMessageIDs: ids,
+		UpdatedAt:        now,
+	}, nil
+}
+
+func (m *Manager) clearLocalSummary(ownerID, agentID string, weekStart time.Time) (*LocalSummary, error) {
+	if weekStart.IsZero() {
+		return nil, nil
+	}
+	if _, err := m.db.Exec(
+		"DELETE FROM local_summaries WHERE owner_id = ? AND agent_id = ? AND week_start = ?",
+		ownerID, agentID, weekStart,
+	); err != nil {
+		return nil, fmt.Errorf("session: clear local summary: %w", err)
+	}
+	return nil, nil
+}
+
+// GetLocalSummary retrieves a persisted local summary for tests and diagnostics.
+func (m *Manager) GetLocalSummary(ownerID, agentID string, weekStart time.Time) (*LocalSummary, error) {
+	var summary, encodedIDs string
+	var updatedAt time.Time
+	err := m.db.QueryRow(
+		"SELECT summary, source_message_ids, updated_at FROM local_summaries WHERE owner_id = ? AND agent_id = ? AND week_start = ?",
+		ownerID, agentID, weekStart,
+	).Scan(&summary, &encodedIDs, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("session: get local summary: %w", err)
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(encodedIDs), &ids); err != nil {
+		return nil, fmt.Errorf("session: decode local summary ids: %w", err)
+	}
+	return &LocalSummary{
+		OwnerID:          ownerID,
+		AgentID:          agentID,
+		WeekStart:        weekStart,
+		Summary:          summary,
+		SourceMessageIDs: ids,
+		UpdatedAt:        updatedAt,
+	}, nil
+}
+
+func (m *Manager) localSummary(agentID string, aliases []string, cutoff time.Time, recent []Message) (string, error) {
+	if len(recent) == 0 {
+		return "", nil
+	}
+	oldestRecent := recent[0].Timestamp
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(aliases)), ",")
+	args := []any{agentID}
+	for _, v := range aliases {
+		args = append(args, v)
+	}
+	args = append(args, cutoff, oldestRecent, 12)
+	query := fmt.Sprintf(`
+		SELECT m.role, m.content, m.agent_id, m.timestamp
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.agent_id = ? AND s.user_id IN (%s) AND m.timestamp >= ? AND m.timestamp < ?
+		ORDER BY m.timestamp DESC
+		LIMIT ?`, placeholders)
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return "", fmt.Errorf("session: load local summary messages: %w", err)
+	}
+	defer rows.Close()
+
+	var lines []string
+	for rows.Next() {
+		var role, content, msgAgent string
+		var ts time.Time
+		if err := rows.Scan(&role, &content, &msgAgent, &ts); err != nil {
+			return "", err
+		}
+		if len(content) > 180 {
+			content = content[:180] + "..."
+		}
+		speaker := role
+		if role == "agent" && msgAgent != "" {
+			speaker = msgAgent
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", speaker, content))
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if len(lines) == 0 {
+		return "", nil
+	}
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+	return "Local rolling summary of older recent conversation. Treat exact recent transcript as higher priority:\n" + strings.Join(lines, "\n"), nil
 }
 
 // ListActive returns all sessions that are currently in memory.

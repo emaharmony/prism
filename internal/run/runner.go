@@ -56,7 +56,7 @@ type RunConfig struct {
 
 	// V2 LLM provider configuration
 	Provider     provider.Provider
-	ProviderName string        // Human-readable provider name for output/summaries
+	ProviderName string // Human-readable provider name for output/summaries
 	Model        string
 	Temperature  float64
 	MaxTokens    int
@@ -69,7 +69,8 @@ type RunConfig struct {
 	ToolExecutor *tool.Executor
 
 	// V4 approval-gated mutation configuration
-	ApprovalStoreDir string // directory for approval artifacts (default: derived from RunDir)
+	ApprovalStoreDir     string // directory for approval artifacts (default: derived from RunDir)
+	MutationAllowedPaths []string
 
 	// V5 validation and review configuration
 	ValidationRegistry *validation.Registry
@@ -97,9 +98,9 @@ type RunResult struct {
 	ToolCallResult *tool.ToolResult `json:"tool_result,omitempty"`
 
 	// V5 validation and review results
-	ValidationResults []validation.Result    `json:"validation_results,omitempty"`
-	Review            *review.Review         `json:"review,omitempty"`
-	ReviewArtifactPath string               `json:"review_artifact_path,omitempty"`
+	ValidationResults  []validation.Result `json:"validation_results,omitempty"`
+	Review             *review.Review      `json:"review,omitempty"`
+	ReviewArtifactPath string              `json:"review_artifact_path,omitempty"`
 }
 
 // Runner orchestrates a single run's complete lifecycle.
@@ -442,12 +443,12 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// 10. LLM succeeded — emit llm.completed
 	llmCompletedEvt := r.emitWithParent(event.V2EventTypes.LLMCompleted, "prism-cli", map[string]any{
-		"model":          genResp.Model,
-		"provider":       genResp.Provider,
-		"latency_ms":     genResp.LatencyMS,
-		"prompt_tokens":  genResp.PromptTokens,
-		"output_tokens":  genResp.OutputTokens,
-		"text_length":    len(genResp.Text),
+		"model":         genResp.Model,
+		"provider":      genResp.Provider,
+		"latency_ms":    genResp.LatencyMS,
+		"prompt_tokens": genResp.PromptTokens,
+		"output_tokens": genResp.OutputTokens,
+		"text_length":   len(genResp.Text),
 	}, llmReqEvt.ID)
 
 	// 10b. V3: Parse LLM output for tool requests
@@ -542,11 +543,11 @@ func (r *Runner) Run() (*RunResult, error) {
 					toolResult.Output["_proposal_content"] = proposalContent
 
 					approvalSummaries = append(approvalSummaries, event.ApprovalSummary{
-						ApprovalID:    approvalID,
-						MutationType:  "write_file",
-						TargetPath:    targetPath,
-						Status:        "pending",
-						RequestedBy:   r.config.Agent,
+						ApprovalID:     approvalID,
+						MutationType:   "write_file",
+						TargetPath:     targetPath,
+						Status:         "pending",
+						RequestedBy:    r.config.Agent,
 						PolicyDecision: string(policyResult.Decision),
 					})
 				}
@@ -625,10 +626,10 @@ func (r *Runner) Run() (*RunResult, error) {
 
 	// 14. Emit task.completed
 	taskCompletedEvt := r.emitWithParent(event.V1EventTypes.TaskCompleted, "prism-cli", map[string]any{
-		"task":             r.config.Task,
-		"project":          r.config.Project,
-		"agent":            r.config.Agent,
-		"status":           runStatus,
+		"task":    r.config.Task,
+		"project": r.config.Project,
+		"agent":   r.config.Agent,
+		"status":  runStatus,
 	}, agentCompletedEvt.ID)
 	_ = taskCompletedEvt
 
@@ -649,18 +650,18 @@ func (r *Runner) Run() (*RunResult, error) {
 			os.MkdirAll(approvalDir, 0755)
 			approvalPath := filepath.Join(approvalDir, fmt.Sprintf("%s.json", approvalID))
 			approvalData, _ := json.MarshalIndent(map[string]any{
-				"approval_id":     approvalID,
-				"run_id":          r.runID,
-				"correlation_id":  r.correlationID,
-				"status":          "pending",
-				"requested_by":    r.config.Agent,
-				"project":         r.config.Project,
-				"mutation_type":   toolResult.Output["mutation_type"],
-				"target_path":     toolResult.Output["target_path"],
-				"content":         toolResult.Output["_proposal_content"],
-				"preview":         toolResult.Output["preview"],
-				"created_at":      time.Now().UTC().Format(time.RFC3339Nano),
-				"policy":          map[string]any{
+				"approval_id":    approvalID,
+				"run_id":         r.runID,
+				"correlation_id": r.correlationID,
+				"status":         "pending",
+				"requested_by":   r.config.Agent,
+				"project":        r.config.Project,
+				"mutation_type":  toolResult.Output["mutation_type"],
+				"target_path":    toolResult.Output["target_path"],
+				"content":        toolResult.Output["_proposal_content"],
+				"preview":        toolResult.Output["preview"],
+				"created_at":     time.Now().UTC().Format(time.RFC3339Nano),
+				"policy": map[string]any{
 					"decision": "requires_approval",
 					"reason":   "file writes require explicit approval",
 				},
@@ -703,17 +704,17 @@ func (r *Runner) Run() (*RunResult, error) {
 	log.Printf("prism: run %s completed (%d events, %dms)", r.runID, len(r.events), durationMs)
 
 	return &RunResult{
-		RunID:       r.runID,
-		Status:      "completed",
-		EventCount:  len(r.events),
-		EventsPath:  eventsPath,
-		SummaryPath: summaryPath,
-		Provider:    r.config.ProviderName,
-		Model:       r.config.Model,
-		PromptPath:  filepath.Join(runDir, "prompt.md"),
-		OutputPath:  outputPath,
-		DurationMs:  durationMs,
-		DryRun:      false,
+		RunID:          r.runID,
+		Status:         "completed",
+		EventCount:     len(r.events),
+		EventsPath:     eventsPath,
+		SummaryPath:    summaryPath,
+		Provider:       r.config.ProviderName,
+		Model:          r.config.Model,
+		PromptPath:     filepath.Join(runDir, "prompt.md"),
+		OutputPath:     outputPath,
+		DurationMs:     durationMs,
+		DryRun:         false,
 		ToolCallResult: toolResult,
 	}, nil
 }
@@ -1044,7 +1045,7 @@ func (r *Runner) ApproveWithValidation(runDir, approvalID, approvedBy, workspace
 	store := approval.NewStore(filepath.Dir(runDir))
 
 	// Create the mutation executor
-	mutExec := mutation.NewExecutor(workspaceDir, store)
+	mutExec := mutation.NewExecutor(workspaceDir, store, r.config.MutationAllowedPaths...)
 
 	// Emit events for approval
 	mutExec.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -1111,14 +1112,14 @@ func (r *Runner) ApproveWithValidation(runDir, approvalID, approvedBy, workspace
 	os.WriteFile(summaryPath, append(summaryData, '\n'), 0644)
 
 	return &RunResult{
-		RunID:             r.runID,
-		Status:            summary.Status,
-		EventCount:        len(r.events),
-		SummaryPath:       summaryPath,
-		Provider:          r.config.ProviderName,
-		Model:             r.config.Model,
-		ValidationResults: validationResults,
-		Review:            reviewResult,
+		RunID:              r.runID,
+		Status:             summary.Status,
+		EventCount:         len(r.events),
+		SummaryPath:        summaryPath,
+		Provider:           r.config.ProviderName,
+		Model:              r.config.Model,
+		ValidationResults:  validationResults,
+		Review:             reviewResult,
 		ReviewArtifactPath: reviewArtifactPath,
 	}, nil
 }

@@ -52,18 +52,11 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	// Route the message
 	result := cc.router.Route(framedContent)
 
-	// Find or create a session keyed by channel + bot user
-	sess, err := cc.sessMgr.FindActive("discord", msg.ChannelID, "agent:"+msg.UserID)
+	externalOwner := "agent:" + msg.UserID
+	sess, ownerID, err := getOrCreateSessionForMessage(cc.sessMgr, cc.cfg, result.AgentID, "discord", msg.ChannelID, externalOwner)
 	if err != nil {
-		log.Printf("[ERROR] find agent session: %v", err)
+		log.Printf("[ERROR] load agent session: %v", err)
 		return
-	}
-	if sess == nil {
-		sess, err = cc.sessMgr.Create(result.AgentID, "discord", msg.ChannelID, "agent:"+msg.UserID)
-		if err != nil {
-			log.Printf("[ERROR] create agent session: %v", err)
-			return
-		}
 	}
 
 	// Add the framed agent message to the session
@@ -90,7 +83,8 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	}
 
 	// Build the full prompt — agent messages always use "agent" state action
-	prompt := cc.buildPrompt(sess, agentCfg, "agent", nil) // Agent messages have no channel context
+	promptSession := sess
+	prompt := cc.buildPrompt(promptSession, agentCfg, "agent", nil) // Agent messages have no channel context
 
 	// Inject Remembrance context
 	if cc.remClient != nil {
@@ -98,7 +92,15 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 		remCtx := cc.remCache.Get(cacheKey)
 		if remCtx == nil {
 			var remCtxErr error
-			remCtx, remCtxErr = cc.remClient.BuildContext(prompt, "", agentCfg.ID, remembrance.DefaultContextMaxTokens)
+			remCtx, remCtxErr = cc.remClient.BuildContextWithOptions(remembrance.BuildContextRequest{
+				Task:               framedContent,
+				ProjectID:          "prism",
+				AgentID:            agentCfg.ID,
+				OwnerID:            ownerID,
+				LocalRecentSummary: localRecentSummary(sess),
+				ChannelContext:     "agent",
+				MaxTokens:          remembrance.DefaultContextMaxTokens,
+			})
 			if remCtxErr != nil {
 				log.Printf("[REMEMBRANCE] context build failed: %v", remCtxErr)
 			} else if remCtx != nil {
@@ -106,21 +108,10 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			}
 		}
 		if remCtx != nil {
-			if remCtx.ContextMarkdown != "" {
-				memoryBlock := "\n\n---\nRelevant context from memory:\n" + remCtx.ContextMarkdown + "\n---\n\n"
-				prompt = memoryBlock + prompt
+			if memoryBlock := remembranceMemoryBlock(remCtx); memoryBlock != "" {
+				promptSession = cloneSessionWithSystemMemory(sess, memoryBlock)
+				prompt = cc.buildPrompt(promptSession, agentCfg, "agent", nil)
 				log.Printf("[REMEMBRANCE] injected %d memory sources into agent prompt (markdown)", len(remCtx.SelectedMemories))
-			} else if remCtx.ContextJSON != nil && len(remCtx.ContextJSON.Memories) > 0 {
-				var memoryParts []string
-				for _, mem := range remCtx.ContextJSON.Memories {
-					if mem.Summary != "" {
-						memoryParts = append(memoryParts, mem.Summary)
-					}
-				}
-				if len(memoryParts) > 0 {
-					memoryBlock := "\n\n---\nRelevant context from memory:\n" + strings.Join(memoryParts, "\n\n") + "\n---\n\n"
-					prompt = memoryBlock + prompt
-				}
 			}
 		}
 	}
@@ -129,7 +120,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	if cc.toolExec != nil {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		if len(toolInfos) > 0 {
-			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...)
+			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...)
 		}
 	}
 
@@ -143,7 +134,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 
 		if supportsChat {
 			// Native tool calling path
-			messages := cc.buildMessages(sess, agentCfg)
+			messages := cc.buildMessages(promptSession, agentCfg)
 			chatTools := cc.buildChatTools()
 			log.Printf("[AGENT-TOOL-CHAT] entering native tool loop with %d tools", len(chatTools))
 
@@ -225,7 +216,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 
 		// Try ChatProvider first
 		if chatProv, isChat := llmProvider.(provider.ChatProvider); isChat {
-			messages := cc.buildMessages(sess, agentCfg)
+			messages := cc.buildMessages(promptSession, agentCfg)
 			chatResp, chatErr := chatProv.ChatGenerate(runCtx, provider.ChatGenerateRequest{
 				Messages: messages,
 				Model:    agentCfg.Model,
@@ -258,7 +249,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 	}
 
 	// Save assistant response to session
-	cc.sessMgr.AddMessage(sess.ID, "assistant", response, "")
+	cc.sessMgr.AddMessage(sess.ID, "agent", response, agentCfg.ID)
 
 	// Send the response — split if needed, NO placeholder editing
 	chunks := discordbot.SplitMessage(response, discordbot.MessageLimit)
@@ -276,16 +267,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 
 	log.Printf("[AGENT] sent response to agent %s in channel %s (%d chars)", msg.UserName, msg.ChannelID, len(response))
 
-	// Auto-save to Remembrance (non-blocking)
-	if cc.remClient != nil {
-		cc.remSem <- struct{}{}
-		go func(agentID, content string) {
-			defer func() { <-cc.remSem }()
-			if _, capErr := cc.remClient.Capture(content, "agent_conversation", agentID, "low"); capErr != nil {
-				log.Printf("[REMEMBRANCE] agent capture failed: %v", capErr)
-			}
-		}(agentCfg.ID, response)
-	}
+	enqueueLocalMemoryUpdate(cc.sessMgr, cc.cfg, cc.remClient, cc.remSem, cc.remCache, ownerID, externalOwner, agentCfg.ID, sess.ID, "")
 }
 
 // findPrimaryAgent returns the ID of the primary agent, or the first agent if none is primary.

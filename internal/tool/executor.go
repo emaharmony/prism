@@ -118,7 +118,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	}
 
 	// Evaluate policy
-	policyResult := EvaluatePolicy(e.Policy, toolName, execInput)
+	policyResult := EvaluatePolicyForAgent(e.Policy, toolName, agent, execInput)
 
 	// Handle requires_approval — this is not a denial, it's a request for human approval
 	if policyResult.Decision == PolicyRequiresApproval {

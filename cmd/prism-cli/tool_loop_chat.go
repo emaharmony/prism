@@ -110,7 +110,7 @@ func (cc *conversationContext) runToolLoopChat(
 
 		// Execute each tool call and feed results back
 		for _, tc := range response.ToolCalls {
-			toolResult, summary := cc.executeChatTool(ctx, tc, agentCfg, runID)
+			toolResult, summary := cc.executeChatTool(ctx, tc, agentCfg, channelID, runID)
 
 			// Build the tool result message
 			currentMessages = append(currentMessages, provider.ChatMessage{
@@ -210,8 +210,18 @@ func (cc *conversationContext) executeChatTool(
 	ctx stdctx.Context,
 	tc provider.ToolCall,
 	agentCfg *orchestrator.AgentConfig,
+	channelID string,
 	runID string,
 ) (string, toolCallSummary) {
+	if err := cc.checkChannelToolAccess(tc.Function.Name, channelID); err != nil {
+		return err.Error(), toolCallSummary{
+			Tool:   tc.Function.Name,
+			Input:  tc.Function.Arguments,
+			Status: "error",
+			Error:  err.Error(),
+		}
+	}
+
 	// V32: Guard rail — check if plan exists for code mutations
 	if cc.guardian != nil {
 		guardResult := cc.guardian.CheckToolExecution(tc.Function.Name, tc.Function.Arguments)

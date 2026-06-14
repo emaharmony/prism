@@ -33,6 +33,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/action"
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/delegation"
@@ -190,6 +191,9 @@ func executeChat(args []string) {
 		time.Duration(cfg.Sessions.IdleTimeoutMinutes)*time.Minute,
 		cfg.Sessions.DailyResetHour,
 		cfg.Sessions.CompactionStrategy,
+		session.WithPersistence(cfg.Sessions.Persistence),
+		session.WithResumeAfterIdle(cfg.Sessions.ResumeAfterIdle),
+		session.WithKeepArchivedMessages(cfg.Sessions.KeepArchivedMessages),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting session manager: %v\n", err)
@@ -209,21 +213,14 @@ func executeChat(args []string) {
 		workspaceRoot = "."
 	}
 
-	// V30: Resolve allowed paths to absolute
-	allowedPaths := make([]string, 0, len(cfg.Prism.AllowedPaths))
-	for _, p := range cfg.Prism.AllowedPaths {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			log.Printf("[WARN] invalid allowed_path %q: %v", p, err)
-			continue
-		}
-		allowedPaths = append(allowedPaths, abs)
-	}
+	readRoots := configuredReadRoots(cfg)
+	writeRoots := configuredWriteRoots(cfg)
 
-	tool.RegisterBuiltins(registry, workspaceRoot, 10*1024*1024, allowedPaths...)
-	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
-	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: allowedPaths}})
+	tool.RegisterBuiltinsWithRoots(registry, workspaceRoot, 10*1024*1024, readRoots, writeRoots)
+	registry.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
+	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 	// V32: State management tools
 	chatStateMgr := state.NewManager(workspaceRoot)
 	chatStateMgr.EnsureDir()
@@ -234,8 +231,12 @@ func executeChat(args []string) {
 	toolPolicy := tool.DefaultPolicyConfig()
 	toolPolicy.MaxFileSize = 10 * 1024 * 1024
 	toolPolicy.WorkspaceRoot = workspaceRoot
-	toolPolicy.AllowedPaths = allowedPaths
+	toolPolicy.AllowedPaths = cfg.Prism.AllowedPaths
+	toolPolicy.ReadRoots = readRoots
+	toolPolicy.WriteRoots = writeRoots
+	toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 	toolExec := tool.NewExecutor(registry, toolPolicy)
+	toolExec.SetApprovalStore(approval.NewStore("runs"))
 
 	// 7. Set up context builder
 	var ctxBuilder *context.Builder
@@ -292,17 +293,10 @@ func executeChat(args []string) {
 
 	// 10.5. Pre-build static system content (only needs to be done once)
 	cc.buildStaticSystemContent(agentCfg)
-	sess, err := sessMgr.FindActive("cli", "terminal", "local-user")
+	sess, ownerID, err := getOrCreateSessionForMessage(sessMgr, cfg, agentID, "cli", "terminal", "local-user")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding session: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading session: %v\n", err)
 		os.Exit(1)
-	}
-	if sess == nil {
-		sess, err = sessMgr.Create(agentID, "cli", "terminal", "local-user")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
-			os.Exit(1)
-		}
 	}
 
 	fmt.Printf("  Session: %s\n", sess.ID[:8])
@@ -351,7 +345,7 @@ LOOP:
 			fmt.Println("Goodbye! ✨")
 			return // deferred cleanup will run
 		case input == "/reset":
-			sess, err = sessMgr.Create(agentID, "cli", "terminal", "local-user")
+			sess, err = sessMgr.Create(agentID, "cli", "terminal", ownerID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
 				continue
@@ -394,6 +388,12 @@ LOOP:
 			sanitizedInput = safety.SanitizeInput(input)
 		}
 
+		sess, ownerID, err = getOrCreateSessionForMessage(sessMgr, cfg, agentID, "cli", "terminal", "local-user")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error refreshing session: %v\n", err)
+			continue
+		}
+
 		// Add user message to session
 		if _, err := sessMgr.AddMessage(sess.ID, "user", sanitizedInput, ""); err != nil {
 			fmt.Fprintf(os.Stderr, "Error saving message: %v\n", err)
@@ -420,6 +420,7 @@ LOOP:
 		if _, err := sessMgr.AddMessage(sess.ID, "agent", responseText, agentCfg.ID); err != nil {
 			log.Printf("[WARN] failed to save agent message: %v", err)
 		}
+		enqueueLocalMemoryUpdate(sessMgr, cfg, nil, nil, nil, ownerID, "local-user", agentCfg.ID, sess.ID, "")
 
 		// Display response
 		fmt.Printf("%s: %s\n", agentCfg.ID, responseText)
@@ -477,6 +478,7 @@ func (cc *chatContext) processWithChatProvider(
 	// Build messages from session
 	messages := cc.buildChatMessages(sess, agentCfg, "", nil) // CLI chat has no channel context
 	chatTools := cc.buildChatToolDefs()
+	chatTools = filterChatToolsByAgentPolicy(chatTools, cc.toolPolicy, agentCfg.ID)
 
 	log.Printf("[CHAT-CLI] entering native tool loop with %d tools", len(chatTools))
 
@@ -692,9 +694,10 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	// --- Layer 4: TOOLS (text path) ---
 	if cc.toolExec != nil {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
 		if len(toolInfos) > 0 {
 			sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
-			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.AllowedPaths...))
+			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...))
 		}
 	}
 
