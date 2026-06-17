@@ -547,6 +547,8 @@ func main() {
 		executeServe(os.Args[2:])
 	case "status":
 		executeStatus(os.Args[2:])
+	case "remembrance":
+		executeRemembrance(os.Args[2:])
 	case "version":
 		fmt.Println("prism v0.24.0")
 	default:
@@ -578,6 +580,11 @@ func printUsage() {
 	fmt.Println("  prism trace <run_id>                       Show event trace (causal DAG)")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println("  prism search --query <text> [options]         Search vector store")
+	fmt.Println()
+	fmt.Println("Remembrance commands:")
+	fmt.Println("  prism remembrance health [--config prism.yaml]  Check Remembrance service health")
+	fmt.Println("  prism remembrance status [--config prism.yaml]  Show Remembrance health and stats")
+	fmt.Println("  prism remembrance serve  [--python <exe>] [--dir <path>]  Start the Remembrance service")
 	fmt.Println()
 	fmt.Println("Adapter commands:")
 	fmt.Println("  prism adapter list                            List registered adapters")
