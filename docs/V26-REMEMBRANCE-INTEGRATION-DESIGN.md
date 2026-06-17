@@ -48,7 +48,7 @@ Remembrance is Prism's memory layer. It captures what agents say, extracts entit
 
 ### 1. NATS Subscriber (Python — `nats_sub.py`)
 
-New file in `rememberance_mcp/`. Subscribes to `*.agent.output` on NATS and calls `pipeline.capture()` for each event.
+New file in `remembrance_mcp/`. Subscribes to `*.agent.output` on NATS and calls `pipeline.capture()` for each event.
 
 Key design decisions:
 - **Idempotency:** Uses `(agent + session_id + turn)` as dedup key, bounded list of 1000
@@ -61,8 +61,8 @@ Key design decisions:
 New CLI entry point. Starts both REST API and NATS subscriber together.
 
 ```bash
-python -m rememberance_mcp.serve --port 8788 --nats nats://localhost:4222
-python -m rememberance_mcp.serve --no-nats  # REST only
+python -m remembrance_mcp.serve --port 8788 --nats nats://localhost:4222
+python -m remembrance_mcp.serve --no-nats  # REST only
 ```
 
 ### 3. RemembranceStage (Go — `remembrance.go`)
@@ -115,8 +115,8 @@ The event trigger is a NATS subscription on `remembrance.dream.triggered`. Prism
 
 | File | Language | Purpose |
 |------|----------|---------|
-| `rememberance_mcp/nats_sub.py` | Python | NATS subscriber for auto-capture |
-| `rememberance_mcp/serve.py` | Python | CLI entry point (REST + NATS) |
+| `remembrance_mcp/nats_sub.py` | Python | NATS subscriber for auto-capture |
+| `remembrance_mcp/serve.py` | Python | CLI entry point (REST + NATS) |
 | `internal/stage/remembrance.go` | Go | Enhanced RemembranceStage (capture + context) |
 | `internal/stage/remembrance_test.go` | Go | 9 unit tests |
 

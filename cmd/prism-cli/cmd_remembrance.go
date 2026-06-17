@@ -5,7 +5,7 @@
 //	prism remembrance health [--config prism.yaml] [--url <url>]
 //	prism remembrance status [--config prism.yaml] [--url <url>]
 //	prism remembrance serve  [--config prism.yaml] [--dir <path>] [--python <exe>]
-//	                         [--module rememberance_mcp.serve] [--nats <url>]
+//	                         [--module remembrance_mcp.serve] [--nats <url>]
 //
 // `health` and `status` probe the configured Remembrance service over HTTP.
 // `serve` launches the external Remembrance (Python) service in the foreground,
@@ -56,7 +56,7 @@ func printRemembranceUsage() {
 	fmt.Println("  prism remembrance health [--config prism.yaml] [--url <url>]")
 	fmt.Println("  prism remembrance status [--config prism.yaml] [--url <url>]")
 	fmt.Println("  prism remembrance serve  [--config prism.yaml] [--dir <path>] [--python <exe>]")
-	fmt.Println("                           [--module rememberance_mcp.serve] [--nats <url>]")
+	fmt.Println("                           [--module remembrance_mcp.serve] [--nats <url>]")
 }
 
 // remembranceBaseURL resolves the Remembrance base URL from --url, then config,
@@ -102,7 +102,7 @@ func remembranceStatus(args []string) {
 	}
 	fmt.Println("  health: ok")
 
-	// Stats are best-effort: the endpoint exists on rememberance-mcp but not on
+	// Stats are best-effort: the endpoint exists on remembrance-mcp but not on
 	// every Remembrance implementation, so a failure here is not fatal.
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Get(base + "/stats")
@@ -131,7 +131,7 @@ func remembranceServe(args []string) {
 	urlFlag := fs.String("url", "", "Remembrance URL (host/port derived from this)")
 	dir := fs.String("dir", "", "Working directory of the Remembrance service")
 	python := fs.String("python", "python", "Python interpreter to use (e.g. a venv python.exe)")
-	module := fs.String("module", "rememberance_mcp.serve", "Python module to run")
+	module := fs.String("module", "remembrance_mcp.serve", "Python module to run")
 	nats := fs.String("nats", "", "NATS URL for event-driven auto-capture (empty = --no-nats)")
 	fs.Parse(args)
 
