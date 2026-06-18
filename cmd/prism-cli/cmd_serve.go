@@ -93,6 +93,7 @@ type discordBotClient interface {
 	Send(msg *discordbot.OutboundMessage) error
 	SendPlaceholder(channelID, content string) (string, error)
 	EditMessage(channelID, messageID, content string) error
+	SelfID() string
 }
 
 // conversationContext holds all the dependencies needed to process a
@@ -694,8 +695,27 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	if msg.IsBot {
-		log.Printf("[AGENT] ignoring Discord bot message from %s (%s); cross-Prism agents communicate over NATS", msg.UserName, msg.UserID)
-		return
+		if isAgentBot(cc.cfg.Agents, msg.UserID) {
+			// Message from a listened-to agent — allow through pipeline for capture
+			log.Printf("[AGENT] processing agent message from %s (%s)", msg.UserName, msg.UserID)
+		} else {
+			log.Printf("[AGENT] ignoring Discord bot message from %s (%s); cross-Prism agents communicate over NATS", msg.UserName, msg.UserID)
+			return
+		}
+	}
+
+	// Tagged-only mode: if the channel has tagged_only=true, skip unless the bot is mentioned
+	channelRoleConfig := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
+	if channelRoleConfig != nil && channelRoleConfig.TaggedOnly {
+		selfID := cc.bot.SelfID()
+		mentioned := false
+		if selfID != "" {
+			mentioned = strings.Contains(msg.Content, "<@"+selfID+">") ||
+				strings.Contains(msg.Content, "<@&"+selfID+">")
+		}
+		if !mentioned {
+			return
+		}
 	}
 
 	// Step 1: Debounce — drop rapid-fire messages from the same user
@@ -891,7 +911,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// V33: Channel tool filtering — some channels restrict tools
 	var gateResult *stage.GateResult
-	channelRoleConfig := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
+	channelRoleConfig = cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
 	if channelRoleConfig != nil && channelRoleConfig.Tools == "none" {
 		// Fun channel: no tools at all. The agent is purely conversational.
 		log.Printf("[TOOL-CHANNEL] tools excluded by channel role %q", channelRoleConfig.Role)
