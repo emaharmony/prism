@@ -172,6 +172,14 @@ func (b *BotAdapter) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	log.Printf("discord-bot: connected as %s#%s", s.State.User.Username, s.State.User.Discriminator)
 }
 
+// SelfID returns the bot's own Discord user ID, used for mention detection.
+func (b *BotAdapter) SelfID() string {
+	if b.session == nil || b.session.State == nil || b.session.State.User == nil {
+		return ""
+	}
+	return b.session.State.User.ID
+}
+
 // onMessageCreate handles incoming Discord messages.
 func (b *BotAdapter) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Ignore messages from the bot itself

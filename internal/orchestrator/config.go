@@ -327,6 +327,10 @@ type ChannelRole struct {
 	// and what's expected — but NOT which project (that's dynamic).
 	// When empty, falls back to state_actions.inject.
 	Context string `yaml:"context,omitempty"`
+
+	// TaggedOnly means the agent only responds when directly mentioned (@Lumi).
+	// When true, messages that don't mention the bot are skipped entirely.
+	TaggedOnly bool `yaml:"tagged_only,omitempty"`
 }
 
 // ChannelConfig defines a messaging channel connection.

@@ -356,15 +356,8 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 
 	// Send result to Discord
 	if wh.bot != nil && actionDef.ChannelID != "" {
-		content := responseContent
-		// Discord has a 2000 character limit
-		if len(content) > 1950 {
-			content = content[:1950] + "\n\n...(truncated)"
-		}
-
-		// Prefix with action name
-		content = fmt.Sprintf("🔔 **%s**\n\n%s", formatActionName(action), content)
-
+	// Send result to Discord (the bot adapter handles splitting long messages)
+		content := fmt.Sprintf("🔔 **%s**\n\n%s", formatActionName(action), responseContent)
 		wh.bot.Send(&discordbot.OutboundMessage{
 			ChannelID: actionDef.ChannelID,
 			Content:   content,
@@ -402,13 +395,9 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 		return
 	}
 
-	// Send result to Discord
+	// Send result to Discord (the bot adapter handles splitting long messages)
 	if wh.bot != nil && actionDef.ChannelID != "" {
-		content := resultContent
-		if len(content) > 1950 {
-			content = content[:1950] + "\n\n...(truncated)"
-		}
-		content = fmt.Sprintf("\U0001F514 **%s**\n\n%s", formatActionName(action), content)
+		content := fmt.Sprintf("\U0001F514 **%s**\n\n%s", formatActionName(action), resultContent)
 		wh.bot.Send(&discordbot.OutboundMessage{
 			ChannelID: actionDef.ChannelID,
 			Content:   content,
@@ -435,22 +424,22 @@ func (wh *WakeHandler) checkPRStatus() string {
 		"--state", "open",
 		"--limit", "20",
 	)
-	// Run in the workspace directory
-	if wh.ctxBuilder != nil {
-		cmd.Dir = wh.ctxBuilder.WorkspaceRoot
-	}
+	// Run in the Prism repo directory so gh pr list checks Prism's PRs specifically
+	cmd.Dir = "/Users/ema/projects/repos/prism"
 
 	output, err := cmd.Output()
 	if err != nil {
 		// gh might not be installed or no PRs exist
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return "No open PRs found."
+			// No open PRs — return empty so handleDirectAction skips sending
+			return ""
 		}
 		return fmt.Sprintf("Could not check PRs: %v", err)
 	}
 
 	if len(strings.TrimSpace(string(output))) == 0 {
-		return "No open PRs."
+		// No open PRs — return empty so handleDirectAction skips sending
+		return ""
 	}
 
 	return wh.formatPRList(string(output))
@@ -485,7 +474,8 @@ func (wh *WakeHandler) formatPRList(jsonOutput string) string {
 	}
 
 	if len(prs) == 0 {
-		return "No open PRs."
+		// No open PRs — return empty so handleDirectAction skips sending
+		return ""
 	}
 
 	var sb strings.Builder
