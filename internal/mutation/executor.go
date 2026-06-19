@@ -222,70 +222,12 @@ func (e *Executor) validateSafety(a *approval.Approval) error {
 			return fmt.Errorf("target path %q is a symlink, not a regular file", a.TargetPath)
 		}
 	}
-	return nil
 
-	// Check: no absolute paths
-	if safety.IsAbsolutePath(a.TargetPath) {
-		return fmt.Errorf("absolute paths are not allowed: %q", a.TargetPath)
-	}
-
-	// Check: path stays within workspace root (with symlink resolution)
-	// This is defense-in-depth against path traversal attacks. We resolve ALL symlinks
-	// in both the root and the target path before comparing, so an attacker can't
-	// create a symlink inside the workspace that points outside it.
-	// Why EvalSymlinks instead of just checking string prefixes? Because
-	// `workspace/safe_link → /etc/passwd` would pass a string prefix check but
-	// EvalSymlinks resolves it to /etc/passwd, which is clearly outside the root.
-	absRoot, err := filepath.Abs(e.workspaceRoot)
-	if err != nil {
-		return fmt.Errorf("invalid workspace root: %w", err)
-	}
-
-	// Resolve symlinks in workspace root
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		resolvedRoot = absRoot // fallback if root doesn't resolve
-	}
-	resolvedRoot = filepath.Clean(resolvedRoot)
-
-	// Resolve the target path — for write targets that may not exist yet,
-	// resolve the parent directory and join with the filename
-	absPath := filepath.Clean(filepath.Join(absRoot, a.TargetPath))
-	parentDir := filepath.Dir(absPath)
-	resolvedParent, parentErr := filepath.EvalSymlinks(parentDir)
-	if parentErr != nil {
-		// Parent doesn't exist yet — verify the raw path is within root
-		// (this is safe because we've already blocked '..' and absolute paths)
-		rel, relErr := filepath.Rel(absRoot, absPath)
-		if relErr != nil || strings.HasPrefix(rel, "..") || rel == ".." {
-			return fmt.Errorf("path is outside workspace root: %q", a.TargetPath)
-		}
-	} else {
-		// Parent exists — resolve and verify symlink safety
-		resolvedAbsPath := filepath.Join(resolvedParent, filepath.Base(absPath))
-		resolvedAbsPath = filepath.Clean(resolvedAbsPath)
-		rel, relErr := filepath.Rel(resolvedRoot, resolvedAbsPath)
-		if relErr != nil || strings.HasPrefix(rel, "..") || rel == ".." {
-			return fmt.Errorf("path is outside workspace root (symlink escape blocked): %q", a.TargetPath)
-		}
-	}
-
-	// Check: content is text, size under limit
-	if len(a.Content) > MaxContentSize {
-		return fmt.Errorf("content size %d bytes exceeds maximum %d bytes", len(a.Content), MaxContentSize)
-	}
-
-	// Check: if the target exists, it must be a file (not a directory)
-	// Use Lstat to check without following final symlink
-	if info, err := os.Lstat(absPath); err == nil {
-		if info.IsDir() {
-			return fmt.Errorf("target path %q is a directory, not a file", a.TargetPath)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("target path %q is a symlink, not a regular file", a.TargetPath)
-		}
-	}
-
+	// Containment against all write roots — including parent-symlink-escape
+	// resolution — is enforced by resolveTargetPath -> safety.ResolveAndContainMulti
+	// above. (The previously-duplicated workspace-root-only checks here were
+	// dead code and weaker for multi-root configs; removed in favor of the
+	// single canonical safety implementation.)
 	return nil
 }
 

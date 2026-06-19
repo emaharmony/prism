@@ -2,6 +2,7 @@ package editor
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -484,8 +485,9 @@ func TestWriteConfigToFile(t *testing.T) {
 		Edges: []EditorEdge{},
 	}
 
-	path := t.TempDir() + "/prism.yaml"
-	if err := WriteConfigToFile(state, path); err != nil {
+	dir := t.TempDir()
+	path := dir + "/prism.yaml"
+	if err := WriteConfigToFile(state, path, dir); err != nil {
 		t.Fatalf("WriteConfigToFile error: %v", err)
 	}
 
@@ -511,29 +513,35 @@ func TestWriteConfigToFile_InvalidState(t *testing.T) {
 		},
 	}
 
-	path := t.TempDir() + "/prism.yaml"
-	err := WriteConfigToFile(state, path)
+	dir := t.TempDir()
+	path := dir + "/prism.yaml"
+	err := WriteConfigToFile(state, path, dir)
 	if err == nil {
 		t.Error("expected error for invalid state")
 	}
 }
 
 func TestValidateWritePath(t *testing.T) {
+	// All paths are evaluated relative to / contained within this jail dir.
+	base := t.TempDir()
+
 	tests := []struct {
+		name string
 		path string
 		ok   bool
 	}{
-		{"/tmp/prism.yaml", true},
-		{"config.yaml", true},
-		{"/etc/prism/config.yml", true},
-		{"../../../etc/passwd", false},   // traversal
-		{"/tmp/config.json", false},       // wrong extension
-		{"/tmp/../../../etc/hosts", false}, // traversal
+		{"abs within jail", filepath.Join(base, "prism.yaml"), true},
+		{"relative within jail", "config.yaml", true},
+		{"nested within jail", filepath.Join(base, "sub", "config.yml"), true},
+		{"absolute outside jail", "/etc/prism/config.yml", false}, // escapes jail
+		{"relative traversal", "../../../etc/passwd.yaml", false}, // escapes jail
+		{"wrong extension", filepath.Join(base, "config.json"), false},
+		{"traversal back in", filepath.Join(base, "..", filepath.Base(base), "ok.yaml"), true},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			err := validateWritePath(tt.path)
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateWritePath(tt.path, base)
 			if tt.ok && err != nil {
 				t.Errorf("expected %s to be valid, got error: %v", tt.path, err)
 			}

@@ -42,6 +42,10 @@ func StartEmbeddedBus(port int) (string, func(), error) {
 	}
 
 	cfg := &natsserver.Options{
+		// Bind the embedded bus to loopback only. Cross-Prism instances on the
+		// same host connect via the returned nats://127.0.0.1 URL; exposing the
+		// bus to the network is a deliberate future step using an external NATS.
+		Host:           "127.0.0.1",
 		Port:           port,
 		NoLog:          true,
 		NoSigs:         true,
