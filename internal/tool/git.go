@@ -9,9 +9,50 @@ package tool
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+// gitRefPattern matches safe git ref/remote names: letters, digits, and the
+// limited punctuation git itself permits. It deliberately excludes anything
+// that could be interpreted as a flag, URL, path, or shell metacharacter.
+var gitRefPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+// validateGitRef rejects empty-handling refs that look like flags or contain
+// metacharacters. An empty ref is allowed (callers omit the arg). This blocks
+// argument injection where a model-supplied branch/ref becomes a git option.
+func validateGitRef(ref string) error {
+	if ref == "" {
+		return nil
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid ref %q: must not start with '-'", ref)
+	}
+	if !gitRefPattern.MatchString(ref) {
+		return fmt.Errorf("invalid ref %q: only letters, digits, '.', '_', '/', '-' are allowed", ref)
+	}
+	return nil
+}
+
+// validateGitRemote validates a remote. A bare configured remote name is
+// required; URLs and flag-like values are rejected to prevent push to an
+// arbitrary destination or argument injection.
+func validateGitRemote(remote string) error {
+	if remote == "" {
+		return nil
+	}
+	if strings.HasPrefix(remote, "-") {
+		return fmt.Errorf("invalid remote %q: must not start with '-'", remote)
+	}
+	if strings.Contains(remote, "://") || strings.ContainsAny(remote, "@:") {
+		return fmt.Errorf("invalid remote %q: must be a configured remote name, not a URL", remote)
+	}
+	if !gitRefPattern.MatchString(remote) {
+		return fmt.Errorf("invalid remote %q: only letters, digits, '.', '_', '/', '-' are allowed", remote)
+	}
+	return nil
+}
 
 // ---------- Read-only Git Tools (always allowed) ----------
 
@@ -20,8 +61,10 @@ type GitStatusTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitStatusTool) Name() string        { return "git_status" }
-func (t *GitStatusTool) Description() string { return "Shows the working tree status (git status). Lists modified, staged, and untracked files." }
+func (t *GitStatusTool) Name() string { return "git_status" }
+func (t *GitStatusTool) Description() string {
+	return "Shows the working tree status (git status). Lists modified, staged, and untracked files."
+}
 func (t *GitStatusTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -58,8 +101,10 @@ type GitLogTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitLogTool) Name() string        { return "git_log" }
-func (t *GitLogTool) Description() string { return "Shows recent git commit history. Use this to understand what changes have been made recently." }
+func (t *GitLogTool) Name() string { return "git_log" }
+func (t *GitLogTool) Description() string {
+	return "Shows recent git commit history. Use this to understand what changes have been made recently."
+}
 func (t *GitLogTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -91,6 +136,9 @@ func (t *GitLogTool) Execute(ctx context.Context, input map[string]any) (ToolRes
 	args := []string{"log", "--oneline", "--decorate", "-n", strconv.Itoa(count)}
 
 	if branch, ok := input["branch"].(string); ok && branch != "" {
+		if err := validateGitRef(branch); err != nil {
+			return ToolResult{Success: false, Error: err.Error()}, nil
+		}
 		args = append(args, branch)
 	}
 
@@ -112,8 +160,10 @@ type GitDiffTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitDiffTool) Name() string        { return "git_diff" }
-func (t *GitDiffTool) Description() string { return "Shows git diffs — changes between working tree, staging area, and commits. Use this to review what code changes look like." }
+func (t *GitDiffTool) Name() string { return "git_diff" }
+func (t *GitDiffTool) Description() string {
+	return "Shows git diffs — changes between working tree, staging area, and commits. Use this to review what code changes look like."
+}
 func (t *GitDiffTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -142,6 +192,9 @@ func (t *GitDiffTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 	}
 
 	if branch, ok := input["branch"].(string); ok && branch != "" {
+		if err := validateGitRef(branch); err != nil {
+			return ToolResult{Success: false, Error: err.Error()}, nil
+		}
 		args = append(args, branch)
 	}
 
@@ -175,8 +228,10 @@ type GitBranchListTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitBranchListTool) Name() string        { return "git_branch_list" }
-func (t *GitBranchListTool) Description() string { return "Lists local git branches with the current branch marked. Use this to see what branches exist." }
+func (t *GitBranchListTool) Name() string { return "git_branch_list" }
+func (t *GitBranchListTool) Description() string {
+	return "Lists local git branches with the current branch marked. Use this to see what branches exist."
+}
 func (t *GitBranchListTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -230,8 +285,10 @@ type GitAddTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitAddTool) Name() string        { return "git_add" }
-func (t *GitAddTool) Description() string { return "Stages file changes for the next commit. Requires approval before executing. Use git_status to see what files have changed." }
+func (t *GitAddTool) Name() string { return "git_add" }
+func (t *GitAddTool) Description() string {
+	return "Stages file changes for the next commit. Requires approval before executing. Use git_status to see what files have changed."
+}
 func (t *GitAddTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -283,8 +340,10 @@ type GitCommitTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitCommitTool) Name() string        { return "git_commit" }
-func (t *GitCommitTool) Description() string { return "Creates a git commit with a message. Requires approval before executing. Stage files with git add first." }
+func (t *GitCommitTool) Name() string { return "git_commit" }
+func (t *GitCommitTool) Description() string {
+	return "Creates a git commit with a message. Requires approval before executing. Stage files with git add first."
+}
 func (t *GitCommitTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -336,8 +395,10 @@ type GitPushTool struct {
 	ToolPaths ToolPaths
 }
 
-func (t *GitPushTool) Name() string        { return "git_push" }
-func (t *GitPushTool) Description() string { return "Pushes commits to a remote repository. Requires approval before executing. Use git_log first to review what will be pushed." }
+func (t *GitPushTool) Name() string { return "git_push" }
+func (t *GitPushTool) Description() string {
+	return "Pushes commits to a remote repository. Requires approval before executing. Use git_log first to review what will be pushed."
+}
 func (t *GitPushTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
@@ -362,10 +423,16 @@ func (t *GitPushTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 	if r, ok := input["remote"].(string); ok && r != "" {
 		remote = r
 	}
+	if err := validateGitRemote(remote); err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
+	}
 
 	args := []string{"push", remote}
 
 	if branch, ok := input["branch"].(string); ok && branch != "" {
+		if err := validateGitRef(branch); err != nil {
+			return ToolResult{Success: false, Error: err.Error()}, nil
+		}
 		args = append(args, branch)
 	}
 

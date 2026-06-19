@@ -4,9 +4,12 @@ package orchestrator
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
@@ -24,6 +27,9 @@ import (
 type Config struct {
 	// Prism holds top-level service settings.
 	Prism PrismConfig `yaml:"prism"`
+
+	// API configures HTTP API authentication and CORS.
+	API APIServerConfig `yaml:"api"`
 
 	// Bridge configures signed cross-Prism protocol subjects.
 	Bridge BridgeConfig `yaml:"bridge"`
@@ -91,6 +97,13 @@ type PrismConfig struct {
 	// Port is the health check server port. Default 8321.
 	Port int `yaml:"port"`
 
+	// BindHost is the network interface the HTTP API, health, and dashboard
+	// servers bind to. Default "127.0.0.1" (loopback only). Setting a
+	// non-loopback host (e.g. "0.0.0.0") exposes Prism on the network and
+	// requires api.auth_token (or api.auth_token_env) to be set — Validate
+	// rejects a non-loopback bind without a token.
+	BindHost string `yaml:"bind_host"`
+
 	// LogLevel sets verbosity: debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
 
@@ -111,6 +124,58 @@ type PrismConfig struct {
 	// Scheduler configures cron-style scheduled tasks that fire NATS events.
 	// V32: Event-driven wake replaces heartbeat babysitting.
 	Scheduler SchedulerConfig `yaml:"scheduler"`
+}
+
+// APIServerConfig configures HTTP API authentication and CORS.
+type APIServerConfig struct {
+	// AuthToken is a static bearer token required on state-changing endpoints
+	// (POST/PUT/DELETE/PATCH) and the SSE event stream. Empty disables auth,
+	// which is only permitted when the server binds to loopback.
+	AuthToken string `yaml:"auth_token"`
+
+	// AuthTokenEnv names an environment variable holding the bearer token.
+	// When set and non-empty it takes priority over AuthToken so the secret
+	// can stay out of tracked config.
+	AuthTokenEnv string `yaml:"auth_token_env"`
+
+	// AllowedOrigins is the CORS origin allowlist for browser-based editors.
+	// Empty means no cross-origin requests are permitted (same-origin only).
+	// Use "*" only for trusted local development.
+	AllowedOrigins []string `yaml:"allowed_origins"`
+}
+
+// ResolveAuthToken returns the effective API bearer token, preferring the
+// environment variable named by AuthTokenEnv over the inline AuthToken.
+func (a APIServerConfig) ResolveAuthToken() string {
+	if a.AuthTokenEnv != "" {
+		if v := os.Getenv(a.AuthTokenEnv); v != "" {
+			return v
+		}
+	}
+	return a.AuthToken
+}
+
+// IsLoopbackHost reports whether host refers to the loopback interface.
+// An empty host is treated as loopback because BindAddr defaults to 127.0.0.1.
+func IsLoopbackHost(host string) bool {
+	switch strings.TrimSpace(host) {
+	case "", "127.0.0.1", "localhost", "::1", "[::1]":
+		return true
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// BindAddr returns the host:port listen address for a server, defaulting the
+// host to loopback when prism.bind_host is unset.
+func (c *Config) BindAddr(port int) string {
+	host := c.Prism.BindHost
+	if strings.TrimSpace(host) == "" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // BridgeConfig configures signed cross-Prism NATS subjects.
@@ -526,6 +591,7 @@ func DefaultConfig() *Config {
 			InstanceID:         "prism",
 			NATSURL:            "",
 			Port:               8321,
+			BindHost:           "127.0.0.1",
 			DataDir:            filepath.Join(os.Getenv("HOME"), ".prism", "data"),
 			OllamaURL:          "http://localhost:11434",
 			LogLevel:           "info",
@@ -871,6 +937,13 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("config: bridge.factory.run_codex=true requires approval_mode='implementation'")
 			}
 		}
+	}
+
+	// Network exposure: binding to a non-loopback interface without a bearer
+	// token would expose unauthenticated state-changing endpoints (approvals,
+	// editor save) to the network. Fail closed.
+	if !IsLoopbackHost(c.Prism.BindHost) && c.API.ResolveAuthToken() == "" {
+		return fmt.Errorf("config: prism.bind_host %q is not loopback; set api.auth_token or api.auth_token_env to expose the API on the network", c.Prism.BindHost)
 	}
 
 	return nil

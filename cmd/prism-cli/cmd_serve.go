@@ -555,26 +555,33 @@ func executeServe(args []string) {
 
 	apiPort := *portFlag + 1 // API on port+1 (default 8322)
 	apiServer := api.NewServer(api.Config{
-		Addr:      fmt.Sprintf(":%d", apiPort),
-		Orch:      orch,
-		Store:     taskStore,
-		Sessions:  sessMgr,
-		Engine:    delegEngine,
-		Approval:  approvalMgr,
-		Tracker:   delegTracker,
-		AutoPatch: autopatcher,
-		NATS:      natsConn,
+		Addr:           cfg.BindAddr(apiPort),
+		Orch:           orch,
+		Store:          taskStore,
+		Sessions:       sessMgr,
+		Engine:         delegEngine,
+		Approval:       approvalMgr,
+		Tracker:        delegTracker,
+		AutoPatch:      autopatcher,
+		NATS:           natsConn,
+		AuthToken:      cfg.API.ResolveAuthToken(),
+		AllowedOrigins: cfg.API.AllowedOrigins,
+		ConfigDir:      filepath.Dir(*configPath),
 	})
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			log.Printf("[WARN] API server failed: %v", err)
 		}
 	}()
-	fmt.Printf("  API:    http://localhost:%d/api/v1/status\n", apiPort)
+	displayHost := cfg.Prism.BindHost
+	if strings.TrimSpace(displayHost) == "" {
+		displayHost = "127.0.0.1"
+	}
+	fmt.Printf("  API:    http://%s:%d/api/v1/status\n", displayHost, apiPort)
 
 	// 11. Start health check server
 	go startHealthServer(*portFlag, cfg, agentReg, sessMgr, discordBots)
-	fmt.Printf("  Health: http://localhost:%d/health\n", *portFlag)
+	fmt.Printf("  Health: http://%s:%d/health\n", displayHost, *portFlag)
 
 	if cfg.FactoryMonitor.Enabled {
 		if len(discordBots) == 0 {
@@ -1662,7 +1669,7 @@ func startHealthServer(port int, cfg *orchestrator.Config, agentReg *agent.Regis
 		fmt.Fprintf(w, `{"status":"ok","agents":%d,"discord_ready":%v}`, len(cfg.Agents), discordReady)
 	})
 
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
+	if err := http.ListenAndServe(cfg.BindAddr(port), nil); err != nil {
 		log.Printf("Health server error: %v", err)
 	}
 }

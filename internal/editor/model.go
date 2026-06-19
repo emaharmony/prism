@@ -26,9 +26,9 @@ type Position struct {
 // EditorNode represents a node in the workflow editor.
 type EditorNode struct {
 	ID            string   `json:"id"`
-	Type          string   `json:"type"`           // "agent", "approval", "process"
+	Type          string   `json:"type"` // "agent", "approval", "process"
 	Label         string   `json:"label"`
-	Role          string   `json:"role"`           // lead, coder, researcher, orchestrator
+	Role          string   `json:"role"` // lead, coder, researcher, orchestrator
 	Model         string   `json:"model"`
 	Provider      string   `json:"provider"`
 	Primary       bool     `json:"primary"`
@@ -40,18 +40,18 @@ type EditorNode struct {
 
 // EditorEdge represents a connection between two nodes.
 type EditorEdge struct {
-	ID     string `json:"id"`
-	From   string `json:"from"`   // source node ID
-	To     string `json:"to"`      // target node ID
-	Type   string `json:"type"`    // "delegation", "review", "approval", "event"
-	Label  string `json:"label"`   // optional display label
-	Style  string `json:"style"`  // "solid", "dashed", "dotted", "bold"
+	ID    string `json:"id"`
+	From  string `json:"from"`  // source node ID
+	To    string `json:"to"`    // target node ID
+	Type  string `json:"type"`  // "delegation", "review", "approval", "event"
+	Label string `json:"label"` // optional display label
+	Style string `json:"style"` // "solid", "dashed", "dotted", "bold"
 }
 
 // EditorState is the full state of the workflow editor.
 type EditorState struct {
 	Nodes []EditorNode `json:"nodes"`
-	Edges []EditorEdge  `json:"edges"`
+	Edges []EditorEdge `json:"edges"`
 }
 
 // ConfigToEditorState converts Prism agent config into an EditorState.
@@ -421,14 +421,14 @@ func (s *EditorState) RemoveEdge(id string) error {
 // NodeUpdate represents partial updates to a node.
 // Only non-nil fields will be applied.
 type NodeUpdate struct {
-	Label         *string  `json:"label"`
-	Role          *string  `json:"role"`
-	Model         *string  `json:"model"`
-	Provider      *string  `json:"provider"`
-	Primary       *bool    `json:"primary"`
-	Capabilities  []string `json:"capabilities"`
-	Subscriptions []string `json:"subscriptions"`
-	Context       []string `json:"context"`
+	Label         *string   `json:"label"`
+	Role          *string   `json:"role"`
+	Model         *string   `json:"model"`
+	Provider      *string   `json:"provider"`
+	Primary       *bool     `json:"primary"`
+	Capabilities  []string  `json:"capabilities"`
+	Subscriptions []string  `json:"subscriptions"`
+	Context       []string  `json:"context"`
 	Position      *Position `json:"position"`
 }
 
@@ -472,16 +472,16 @@ func (s *EditorState) UpdateNode(id string, updates NodeUpdate) error {
 
 // WriteConfigToFile writes the editor state as YAML to a file on disk.
 // This requires explicit path and should only be called with user confirmation.
-// The path must be a .yaml or .yml file within an allowed directory.
-func WriteConfigToFile(state *EditorState, path string) error {
+// The path must be a .yaml or .yml file contained within allowedDir.
+func WriteConfigToFile(state *EditorState, path string, allowedDir string) error {
 	// Validate first
 	errors := ValidateEditorState(state)
 	if len(errors) > 0 {
 		return fmt.Errorf("validation errors: %v", errors)
 	}
 
-	// Security: validate path is a YAML file with no traversal
-	if err := validateWritePath(path); err != nil {
+	// Security: validate path is a YAML file jailed to the allowed directory
+	if err := validateWritePath(path, allowedDir); err != nil {
 		return fmt.Errorf("invalid path: %w", err)
 	}
 
@@ -513,15 +513,12 @@ func WriteConfigToFile(state *EditorState, path string) error {
 	return nil
 }
 
-// validateWritePath ensures the path is safe for writing config files.
-func validateWritePath(path string) error {
-	// Must be absolute or relative with no traversal
+// validateWritePath ensures the path is a .yaml/.yml file contained within
+// allowedDir. It resolves symlinks on the parent directory so a symlink inside
+// allowedDir cannot redirect the write outside it. An empty allowedDir falls
+// back to the current working directory.
+func validateWritePath(path string, allowedDir string) error {
 	clean := filepath.Clean(path)
-
-	// Reject paths with .. (traversal)
-	if strings.Contains(clean, "..") {
-		return fmt.Errorf("path must not contain '..'")
-	}
 
 	// Must end in .yaml or .yml
 	ext := strings.ToLower(filepath.Ext(clean))
@@ -529,13 +526,43 @@ func validateWritePath(path string) error {
 		return fmt.Errorf("path must end in .yaml or .yml")
 	}
 
-	// Resolve symlinks and verify the path doesn't escape
-	evaluated, err := filepath.EvalSymlinks(clean)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("eval symlinks error: %w", err)
+	// Resolve the jail base.
+	base := allowedDir
+	if strings.TrimSpace(base) == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("cannot resolve working directory: %w", err)
+		}
+		base = cwd
 	}
-	if evaluated != "" {
-		clean = evaluated
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return fmt.Errorf("invalid base directory: %w", err)
+	}
+	if resolved, rerr := filepath.EvalSymlinks(absBase); rerr == nil {
+		absBase = resolved
+	}
+
+	// Resolve the target. A path is treated as absolute if it is absolute in
+	// the native sense OR rooted POSIX-style ("/etc/..."), which on Windows
+	// filepath.IsAbs would miss. Only genuinely relative paths are joined to
+	// the jail base; rooted paths are left as-is so containment can reject them.
+	absTarget := clean
+	rootedPOSIX := strings.HasPrefix(filepath.ToSlash(clean), "/")
+	if !filepath.IsAbs(absTarget) && !rootedPOSIX {
+		absTarget = filepath.Join(absBase, absTarget)
+	}
+	absTarget = filepath.Clean(absTarget)
+
+	// Resolve symlinks on the parent so a symlinked dir can't escape the jail.
+	parent := filepath.Dir(absTarget)
+	if resolved, rerr := filepath.EvalSymlinks(parent); rerr == nil {
+		absTarget = filepath.Join(resolved, filepath.Base(absTarget))
+	}
+
+	rel, err := filepath.Rel(absBase, absTarget)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path %q must be within %q", path, absBase)
 	}
 
 	return nil
