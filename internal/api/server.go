@@ -31,6 +31,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,15 @@ type Server struct {
 	mux       *http.ServeMux
 	editorMu  sync.RWMutex
 	editorWS  *editor.EditorState
+
+	// authToken, when non-empty, is the bearer token required on
+	// state-changing endpoints and the SSE stream. Empty disables auth
+	// (only safe on a loopback bind, enforced by config validation).
+	authToken string
+	// allowedOrigins is the CORS origin allowlist. Empty = same-origin only.
+	allowedOrigins []string
+	// configDir jails editor config writes (POST /editor/save).
+	configDir string
 }
 
 // Config holds API server configuration.
@@ -78,6 +88,13 @@ type Config struct {
 	Tracker   *delegation.Tracker
 	AutoPatch AutoPatchStarter
 	NATS      *nats.Conn
+
+	// AuthToken is the bearer token required on mutating endpoints + SSE.
+	AuthToken string
+	// AllowedOrigins is the CORS origin allowlist (empty = same-origin only).
+	AllowedOrigins []string
+	// ConfigDir jails editor config writes to this directory.
+	ConfigDir string
 }
 
 // AutoPatchStarter is the API surface needed from the autopatch service.
@@ -89,16 +106,19 @@ type AutoPatchStarter interface {
 // NewServer creates a new API server.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		addr:      cfg.Addr,
-		orch:      cfg.Orch,
-		store:     cfg.Store,
-		sessions:  cfg.Sessions,
-		engine:    cfg.Engine,
-		approval:  cfg.Approval,
-		tracker:   cfg.Tracker,
-		autopatch: cfg.AutoPatch,
-		nc:        cfg.NATS,
-		mux:       http.NewServeMux(),
+		addr:           cfg.Addr,
+		orch:           cfg.Orch,
+		store:          cfg.Store,
+		sessions:       cfg.Sessions,
+		engine:         cfg.Engine,
+		approval:       cfg.Approval,
+		tracker:        cfg.Tracker,
+		autopatch:      cfg.AutoPatch,
+		nc:             cfg.NATS,
+		authToken:      cfg.AuthToken,
+		allowedOrigins: cfg.AllowedOrigins,
+		configDir:      cfg.ConfigDir,
+		mux:            http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -132,7 +152,10 @@ func (s *Server) routes() {
 func (s *Server) Start() error {
 	log.Printf("[API] starting on %s", s.addr)
 
-	handler := corsMiddleware(panicRecovery(s.mux))
+	if s.authToken == "" {
+		log.Printf("[API] WARNING: no api.auth_token set — state-changing endpoints are unauthenticated (loopback bind expected)")
+	}
+	handler := s.corsMiddleware(s.authMiddleware(panicRecovery(s.mux)))
 
 	srv := &http.Server{
 		Addr:           s.addr,
@@ -159,12 +182,20 @@ func panicRecovery(next http.Handler) http.Handler {
 	})
 }
 
-// corsMiddleware adds CORS headers for browser-based editors.
-func corsMiddleware(next http.Handler) http.Handler {
+// corsMiddleware adds CORS headers for browser-based editors, reflecting only
+// allowlisted origins. With an empty allowlist no CORS headers are emitted, so
+// cross-origin browsers are blocked (same-origin requests still work).
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if origin != "" && s.originAllowed(origin) {
+			// Echo the specific origin (never a bare "*" alongside auth) so the
+			// response is valid for credentialed cross-origin requests.
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -173,6 +204,54 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// originAllowed reports whether origin is in the configured CORS allowlist.
+func (s *Server) originAllowed(origin string) bool {
+	for _, o := range s.allowedOrigins {
+		if o == "*" || strings.EqualFold(o, origin) {
+			return true
+		}
+	}
+	return false
+}
+
+// authMiddleware enforces the bearer token on protected requests when a token
+// is configured. When no token is set it is a no-op (loopback-only mode).
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authToken != "" && requiresAuth(r) && !s.authorized(r) {
+			writeJSONError(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requiresAuth reports whether a request targets a protected operation: any
+// state-changing method, or the SSE event stream (which can expose all bus
+// traffic). Read-only GETs remain open for local observation.
+func requiresAuth(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		return true
+	}
+	return r.URL.Path == "/api/v1/events/stream"
+}
+
+// authorized validates the bearer token in constant time. Browsers using
+// EventSource cannot set headers, so a ?token= query param is also accepted
+// for the SSE stream.
+func (s *Server) authorized(r *http.Request) bool {
+	want := []byte(s.authToken)
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		got := []byte(strings.TrimPrefix(h, "Bearer "))
+		return subtle.ConstantTimeCompare(got, want) == 1
+	}
+	if tok := r.URL.Query().Get("token"); tok != "" {
+		return subtle.ConstantTimeCompare([]byte(tok), want) == 1
+	}
+	return false
 }
 
 // StartWithHandler returns the http.Handler without starting a server.
@@ -500,7 +579,6 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -514,13 +592,11 @@ func (s *Server) handleEventStream(w http.ResponseWriter, r *http.Request) {
 		subject = ">"
 	}
 
-	// Block overly broad subscriptions for unauthenticated access
-	// Allow specific prefixes like "lumi.*", "mango.*", "prism.*"
-	// but deny unrestricted ">" without explicit opt-in
+	// The SSE stream is auth-gated by authMiddleware (requiresAuth), so an
+	// authenticated caller may subscribe to any subject. A wildcard ">"
+	// subscription streams all bus traffic; log it for audit.
 	if subject == ">" {
-		// TODO: Add authentication check here. For now, allow unrestricted
-		// but log a warning.
-		log.Printf("[API] SSE: unrestricted subject subscription from %s", r.RemoteAddr)
+		log.Printf("[API] SSE: wildcard subject subscription from %s", r.RemoteAddr)
 	}
 
 	// Subscribe to NATS
@@ -866,9 +942,10 @@ func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Confirm && req.Path != "" {
-		// Write to disk — requires explicit confirmation and path
-		if err := editor.WriteConfigToFile(&req.EditorState, req.Path); err != nil {
-			http.Error(w, "write error: "+err.Error(), http.StatusInternalServerError)
+		// Write to disk — requires explicit confirmation and path. The write is
+		// jailed to s.configDir to prevent arbitrary-path config overwrites.
+		if err := editor.WriteConfigToFile(&req.EditorState, req.Path, s.configDir); err != nil {
+			http.Error(w, "write error: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, map[string]any{
@@ -956,7 +1033,6 @@ func deepCopyState(src *editor.EditorState) *editor.EditorState {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("[API] json encode error: %v", err)
 	}
@@ -964,7 +1040,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func writeJSONError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

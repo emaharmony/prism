@@ -36,6 +36,11 @@ prism:
   llm_timeout_seconds: 1200
   # Log level: debug, info, warn, error
   log_level: "info"
+  # Network interface for the HTTP API, health, and dashboard servers.
+  # Default "127.0.0.1" (loopback only). Set to "0.0.0.0" to expose Prism on
+  # the network — this REQUIRES api.auth_token (or api.auth_token_env) below,
+  # or the config is rejected at startup.
+  bind_host: "127.0.0.1"
   scheduler:
     enabled: false
     jobs:
@@ -45,6 +50,19 @@ prism:
         payload:
           action: "factory_status_digest"
         enabled: false
+
+# HTTP API authentication and CORS. Optional when bound to loopback; required
+# when prism.bind_host is non-loopback.
+api:
+  # Static bearer token required on state-changing endpoints (POST/PUT/DELETE)
+  # and the SSE event stream. Leave empty for loopback-only local use.
+  auth_token: ""
+  # Or read the token from an environment variable (takes priority when set),
+  # keeping the secret out of tracked config.
+  auth_token_env: ""        # e.g. "PRISM_API_TOKEN"
+  # CORS origin allowlist for a browser-based editor. Empty = same-origin only.
+  # Avoid "*" except for trusted local development.
+  allowed_origins: []
 
 users:
   # Map channel-specific identities to one durable owner id. USER.md remains

@@ -7,8 +7,9 @@ import (
 func TestFormatPRList_Empty(t *testing.T) {
 	wh := &WakeHandler{}
 	got := wh.formatPRList("[]")
-	if got != "No open PRs." {
-		t.Errorf("expected 'No open PRs.', got %q", got)
+	// An empty PR list returns "" so handleDirectAction skips sending a message.
+	if got != "" {
+		t.Errorf("expected empty string for no open PRs, got %q", got)
 	}
 }
 

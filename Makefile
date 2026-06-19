@@ -31,6 +31,12 @@ lint:                          ## Run linters
 	go vet ./...
 	@echo "vet: OK"
 
+# CI: the same gates GitHub Actions runs, for local pre-push checks
+ci: lint                       ## Run the full CI gate (vet, build, test)
+	go build ./...
+	go test ./... -count=1
+	@echo "ci: OK"
+
 # Docker
 docker-build:                  ## Build Docker image
 	docker build -t prism:latest .
