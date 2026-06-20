@@ -27,6 +27,7 @@ import (
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/plan"
 	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/nats-io/nats.go"
@@ -45,6 +46,7 @@ type WakeHandler struct {
 	planMgr    *plan.Manager
 	improveMgr *improve.Manager
 	factoryMon *factorymonitor.Monitor
+	remClient  *remembrance.Client
 
 	// agentMessages stores recent inter-agent messages received via NATS.
 	// Accessed under agentMu for concurrent safety.
@@ -110,9 +112,13 @@ Be concise — this is a status report, not a novel.`,
 		SkipLLM:   true,
 	},
 	"auto_patch": {
-		Prompt: `You are the auto-patch agent. Your job is to review improvement proposals and create fixes.
+		Prompt: `You are the auto-patch agent. You are an active developer, not just a reporter. Your job is to find and fix bugs, improve user experience, and increase effectiveness across the codebase.
 
-1. Check the improvement proposals in your workspace state
+## Your Capabilities
+You can: create git branches, write code, commit, push, and open PRs. You have git_status, git_log, git_diff, file_read, file_write, and file_list tools. Use them.
+
+## Workflow
+1. Check improvement proposals in workspace state
 2. For each auto-PR-eligible proposal (bug fixes, error patterns, test coverage, doc updates):
    a. Create a plan using plan_create if one doesn't exist
    b. Set the plan status to auto_proceed
@@ -124,7 +130,20 @@ Be concise — this is a status report, not a novel.`,
 4. After creating any PR, update the improvement status to in_progress
 5. If a tool fails or doesn't exist, mention <@1512994928769237002> (OpenClaw Lumi) with the error so she can verify and respond
 
-Be thorough but fast. Focus on correctness.`,
+## Active Bug Hunting
+Don't just wait for proposals. Actively look for:
+- **Bugs**: Run git_status and git_diff to find uncommitted issues. Check recent test runs for failures.
+- **UX issues**: Read through error messages, user-facing text, and logs. If something is confusing or unclear, fix it.
+- **Effectiveness**: Look for redundant code, missing error handling, incomplete implementations. Fix them.
+- **Test gaps**: If a function has no test coverage, add one.
+
+## Quality Standards
+- Every fix should include or update a test if applicable
+- Commit messages should be clear and descriptive
+- PR descriptions should explain what was fixed and why
+- If you're unsure about a change, propose it as an improvement rather than auto-PR
+
+Be thorough, proactive, and fast. You are not just a reporter — you are a developer.`,
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 2048,
 	},
@@ -157,6 +176,7 @@ func NewWakeHandler(
 	planMgr *plan.Manager,
 	improveMgr *improve.Manager,
 	factoryMon *factorymonitor.Monitor,
+	remClient *remembrance.Client,
 ) *WakeHandler {
 	return &WakeHandler{
 		cfg:        cfg,
@@ -169,6 +189,7 @@ func NewWakeHandler(
 		planMgr:    planMgr,
 		improveMgr: improveMgr,
 		factoryMon: factoryMon,
+		remClient:  remClient,
 	}
 }
 
@@ -309,6 +330,54 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 		systemPrompt += "\n--- End of agent messages ---\n"
 	}
 	wh.agentMu.Unlock()
+
+	// V34: Inject Remembrance memory search results for context
+	if wh.remClient != nil {
+		searchQueries := []string{
+			fmt.Sprintf("recent work OpenClaw Lumi %s", time.Now().Format("2006-01-02")),
+			fmt.Sprintf("project status %s", action),
+			"OpenClaw Lumi decisions architecture",
+		}
+		for _, q := range searchQueries {
+			results, err := wh.remClient.Search(q, "hybrid", "", "", 5)
+			if err == nil && results != nil {
+				if hits, ok := results["results"].([]any); ok && len(hits) > 0 {
+					systemPrompt += fmt.Sprintf("\n\n## Memory Search: %q\n", q)
+					for _, hit := range hits {
+						if m, ok := hit.(map[string]any); ok {
+							snippet := fmt.Sprintf("%v", m["snippet"])
+							if len(snippet) > 200 {
+								snippet = snippet[:200] + "..."
+							}
+							score := fmt.Sprintf("%v", m["score"])
+							systemPrompt += fmt.Sprintf("- [score: %s] %s\n", score, snippet)
+						}
+					}
+					systemPrompt += "\n--- End of memory search ---\n"
+				}
+			}
+		}
+	}
+
+	// V34: Inject tool capability summary so Prism knows what she can do
+	systemPrompt += `
+
+## Your Available Tools
+You have access to the following tools. Use them proactively to investigate and fix issues:
+- **git_status**: Check working tree status in any repo
+- **git_log**: View recent commit history
+- **git_diff**: See uncommitted changes
+- **git_push**: Push branches to remote (with validation)
+- **file_read**: Read file contents
+- **file_write**: Write file contents
+- **file_list**: List directory contents
+- **plan_create**: Create structured plans with approval flow
+- **plan_approve**: Approve or reject plans
+- **improvement_create**: Propose code improvements
+- **improvement_resolve**: Mark improvements as resolved
+
+You can create branches, commit changes, push to remote, and open PRs. You are not just a reporter — you are an active developer. If you find a bug, fix it. If you see a UX issue, improve it. If you have an idea to make something more effective, propose it.
+`
 
 	// Get the primary agent config
 	var agentCfg *orchestrator.AgentConfig
