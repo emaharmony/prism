@@ -17,6 +17,7 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
@@ -32,6 +33,7 @@ import (
 )
 
 // WakeHandler subscribes to scheduler events and triggers LLM inference.
+// It also listens for inter-agent messages on NATS (e.g. from OpenClaw Lumi).
 type WakeHandler struct {
 	cfg        *orchestrator.Config
 	providers  *provider.ProviderRegistry
@@ -43,6 +45,18 @@ type WakeHandler struct {
 	planMgr    *plan.Manager
 	improveMgr *improve.Manager
 	factoryMon *factorymonitor.Monitor
+
+	// agentMessages stores recent inter-agent messages received via NATS.
+	// Accessed under agentMu for concurrent safety.
+	agentMu      sync.Mutex
+	agentMessages []agentMessage
+}
+
+// agentMessage is a message from another agent (e.g. OpenClaw Lumi) received via NATS.
+type agentMessage struct {
+	From      string    `json:"from"`
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // wakeAction defines a scheduled action prompt.
@@ -108,6 +122,7 @@ Be concise — this is a status report, not a novel.`,
    f. Open a pull request with a clear description
 3. For proposals that need approval (architecture, process), notify Ema with a clear summary
 4. After creating any PR, update the improvement status to in_progress
+5. If a tool fails or doesn't exist, mention <@1512994928769237002> (OpenClaw Lumi) with the error so she can verify and respond
 
 Be thorough but fast. Focus on correctness.`,
 		ChannelID: "1491622581348864162", // manager-room
@@ -169,8 +184,30 @@ func (wh *WakeHandler) Start() error {
 	if err != nil {
 		return fmt.Errorf("subscribe to prism.task.scheduled: %w", err)
 	}
-
 	log.Printf("[WAKE] subscribed to prism.task.scheduled")
+
+	// Subscribe to inter-agent messages from OpenClaw Lumi
+	_, err = wh.natsConn.Subscribe("prism.agent.openclaw", func(msg *nats.Msg) {
+		var am agentMessage
+		if err := json.Unmarshal(msg.Data, &am); err != nil {
+			log.Printf("[WAKE] failed to parse agent message: %v", err)
+			return
+		}
+		am.Timestamp = time.Now()
+		wh.agentMu.Lock()
+		wh.agentMessages = append(wh.agentMessages, am)
+		// Keep last 50 messages
+		if len(wh.agentMessages) > 50 {
+			wh.agentMessages = wh.agentMessages[len(wh.agentMessages)-50:]
+		}
+		wh.agentMu.Unlock()
+		log.Printf("[WAKE] received agent message from %s: %s", am.From, truncate(am.Content, 80))
+	})
+	if err != nil {
+		return fmt.Errorf("subscribe to prism.agent.openclaw: %w", err)
+	}
+	log.Printf("[WAKE] subscribed to prism.agent.openclaw")
+
 	return nil
 }
 
@@ -246,6 +283,32 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 			}
 		}
 	}
+
+	// V33: Inject recent Discord channel messages so the agent sees replies from other agents (e.g. OpenClaw Lumi)
+	// before reporting. This prevents stale duplicate reports and lets agents respond to each other.
+	if wh.bot != nil && actionDef.ChannelID != "" {
+		recent := wh.bot.GetRecentMessages(actionDef.ChannelID, 10)
+		if len(recent) > 0 {
+			systemPrompt += "\n\n## Recent Channel Messages (last 10, oldest-first)\n"
+			systemPrompt += "These are the most recent messages in the Discord channel. Read them BEFORE reporting. If another agent (e.g. OpenClaw Lumi, bot ID 1512994928769237002) has already addressed an issue or corrected information, acknowledge and update your report accordingly. Do NOT re-report issues that have been resolved.\n\n"
+			for _, m := range recent {
+				systemPrompt += fmt.Sprintf("**[%s] %s:** %s\n", m.Timestamp, m.AuthorName, m.Content)
+			}
+			systemPrompt += "\n--- End of recent messages ---\n"
+		}
+	}
+
+	// V33: Inject inter-agent messages received via NATS
+	wh.agentMu.Lock()
+	if len(wh.agentMessages) > 0 {
+		systemPrompt += "\n\n## Direct Messages from OpenClaw Lumi (via NATS)\n"
+		systemPrompt += "These are direct messages from OpenClaw Lumi, not Discord channel messages. Treat them as authoritative updates from your partner agent.\n\n"
+		for _, m := range wh.agentMessages {
+			systemPrompt += fmt.Sprintf("**[%s] %s:** %s\n", m.Timestamp.Format("2006-01-02 15:04"), m.From, m.Content)
+		}
+		systemPrompt += "\n--- End of agent messages ---\n"
+	}
+	wh.agentMu.Unlock()
 
 	// Get the primary agent config
 	var agentCfg *orchestrator.AgentConfig

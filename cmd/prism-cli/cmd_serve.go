@@ -94,6 +94,7 @@ type discordBotClient interface {
 	SendPlaceholder(channelID, content string) (string, error)
 	EditMessage(channelID, messageID, content string) error
 	SelfID() string
+	GetRecentMessages(channelID string, limit int) []discordbot.RecentMessage
 }
 
 // conversationContext holds all the dependencies needed to process a

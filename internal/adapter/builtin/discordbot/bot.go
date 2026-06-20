@@ -260,6 +260,42 @@ func (b *BotAdapter) IsReady() bool {
 	return b.ready
 }
 
+// RecentMessage holds a minimal Discord message snapshot for context injection.
+type RecentMessage struct {
+	AuthorName string
+	AuthorID    string
+	Content     string
+	Timestamp   string
+}
+
+// GetRecentMessages fetches up to limit messages from a Discord channel, oldest-first.
+// It skips messages from the bot itself. Returns an empty slice on error.
+func (b *BotAdapter) GetRecentMessages(channelID string, limit int) []RecentMessage {
+	if b.session == nil {
+		return nil
+	}
+	msgs, err := b.session.ChannelMessages(channelID, limit, "", "", "")
+	if err != nil {
+		log.Printf("[DISCORD] failed to fetch recent messages: %v", err)
+		return nil
+	}
+	// Reverse to oldest-first
+	result := make([]RecentMessage, 0, len(msgs))
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Author.ID == b.SelfID() {
+			continue // skip own messages
+		}
+		result = append(result, RecentMessage{
+			AuthorName: m.Author.Username,
+			AuthorID:   m.Author.ID,
+			Content:    m.Content,
+			Timestamp:  m.Timestamp.Format("2006-01-02 15:04"),
+		})
+	}
+	return result
+}
+
 // SplitMessage splits a long message into chunks at the last newline before
 // maxLen bytes. If there are no newlines, it splits at maxLen without cutting a
 // UTF-8 rune. Exported for testing.
