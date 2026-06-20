@@ -644,6 +644,7 @@ func executeServe(args []string) {
 			planMgr,
 			improveMgr,
 			factoryMon,
+			remClient,
 		)
 		if err := wakeHandler.Start(); err != nil {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
