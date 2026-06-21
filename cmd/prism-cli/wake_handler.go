@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
+	"github.com/emaharmony/prism/internal/agent"
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/factorymonitor"
 	"github.com/emaharmony/prism/internal/improve"
@@ -30,6 +31,7 @@ import (
 	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/state"
+	"github.com/emaharmony/prism/internal/tool"
 	"github.com/nats-io/nats.go"
 )
 
@@ -47,6 +49,8 @@ type WakeHandler struct {
 	improveMgr *improve.Manager
 	factoryMon *factorymonitor.Monitor
 	remClient  *remembrance.Client
+	toolExec   *tool.Executor   // V35: Tool executor for project_work action
+	toolReg    *tool.Registry    // V35: Tool registry for listing tools in prompt
 
 	// agentMessages stores recent inter-agent messages received via NATS.
 	// Accessed under agentMu for concurrent safety.
@@ -170,14 +174,20 @@ Be thorough, proactive, and fast. You are not just a reporter — you are a deve
 2. Search Remembrance for "BassBook" or the project name to find the creative brief and requirements
 3. The creative brief is your instruction set. Follow it.
 
-## How To Work
-1. Read the project repo files using file_read (e.g. /Users/ema/projects/repos/BassBook/)
+## How To Work — TOOL CALLING
+You have real tools available. USE THEM. Do not just describe what you would do — actually DO it.
+1. Use read_file to read project repo files at /Users/ema/projects/repos/BassBook/
 2. Assess current state — what exists, what's missing, what needs improvement
-3. Create a git branch: feature/bb-{feature-name}
-4. Make your changes using file_write
-5. Commit with a clear message
-6. Push to remote
-7. Open a Pull Request with a clear description
+3. Use git_add to stage changes, git_commit to commit, git_push to push
+4. Use write_file_proposal to write code changes (requires approval)
+
+## CRITICAL: Tool Calling Format
+You MUST respond with JSON in one of these shapes:
+- Tool request: {"type": "tool_request", "tool": "read_file", "input": {"path": "/Users/ema/projects/repos/BassBook/apps/web/src/app/globals.css"}}
+- Final response: {"type": "final", "content": "your summary here"}
+
+You may make ONE tool request per response. The system will execute it and give you the result. Then make your next request.
+DO NOT say "Let me read the file" and stop. Actually emit the tool_request JSON.
 
 ## When You Need Direction
 If you have a UX question, visual decision, or creative direction question:
@@ -186,16 +196,16 @@ If you have a UX question, visual decision, or creative direction question:
 - OpenClaw Lumi is your creative director. Ema is the client. Do not bother Ema.
 
 ## Current Assignment
-Check your NATS messages for the latest assignment from OpenClaw Lumi. If there are project assignments, start working on the first task immediately. Do not report that you found assignments — actually work on them.
+Check your NATS messages for the latest assignment from OpenClaw Lumi. If there are project assignments, start working on the first task immediately. Do not report that you found assignments — actually work on them by calling tools.
 
 ## Output Format
-Post your progress to Discord:
+When you are done (or stuck), emit a final response with:
 1. What you're working on
-2. What you've done so far
+2. What you've done so far (list files read/changed)
 3. Any questions for OpenClaw Lumi (tag with <@1512994928769237002>)
 4. Next steps
 
-Be proactive. Do not wait for permission — the assignment IS your permission. Read the brief, start working, and post progress.`,
+Be proactive. Do not wait for permission — the assignment IS your permission. Read files, make changes, commit, push.`,
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 4096,
 	},
@@ -214,6 +224,8 @@ func NewWakeHandler(
 	improveMgr *improve.Manager,
 	factoryMon *factorymonitor.Monitor,
 	remClient *remembrance.Client,
+	toolExec *tool.Executor,
+	toolReg *tool.Registry,
 ) *WakeHandler {
 	return &WakeHandler{
 		cfg:        cfg,
@@ -227,6 +239,8 @@ func NewWakeHandler(
 		improveMgr: improveMgr,
 		factoryMon: factoryMon,
 		remClient:  remClient,
+		toolExec:   toolExec,
+		toolReg:    toolReg,
 	}
 }
 
@@ -458,12 +472,16 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 	// Call the LLM — try ChatProvider first (supports tool calling), fall back to text
 	log.Printf("[WAKE] calling LLM for action %q with model %q", action, model)
 
-	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 5*time.Minute)
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 10*time.Minute)
 	defer cancel()
 
 	var responseContent string
 	var promptTokens, completionTokens int
 
+	// V35: For project_work, use text-based tool calling loop
+	if action == "project_work" && wh.toolExec != nil && wh.toolReg != nil {
+		responseContent, promptTokens, completionTokens = wh.runToolLoopWake(ctx, systemPrompt, userPrompt, model, agentCfg)
+	} else {
 	chatProv, chatErr := wh.providers.GetChatProvider(model)
 	if chatErr == nil {
 		// Use ChatProvider (preferred path — same as Discord serve)
@@ -522,6 +540,7 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 		promptTokens = resp.PromptTokens
 		completionTokens = resp.OutputTokens
 	}
+	} // end else (non-project_work path)
 
 	// Save to session
 	wh.sessMgr.AddMessage(sess.ID, "user", userPrompt, "scheduler")
@@ -753,4 +772,135 @@ func (wh *WakeHandler) notifyPendingApprovals(channelID string) {
 		})
 	}
 	log.Printf("[WAKE] notified %d pending approval plans", len(pendingApproval))
+}
+
+
+// runToolLoopWake runs a text-based tool calling loop for project_work actions.
+// The LLM responds with JSON: {"type": "tool_request", "tool": "...", "input": {...}}
+// or {"type": "final", "content": "..."}.
+// We execute tool requests and feed results back until we get a final response.
+func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig) (string, int, int) {
+	const maxIterations = 10
+
+	// Build tool prompt suffix so the LLM knows how to call tools
+	toolInfos := wh.toolReg.ListWithDescriptions()
+	workspaceRoot := wh.cfg.Prism.Workspace
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+	toolSuffix := agent.BuildToolPromptSuffix(toolInfos, workspaceRoot, "/Users/ema/projects/repos/BassBook")
+	fullSystemPrompt := systemPrompt + toolSuffix
+
+	// Build message history
+	messages := []provider.ChatMessage{
+		{Role: "system", Content: fullSystemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	totalPromptTokens := 0
+	totalCompletionTokens := 0
+
+	chatProv, chatErr := wh.providers.GetChatProvider(model)
+
+	for i := 0; i < maxIterations; i++ {
+		log.Printf("[WAKE-TOOL] project_work iteration %d/%d", i+1, maxIterations)
+
+		var responseText string
+
+		if chatErr == nil {
+			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
+				RunID: fmt.Sprintf("wake-project_work-%d", time.Now().Unix()),
+				Agent: agentCfg.ID,
+				Model: model,
+				Messages: messages,
+				Temperature: 0.7,
+				MaxTokens: 4096,
+			})
+			if err != nil {
+				log.Printf("[WAKE-TOOL] ERROR LLM call failed iteration %d: %v", i+1, err)
+				return fmt.Sprintf("Project work failed at iteration %d: %v", i+1, err), totalPromptTokens, totalCompletionTokens
+			}
+			responseText = resp.Content
+			totalPromptTokens += resp.PromptTokens
+			totalCompletionTokens += resp.OutputTokens
+		} else {
+			// Fall back to text provider
+			prov, provErr := wh.providers.Get(model)
+			if provErr != nil {
+				log.Printf("[WAKE-TOOL] ERROR no provider for model %q: %v", model, provErr)
+				return fmt.Sprintf("Project work failed: no provider for %q", model), totalPromptTokens, totalCompletionTokens
+			}
+			// Build a flat prompt from messages
+			flatPrompt := fullSystemPrompt + "\n\n"
+			for _, m := range messages {
+				if m.Role == "user" {
+					flatPrompt += m.Content + "\n\n"
+				} else if m.Role == "assistant" {
+					flatPrompt += "[Assistant]: " + m.Content + "\n\n"
+				}
+			}
+			resp, err := prov.Generate(ctx, provider.GenerateRequest{
+				RunID:       fmt.Sprintf("wake-project_work-%d-iter%d", time.Now().Unix(), i),
+				Agent:       agentCfg.ID,
+				Model:       model,
+				Prompt:      flatPrompt,
+				Temperature: 0.7,
+				MaxTokens:   4096,
+			})
+			if err != nil {
+				log.Printf("[WAKE-TOOL] ERROR text LLM call failed iteration %d: %v", i+1, err)
+				return fmt.Sprintf("Project work failed at iteration %d: %v", i+1, err), totalPromptTokens, totalCompletionTokens
+			}
+			responseText = resp.Text
+			totalPromptTokens += resp.PromptTokens
+			totalCompletionTokens += resp.OutputTokens
+		}
+
+		// Parse the response
+		parsed := agent.ParseAgentOutput(responseText)
+
+		if parsed.Type == agent.ResponseFinal {
+			log.Printf("[WAKE-TOOL] final response at iteration %d", i+1)
+			return parsed.Content, totalPromptTokens, totalCompletionTokens
+		}
+
+		if parsed.Type == agent.ResponseToolRequest {
+			log.Printf("[WAKE-TOOL] tool request: %s", parsed.ToolName)
+
+			// Execute the tool
+			result, err := wh.toolExec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", fmt.Sprintf("wake-project_work-%d", time.Now().Unix()), parsed.ToolInput)
+			if err != nil {
+				log.Printf("[WAKE-TOOL] tool %s failed: %v", parsed.ToolName, err)
+				// Feed error back to LLM
+				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+				messages = append(messages, provider.ChatMessage{
+					Role: "user",
+					Content: fmt.Sprintf("Tool %q failed: %v. Please try a different approach or provide your final answer.", parsed.ToolName, err),
+				})
+				continue
+			}
+
+			// Format tool result from Output map
+			resultStr := fmt.Sprintf("Tool %q result:\n%v", parsed.ToolName, result.Output)
+			if result.Error != "" {
+				resultStr = fmt.Sprintf("Tool %q error: %s", parsed.ToolName, result.Error)
+			}
+			log.Printf("[WAKE-TOOL] tool %s succeeded: %s", parsed.ToolName, truncateStr(resultStr, 100))
+
+			// Feed result back to LLM
+			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+			messages = append(messages, provider.ChatMessage{
+				Role: "user",
+				Content: resultStr,
+			})
+			continue
+		}
+
+		// Unknown response type — treat as final
+		return responseText, totalPromptTokens, totalCompletionTokens
+	}
+
+	// Max iterations reached
+	log.Printf("[WAKE-TOOL] max iterations reached, returning last response")
+	return "Project work cycle reached max iterations. See logs for details.", totalPromptTokens, totalCompletionTokens
 }
