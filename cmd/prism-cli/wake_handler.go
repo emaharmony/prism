@@ -179,7 +179,7 @@ You have real tools available. USE THEM. Do not just describe what you would do 
 1. Use read_file to read project repo files at /Users/ema/projects/repos/BassBook/
 2. Assess current state — what exists, what's missing, what needs improvement
 3. Use git_add to stage changes, git_commit to commit, git_push to push
-4. Use write_file_proposal to write code changes (requires approval)
+4. Use write_file to write code changes directly (auto-approved in autonomous mode)
 
 ## CRITICAL: Tool Calling Format
 You MUST respond with JSON in one of these shapes:
@@ -478,9 +478,19 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 	var responseContent string
 	var promptTokens, completionTokens int
 
-	// V35: For project_work, use text-based tool calling loop
-	if action == "project_work" && wh.toolExec != nil && wh.toolReg != nil {
-		responseContent, promptTokens, completionTokens = wh.runToolLoopWake(ctx, systemPrompt, userPrompt, model, agentCfg)
+	// V35: For project_work, use text-based tool calling loop with auto-approve
+	if (action == "project_work" || action == "auto_patch") && wh.toolExec != nil && wh.toolReg != nil {
+		// Create an auto-approving executor for autonomous wake actions
+		autoPolicy := wh.toolExec.Policy
+		autoPolicy.AutoApproveMutations = true
+		autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
+		if wh.toolExec.Emit != nil {
+			autoExec.SetEmitter(wh.toolExec.Emit)
+		}
+		if wh.toolExec.ApprovalStore != nil {
+			autoExec.SetApprovalStore(wh.toolExec.ApprovalStore)
+		}
+		responseContent, promptTokens, completionTokens = wh.runToolLoopWake(ctx, systemPrompt, userPrompt, model, agentCfg, autoExec)
 	} else {
 	chatProv, chatErr := wh.providers.GetChatProvider(model)
 	if chatErr == nil {
@@ -779,7 +789,7 @@ func (wh *WakeHandler) notifyPendingApprovals(channelID string) {
 // The LLM responds with JSON: {"type": "tool_request", "tool": "...", "input": {...}}
 // or {"type": "final", "content": "..."}.
 // We execute tool requests and feed results back until we get a final response.
-func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig) (string, int, int) {
+func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
 	const maxIterations = 10
 
 	// Build tool prompt suffix so the LLM knows how to call tools
@@ -868,7 +878,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			log.Printf("[WAKE-TOOL] tool request: %s", parsed.ToolName)
 
 			// Execute the tool
-			result, err := wh.toolExec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", fmt.Sprintf("wake-project_work-%d", time.Now().Unix()), parsed.ToolInput)
+			result, err := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", fmt.Sprintf("wake-project_work-%d", time.Now().Unix()), parsed.ToolInput)
 			if err != nil {
 				log.Printf("[WAKE-TOOL] tool %s failed: %v", parsed.ToolName, err)
 				// Feed error back to LLM

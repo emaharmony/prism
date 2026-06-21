@@ -51,6 +51,10 @@ type PolicyConfig struct {
 	OrchestratorAgentID string
 	// WriteAgents explicitly allows extra agents to request mutation proposals.
 	WriteAgents map[string]bool
+	// AutoApproveMutations skips the approval gate for mutation tools
+	// (write_file_proposal, git_add, git_commit, git_push). Used by
+	// autonomous wake handler actions where no human is present to approve.
+	AutoApproveMutations bool
 }
 
 // DefaultPolicyConfig returns a PolicyConfig with sensible defaults.
@@ -146,12 +150,18 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
 			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose file mutations; route write requests through the orchestrator", agentID)}
 		}
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: mutation tools approved for autonomous wake action"}
+		}
 		return evaluateV4ProposalPolicy(cfg, toolName, input)
 
 	case "apply_patch_proposal":
 		return PolicyResult{Decision: PolicyDenied, Reason: "apply_patch_proposal is not implemented (V5 candidate)"}
 
 	case "write_file":
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct write approved for autonomous wake action"}
+		}
 		return PolicyResult{Decision: PolicyDenied, Reason: "direct write_file is denied — use write_file_proposal for approval-gated mutations"}
 
 	case "list_dir":
@@ -177,6 +187,9 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "git_add", "git_commit", "git_push":
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
 			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose git mutations; route write requests through the orchestrator", agentID)}
+		}
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: git mutation approved for autonomous wake action"}
 		}
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s is a git mutation, requires approval", toolName)}
 
