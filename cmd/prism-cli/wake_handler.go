@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -584,6 +586,11 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 			Content:   content,
 		})
 		log.Printf("[WAKE] sent %s result to Discord channel %s", action, actionDef.ChannelID)
+
+		// V35c: Write run summary to runs/ directory for dashboard visibility
+		if action == "project_work" || action == "auto_patch" {
+			wh.writeRunSummary(action, agentCfg.ID, responseContent, promptTokens, completionTokens)
+		}
 	}
 
 	// V32: After sending result, check for plans that need approval and notify Ema
@@ -803,6 +810,88 @@ func (wh *WakeHandler) notifyPendingApprovals(channelID string) {
 	log.Printf("[WAKE] notified %d pending approval plans", len(pendingApproval))
 }
 
+// writeRunSummary writes a run summary to the runs/ directory so the V11 dashboard
+// can display wake handler actions. Creates a run directory with summary.json,
+// events.jsonl, and projections/run_status.json.
+func (wh *WakeHandler) writeRunSummary(action, agent, content string, promptTokens, completionTokens int) {
+	runDir := wh.cfg.Prism.Workspace
+	if runDir == "" {
+		runDir = "."
+	}
+	runsDir := filepath.Join(runDir, "runs")
+
+	// Generate run ID from timestamp
+	runID := fmt.Sprintf("wake_%s_%d", action, time.Now().Unix())
+	runPath := filepath.Join(runsDir, runID)
+
+	// Create directory structure
+	if err := os.MkdirAll(filepath.Join(runPath, "projections"), 0755); err != nil {
+		log.Printf("[WAKE] failed to create run dir: %v", err)
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Write summary.json
+	summary := map[string]any{
+		"run_id":      runID,
+		"status":      "completed",
+		"agent":       agent,
+		"project":     "bassbook",
+		"task":        fmt.Sprintf("Scheduled action: %s", action),
+		"started_at":  now,
+		"completed_at": now,
+		"event_count": 1,
+		"output":      content,
+		"prompt_tokens": promptTokens,
+		"completion_tokens": completionTokens,
+	}
+	summaryData, _ := json.MarshalIndent(summary, "", "  ")
+	if err := os.WriteFile(filepath.Join(runPath, "summary.json"), summaryData, 0644); err != nil {
+		log.Printf("[WAKE] failed to write summary.json: %v", err)
+		return
+	}
+
+	// Write projections/run_status.json
+	projData := map[string]any{
+		"agent":        agent,
+		"completed_at": now,
+		"started_at":   now,
+		"status":       "completed",
+		"project":      "bassbook",
+		"task":         fmt.Sprintf("Scheduled action: %s", action),
+		"error":        "",
+		"duration_ms":  0,
+	}
+	projJSON, _ := json.MarshalIndent(projData, "", "  ")
+	os.WriteFile(filepath.Join(runPath, "projections", "run_status.json"), projJSON, 0644)
+
+	// Write events.jsonl with a single event
+	event := map[string]any{
+		"id":        fmt.Sprintf("evt_%d", time.Now().UnixNano()),
+		"type":      "prism.wake.completed",
+		"source":    "wake-handler",
+		"timestamp": now,
+		"payload": map[string]any{
+			"action":            action,
+			"agent":             agent,
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+			"output_length":     len(content),
+		},
+		"metadata": map[string]any{
+			"run_id": runID,
+		},
+	}
+	eventJSON, _ := json.Marshal(event)
+	eventJSON = append(eventJSON, '\n')
+	os.WriteFile(filepath.Join(runPath, "events.jsonl"), eventJSON, 0644)
+
+	// Write output.md
+	os.WriteFile(filepath.Join(runPath, "output.md"), []byte(content), 0644)
+
+	log.Printf("[WAKE] wrote run summary to %s", runPath)
+}
 
 // runToolLoopWake runs a text-based tool calling loop for project_work actions.
 // The LLM responds with JSON: {"type": "tool_request", "tool": "...", "input": {...}}
