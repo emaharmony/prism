@@ -1,0 +1,211 @@
+# Natural Gates Workflow: Default Project Work
+# This is the default workflow used by the project_work wake action.
+# Copy and customize for different project types.
+
+name: natural-gates-project-work
+version: 1
+description: "7-phase natural gates workflow for autonomous project work"
+
+global:
+  max_total_iterations: 60
+  max_total_time: "4h"
+  state_persistence_dir: "runs/natural-gates"
+  event_emission: true
+
+# Confidence domains tracked during RESEARCH phase
+confidence_domains:
+  - codebase_understanding
+  - requirements_clarity
+  - approach_viability
+  - tool_capability
+  - dependency_health
+  - test_coverage
+  - edge_case_awareness
+
+# Fast path: low-risk tasks skip PROBE and RESEARCH
+fast_path:
+  enabled: true
+  risk_levels: ["low"]
+  skip_phases: ["PROBE", "RESEARCH"]
+
+# Agent registry
+agents:
+  - name: prism
+    role: implementation
+    capabilities: [write_code, git_operations, file_operations, code_review]
+    provider: ollama
+    model: glm-5.2:cloud
+    availability: online
+  - name: mango
+    role: implementation-review
+    capabilities: [write_code, data_structuring, complex_computation, code_review, test_writing]
+    provider: openclaw-subagent
+    model: deepseek-v4-pro:cloud
+    availability: online
+  - name: junie
+    role: implementation
+    capabilities: [write_code, refactoring, test_writing, debugging]
+    provider: openclaw-subagent
+    model: glm-5.2:cloud
+    availability: online
+  - name: lumi
+    role: architect-reviewer
+    capabilities: [architecture_design, code_review, creative_direction, plan_approval, agent_orchestration]
+    provider: openclaw
+    model: deepseek-v4-pro:cloud
+    availability: online
+
+# Phase definitions in execution order
+phases:
+  - name: PROBE
+    type: probe
+    description: "Reduce assumptions by asking questions and searching"
+    max_iterations: 10
+    allowed_tools:
+      - read_file
+      - list_dir
+      - search_files
+      - project_overview
+      - git_status
+      - git_log
+      - git_branch_list
+      - remembrance_search
+      - web_search
+      - nats_query
+    gate:
+      type: assumption_threshold
+      threshold: 2.0
+      weights:
+        blocker: 4.0
+        high: 2.0
+        medium: 1.0
+        low: 0.5
+    fallback:
+      on_max_iterations: proceed_with_warning
+      blocks: false
+
+  - name: RESEARCH
+    type: research
+    description: "Increase confidence by actively searching multiple sources"
+    max_iterations: 12
+    allowed_tools:
+      - read_file
+      - list_dir
+      - search_files
+      - project_overview
+      - web_search
+      - remembrance_search
+      - git_log
+      - git_diff
+      - nats_query
+    gate:
+      type: confidence_threshold
+      threshold: 0.7
+      domains:
+        - codebase_understanding
+        - requirements_clarity
+        - approach_viability
+        - tool_capability
+        - dependency_health
+        - test_coverage
+        - edge_case_awareness
+    fallback:
+      on_max_iterations: proceed_with_low_confidence_flag
+      blocks: false
+
+  - name: PLAN
+    type: plan
+    description: "Create structured plan with resource assignments"
+    max_iterations: 8
+    allowed_tools:
+      - read_file
+      - write_file
+      - list_dir
+      - search_files
+      - remembrance_search
+      - nats_query
+      - agent_list
+      - agent_create
+    gate:
+      type: plan_completeness
+      threshold: 0.9
+      weights:
+        tasks_identified: 0.3
+        resources_assigned: 0.3
+        dependencies_ordered: 0.2
+        success_criteria: 0.1
+        risk_mitigation: 0.1
+    fallback:
+      on_max_iterations: proceed_with_partial_plan
+      blocks: false
+
+  - name: FEEDBACK_PRE
+    type: feedback_pre
+    description: "Get plan approval before execution"
+    max_iterations: 1
+    allowed_tools:
+      - read_file
+    gate:
+      type: approval
+      approvers: [lumi, ema]
+      mode: require_any
+    fallback:
+      on_max_iterations: timeout
+      blocks: true
+
+  - name: EXECUTION
+    type: execution
+    description: "Execute the approved plan with V36 enforcement"
+    max_iterations: 30
+    allowed_tools:
+      - read_file
+      - write_file
+      - list_dir
+      - search_files
+      - git_status
+      - git_log
+      - git_diff
+      - git_add
+      - git_commit
+      - git_push
+      - git_branch_list
+      - project_overview
+      - nats_delegate
+      - nats_query
+    gate:
+      type: task_completion
+      mode: all_tasks
+    fallback:
+      on_max_iterations: proceed_with_partial_completion
+      blocks: false
+
+  - name: FEEDBACK_POST
+    type: feedback_post
+    description: "Post-execution review by Lumi and Mango"
+    max_iterations: 1
+    allowed_tools:
+      - read_file
+      - git_diff
+      - git_log
+      - nats_query
+    gate:
+      type: review_pass
+      required_reviewers: [mango, lumi]
+      max_warn: 2
+    fallback:
+      on_max_iterations: timeout
+      blocks: true
+
+  - name: REPORT
+    type: report
+    description: "Final report with proof of work"
+    max_iterations: 3
+    allowed_tools:
+      - read_file
+      - git_log
+      - git_status
+    gate:
+      type: report_completeness
+    fallback:
+      on_max_iterations: auto_generate
+      blocks: false
