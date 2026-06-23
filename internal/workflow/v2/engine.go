@@ -84,6 +84,20 @@ type ExternalEvent struct {
 	Data          map[string]any
 }
 
+// NewEngineWithState creates an engine with an existing workflow state (for resumption).
+func NewEngineWithState(config *WorkflowConfig, state *WorkflowState, emitter EventEmitter, delegation *DelegationManager) *Engine {
+	e := NewEngine(config, emitter, delegation)
+	e.state = state
+	// Set the current phase index based on the state's current phase
+	for i, phase := range e.phases {
+		if phase.Name() == state.CurrentPhase() {
+			e.state.CurrentPhaseIdx = i
+			break
+		}
+	}
+	return e
+}
+
 // NewEngine creates a new Natural Gates workflow engine.
 func NewEngine(config *WorkflowConfig, emitter EventEmitter, delegation *DelegationManager) *Engine {
 	e := &Engine{
