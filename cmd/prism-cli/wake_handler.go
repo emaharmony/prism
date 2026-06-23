@@ -1227,6 +1227,18 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			result, err := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", fmt.Sprintf("wake-project_work-%d", time.Now().Unix()), parsed.ToolInput)
 			if err != nil {
 				log.Printf("[WAKE-TOOL] tool %s failed: %v", parsed.ToolName, err)
+				// V36: Edge case fix (Mango review) — if git_commit fails because nothing to commit,
+				// treat as committed (files were already committed or no changes needed)
+				if parsed.ToolName == "git_commit" && (strings.Contains(err.Error(), "nothing to commit") || strings.Contains(err.Error(), "no changes")) {
+					state.committed = true
+					log.Printf("[WAKE-TOOL] git_commit 'nothing to commit' — treating as committed")
+					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+					messages = append(messages, provider.ChatMessage{
+						Role: "user",
+						Content: "Commit succeeded (nothing to commit — changes were already staged). Proceed to git_push.",
+					})
+					continue
+				}
 				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 				messages = append(messages, provider.ChatMessage{
 					Role: "user",
