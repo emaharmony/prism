@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
+	"github.com/emaharmony/prism/internal/workflow/v2"
 	"github.com/emaharmony/prism/internal/agent"
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/factorymonitor"
@@ -497,9 +498,21 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 	var responseContent string
 	var promptTokens, completionTokens int
 
-	// V35: For project_work, use text-based tool calling loop with auto-approve
-	if (action == "project_work" || action == "auto_patch") && wh.toolExec != nil && wh.toolReg != nil {
+	// V36: For project_work, use the V2 Natural Gates Workflow System
+	if action == "project_work" && wh.toolExec != nil && wh.toolReg != nil {
 		// Create an auto-approving executor for autonomous wake actions
+		autoPolicy := wh.toolExec.Policy
+		autoPolicy.AutoApproveMutations = true
+		autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
+		if wh.toolExec.Emit != nil {
+			autoExec.SetEmitter(wh.toolExec.Emit)
+		}
+		if wh.toolExec.ApprovalStore != nil {
+			autoExec.SetApprovalStore(wh.toolExec.ApprovalStore)
+		}
+		responseContent, promptTokens, completionTokens = wh.runNaturalGatesWorkflow(ctx, systemPrompt, userPrompt, model, agentCfg, autoExec)
+	} else if action == "auto_patch" && wh.toolExec != nil && wh.toolReg != nil {
+		// auto_patch still uses V36 tool loop
 		autoPolicy := wh.toolExec.Policy
 		autoPolicy.AutoApproveMutations = true
 		autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
@@ -846,6 +859,19 @@ func cleanForDiscord(text string) string {
 		text = strings.TrimSpace(text)
 	}
 	return strings.TrimSpace(text)
+}
+
+// postToDiscord posts a message to the manager-room channel.
+func (wh *WakeHandler) postToDiscord(message string) {
+	if wh.bot == nil {
+		log.Printf("[V2-NATURAL-GATES] no bot, cannot post to Discord")
+		return
+	}
+	channelID := "1491622581348864162" // manager-room
+	wh.bot.Send(&discordbot.OutboundMessage{
+		ChannelID: channelID,
+		Content:  message,
+	})
 }
 
 // writeRunSummary writes a run summary to the runs/ directory so the V11 dashboard
@@ -1415,4 +1441,340 @@ func simpleHash(s string) string {
 		h = h*31 + int(c)
 	}
 	return fmt.Sprintf("%d", h)
+}
+
+
+// runNaturalGatesWorkflow runs the V2 Natural Gates Workflow System for project_work.
+// This is the primary workflow engine — it handles all 7 phases with natural gates,
+// multi-agent delegation, feedback checkpoints, and resumability.
+func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
+	log.Printf("[V2-NATURAL-GATES] starting workflow for agent %s", agentCfg.ID)
+
+	// Load or create workflow config
+	config := v2.DefaultConfig()
+
+	// Check for existing workflow state (resumability)
+	stateDir := "/Users/ema/projects/repos/prism/runs/natural-gates"
+	existingState, err := v2.LoadCurrentWorkflowState(stateDir)
+	if err == nil && existingState != nil && existingState.Status == v2.StatusPaused {
+		log.Printf("[V2-NATURAL-GATES] resuming paused workflow %s at phase %s", existingState.RunID, existingState.CurrentPhase())
+		// Resume — create engine with existing state
+		engine := v2.NewEngineWithState(config, existingState, &v2.LogEmitter{}, nil)
+		// Run the resumed workflow
+		state, err := engine.Run(ctx)
+		if err != nil {
+			log.Printf("[V2-NATURAL-GATES] resumed workflow error: %v", err)
+			return fmt.Sprintf("Workflow resumed but encountered error: %v", err), 0, 0
+		}
+		return formatWorkflowReport(state), state.GetTotalPromptTokens(), state.GetTotalCompletionTokens()
+	}
+
+	// Start new workflow
+	runID := fmt.Sprintf("ng-%d", time.Now().Unix())
+	state := v2.NewWorkflowState(config)
+	state.RunID = runID
+	state.CorrelationID = runID
+
+	// Create delegation manager
+	delegation := v2.NewDelegationManager("prism.agent.openclaw", "prism.workflow.task.complete")
+
+	// Create engine
+	emitter := &v2.LogEmitter{}
+	engine := v2.NewEngineWithState(config, state, emitter, delegation)
+
+	// Register gates for each phase
+	for _, phaseCfg := range config.Phases {
+		gate := v2.NewGateFromConfig(phaseCfg.Gate)
+		engine.RegisterGate(phaseCfg.Name, gate)
+	}
+
+	// Auto-save goroutine
+	stopSave := make(chan struct{})
+	defer close(stopSave)
+	go v2.AutoSave(state, stateDir, 30*time.Second, stopSave)
+
+	// Run the workflow
+	// The engine handles phase transitions, gate checks, and delegation.
+	// The LLM interaction loop is handled by the engine through ProcessLLMResponse.
+	// We need to drive the LLM calls here.
+
+	totalPromptTokens := 0
+	totalCompletionTokens := 0
+
+	chatProv, chatErr := wh.providers.GetChatProvider(model)
+
+	// Build the natural gates system prompt
+	naturalGatesPrompt := buildNaturalGatesPrompt(config, userPrompt)
+	messages := []provider.ChatMessage{
+		{Role: "system", Content: naturalGatesPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+
+	// Main interaction loop
+	for {
+		phaseName := state.CurrentPhase()
+		if phaseName == "" {
+			break
+		}
+
+		// Check if workflow is paused (feedback gates)
+		if state.Status == v2.StatusPaused {
+			log.Printf("[V2-NATURAL-GATES] workflow paused at phase %s: %s", phaseName, state.PauseReason)
+
+			// Post to Discord for feedback
+			if phaseName == "FEEDBACK_PRE" {
+				planMessage := v2.FormatPlanForApproval(state)
+				wh.postToDiscord(planMessage)
+			} else if phaseName == "FEEDBACK_POST" {
+				diffOutput := wh.getGitDiff()
+				reviewMessage := v2.FormatReviewPackage(state, diffOutput)
+				wh.postToDiscord(reviewMessage)
+			}
+
+			// Save state and return — next wake cycle will resume
+			v2.SaveCurrentWorkflowState(state, stateDir)
+			return fmt.Sprintf("Workflow paused at %s phase: %s. State saved for resumption.", phaseName, state.PauseReason), totalPromptTokens, totalCompletionTokens
+		}
+
+		// Get system messages to inject (gate feedback)
+		sysMsgs := state.GetSystemMessages(phaseName)
+		for _, msg := range sysMsgs {
+			messages = append(messages, provider.ChatMessage{Role: "system", Content: msg})
+		}
+
+		// Call LLM
+		var responseText string
+		if chatErr == nil {
+			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
+				RunID:       fmt.Sprintf("wake-natural-gates-%d", time.Now().Unix()),
+				Agent:       agentCfg.ID,
+				Model:       model,
+				Messages:    messages,
+				Temperature: 0.7,
+				MaxTokens:   4096,
+			})
+			if err != nil {
+				log.Printf("[V2-NATURAL-GATES] LLM error: %v", err)
+				return fmt.Sprintf("Workflow failed: %v", err), totalPromptTokens, totalCompletionTokens
+			}
+			responseText = resp.Content
+			totalPromptTokens += resp.PromptTokens
+			totalCompletionTokens += resp.OutputTokens
+		} else {
+			// Text provider fallback
+			prov, provErr := wh.providers.Get(model)
+			if provErr != nil {
+				return fmt.Sprintf("Workflow failed: no provider for %q", model), totalPromptTokens, totalCompletionTokens
+			}
+			flatPrompt := naturalGatesPrompt + "\n\n"
+			for _, m := range messages {
+				if m.Role == "user" {
+					flatPrompt += m.Content + "\n\n"
+				}
+			}
+			resp, err := prov.Generate(ctx, provider.GenerateRequest{
+				RunID:       fmt.Sprintf("wake-natural-gates-%d", time.Now().Unix()),
+				Agent:       agentCfg.ID,
+				Model:       model,
+				Prompt:      flatPrompt,
+				Temperature: 0.7,
+				MaxTokens:   4096,
+			})
+			if err != nil {
+				return fmt.Sprintf("Workflow failed: %v", err), totalPromptTokens, totalCompletionTokens
+			}
+			responseText = resp.Text
+			totalPromptTokens += resp.PromptTokens
+			totalCompletionTokens += resp.OutputTokens
+		}
+
+		// Process the LLM response through the V2 engine
+		action, err := engine.ProcessLLMResponse(responseText)
+		if err != nil {
+			log.Printf("[V2-NATURAL-GATES] process error: %v", err)
+		}
+
+		switch action.Type {
+		case v2.ActionToolCall:
+			if action.ToolRequest != nil {
+				// Execute the tool
+				result, execErr := exec.ExecuteWithPolicy(ctx, action.ToolRequest.Tool, agentCfg.ID, "bassbook", runID, action.ToolRequest.Input)
+				if execErr != nil {
+					resultStr := fmt.Sprintf("Tool %q failed: %v", action.ToolRequest.Tool, execErr)
+					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
+				} else {
+					resultStr := fmt.Sprintf("Tool %q result:\n%v", action.ToolRequest.Tool, result.Output)
+					if result.Error != "" {
+						resultStr = fmt.Sprintf("Tool %q error: %s", action.ToolRequest.Tool, result.Error)
+					}
+					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
+				}
+			}
+		case v2.ActionPhaseComplete:
+			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+			messages = append(messages, provider.ChatMessage{Role: "system", Content: "Phase complete. Transitioning to next phase."})
+		case v2.ActionFinal:
+			v2.SaveCurrentWorkflowState(state, stateDir)
+			return action.FinalContent, totalPromptTokens, totalCompletionTokens
+		case v2.ActionWaitExternal:
+			// Workflow needs to pause for external input (feedback gate)
+			v2.SaveCurrentWorkflowState(state, stateDir)
+			return fmt.Sprintf("Workflow paused at %s phase waiting for feedback. State saved.", phaseName), totalPromptTokens, totalCompletionTokens
+		}
+
+		// Check if workflow is done
+		if state.Status == v2.StatusCompleted {
+			v2.SaveCurrentWorkflowState(state, stateDir)
+			report := v2.FormatFinalReport(state)
+			wh.postToDiscord(report)
+			return report, totalPromptTokens, totalCompletionTokens
+		}
+		if state.Status == v2.StatusBlocked {
+			v2.SaveCurrentWorkflowState(state, stateDir)
+			return fmt.Sprintf("Workflow blocked at phase %s. State saved for review.", phaseName), totalPromptTokens, totalCompletionTokens
+		}
+	}
+
+	v2.SaveCurrentWorkflowState(state, stateDir)
+	return formatWorkflowReport(state), totalPromptTokens, totalCompletionTokens
+}
+
+// buildNaturalGatesPrompt creates the system prompt for the Natural Gates workflow.
+func buildNaturalGatesPrompt(config *v2.WorkflowConfig, userPrompt string) string {
+	return fmt.Sprintf(`You are the project work agent running the Natural Gates Workflow System.
+
+## How Natural Gates Work
+
+You operate in 7 phases. Each phase has a NATURAL GATE — a real condition that must be met before you can move to the next phase. The system tracks your assumptions and confidence as structured state. You cannot skip phases.
+
+## The 7 Phases
+
+### 1. PROBE — Reduce Assumptions
+Identify what you don't know. Declare each assumption:
+ASSUMPTION: {statement} | confidence: {0.0-1.0} | criticality: {blocker|high|medium|low}
+
+Ask questions via Discord or NATS. Search Remembrance for answers. The gate opens when your weighted assumption score drops below 2.0.
+Signal completion: PROBE_COMPLETE
+
+### 2. RESEARCH — Increase Confidence
+Search multiple sources (web, memory, codebase, agents). Declare confidence:
+CONFIDENCE: {domain} | {0.0-1.0} | reason: {why}
+
+Domains: codebase_understanding, requirements_clarity, approach_viability, tool_capability, dependency_health, test_coverage, edge_case_awareness
+Gate: ALL domains must be >= 0.7 (weakest-link principle).
+Signal completion: RESEARCH_COMPLETE
+
+### 3. PLAN — Create Structured Plan with Resource Delegation
+Break work into tasks. Assign each to an agent. Declare tasks:
+TASK: {id} | description: {what} | agent: {prism|mango|junie|lumi} | depends_on: [{ids}] | success: {criteria}
+
+Gate: plan completeness >= 0.9 (all tasks identified, assigned, with success criteria).
+Signal completion: PLAN_COMPLETE
+
+### 4. FEEDBACK_PRE — Plan Approval (Workflow Pauses)
+Your plan is posted to Discord for Lumi/Ema to review. The workflow PAUSES until approved.
+- Low/medium risk: Lumi approval only
+- High risk: Lumi AND Ema approval required
+If changes requested: revise plan and re-submit.
+
+### 5. EXECUTION — Run the Plan
+Execute your tasks. V36 enforcement applies:
+- Branch protection: writes blocked on main/master
+- Commit-push gate: can't finish until committed AND pushed
+- Self-review: system auto-injects git diff before commit
+Signal completion: EXECUTION_COMPLETE
+
+### 6. FEEDBACK_POST — Post-Execution Review (Workflow Pauses)
+Your work is reviewed by Lumi AND Mango. Mango is ALWAYS required.
+6 review dimensions: code_quality, task_completion, regression_check, test_coverage, documentation, git_hygiene
+If issues found: fix and re-submit. Max 3 review cycles.
+
+### 7. REPORT — Final Report with Proof
+Include all 5 sections:
+## Change Summary
+## Proof of Work (file paths, commit hashes, PR URLs)
+## Impact
+## Next Steps
+## Learnings
+Signal completion: REPORT_COMPLETE
+
+## Response Format
+Every response MUST be PURE JSON:
+- Tool request: {"type":"tool_request","tool":"tool_name","input":{"key":"value"}}
+- Final response: {"type":"final","content":"your summary"}
+
+You can also include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and phase-complete signals (PROBE_COMPLETE, etc.) in your response text before the JSON.
+
+## Current Task
+%s
+
+## Important Rules
+- DO NOT ask Ema for anything. Ask Lumi (<@1512994928769237002>) for creative direction.
+- The system assigns your task from PROJECT_STATE.md — do not choose your own.
+- The system tracks your assumptions and confidence — declare them honestly.
+- The system pauses at feedback gates — work stops until approval arrives.
+- Mango MUST review your work — this is not optional.
+`, userPrompt)
+}
+
+// formatWorkflowReport creates a human-readable report from workflow state.
+func formatWorkflowReport(state *v2.WorkflowState) string {
+	report := fmt.Sprintf("## Natural Gates Workflow Report\n\n")
+	report += fmt.Sprintf("**Status:** %s\n", state.Status)
+	report += fmt.Sprintf("**Run ID:** %s\n\n", state.RunID)
+
+	// Phase summary
+	report += "### Phase Summary\n"
+	for _, phaseCfg := range v2.DefaultConfig().Phases {
+		if ps, ok := state.PhaseStates[phaseCfg.Name]; ok {
+			status := string(ps.Status)
+			if ps.GateResult != nil && ps.GateResult.Passed {
+				status += fmt.Sprintf(" (score: %.2f)", ps.GateResult.Score)
+			}
+			report += fmt.Sprintf("- %s: %s (%d iterations)\n", phaseCfg.Name, status, ps.Iterations)
+		}
+	}
+
+	// Assumptions
+	if len(state.Assumptions) > 0 {
+		report += "\n### Assumptions\n"
+		for _, a := range state.Assumptions {
+			status := a.Status
+			if status == "addressed" {
+				status = "✅ resolved"
+			}
+			report += fmt.Sprintf("- %s [%s, conf: %.1f]: %s — %s\n", a.ID, a.Criticality, a.Confidence, a.Statement, status)
+		}
+	}
+
+	// Confidence
+	report += "\n### Confidence Matrix\n"
+	for domain, cd := range state.ConfidenceMatrix {
+		report += fmt.Sprintf("- %s: %.2f\n", domain, cd.Score)
+	}
+
+	// Plan
+	if state.Plan != nil && len(state.Plan.Tasks) > 0 {
+		report += "\n### Plan\n"
+		for _, task := range state.Plan.Tasks {
+			report += fmt.Sprintf("- %s [%s] → %s (%s)\n", task.ID, task.Agent, task.Description, task.Status)
+		}
+	}
+
+	// Feedback
+	if state.Feedback != nil {
+		if state.Feedback.PreExecution != nil {
+			report += fmt.Sprintf("\n### Pre-Execution Feedback: %s\n", state.Feedback.PreExecution.Status)
+		}
+		if state.Feedback.PostExecution != nil {
+			report += "\n### Post-Execution Review\n"
+			for reviewer, rs := range state.Feedback.PostExecution.Reviewers {
+				report += fmt.Sprintf("- %s: %s\n", reviewer, rs.Status)
+			}
+		}
+	}
+
+	return report
 }
