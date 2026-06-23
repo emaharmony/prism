@@ -49,6 +49,8 @@ type WorkflowState struct {
 	Report        *ReportState             `json:"report,omitempty"`
 	SystemMessages map[string][]string      `json:"system_messages,omitempty"` // messages to inject per phase
 	AgentRegistry map[string]*AgentInfo    `json:"agent_registry,omitempty"`
+	TotalPromptTokens     int                    `json:"total_prompt_tokens,omitempty"`
+	TotalCompletionTokens int                    `json:"total_completion_tokens,omitempty"`
 	StartedAt     string                   `json:"started_at"`
 	UpdatedAt     string                   `json:"updated_at"`
 	CompletedAt   string                   `json:"completed_at,omitempty"`
@@ -470,4 +472,26 @@ func (s *WorkflowState) GetSystemMessages(phaseName string) []string {
 	msgs := s.SystemMessages[phaseName]
 	s.SystemMessages[phaseName] = make([]string, 0)
 	return msgs
+}
+
+// GetTotalPromptTokens returns the total prompt tokens used.
+func (s *WorkflowState) GetTotalPromptTokens() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.TotalPromptTokens
+}
+
+// GetTotalCompletionTokens returns the total completion tokens used.
+func (s *WorkflowState) GetTotalCompletionTokens() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.TotalCompletionTokens
+}
+
+// AddTokens adds to the token counters.
+func (s *WorkflowState) AddTokens(prompt, completion int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.TotalPromptTokens += prompt
+	s.TotalCompletionTokens += completion
 }
