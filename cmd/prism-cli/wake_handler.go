@@ -861,6 +861,19 @@ func cleanForDiscord(text string) string {
 	return strings.TrimSpace(text)
 }
 
+// postToDiscord posts a message to the manager-room channel.
+func (wh *WakeHandler) postToDiscord(message string) {
+	if wh.bot == nil {
+		log.Printf("[V2-NATURAL-GATES] no bot, cannot post to Discord")
+		return
+	}
+	channelID := "1491622581348864162" // manager-room
+	wh.bot.Send(&discordbot.OutboundMessage{
+		ChannelID: channelID,
+		Content:  message,
+	})
+}
+
 // writeRunSummary writes a run summary to the runs/ directory so the V11 dashboard
 // can display wake handler actions. Creates a run directory with summary.json,
 // events.jsonl, and projections/run_status.json.
@@ -1507,6 +1520,17 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 		// Check if workflow is paused (feedback gates)
 		if state.Status == v2.StatusPaused {
 			log.Printf("[V2-NATURAL-GATES] workflow paused at phase %s: %s", phaseName, state.PauseReason)
+
+			// Post to Discord for feedback
+			if phaseName == "FEEDBACK_PRE" {
+				planMessage := v2.FormatPlanForApproval(state)
+				wh.postToDiscord(planMessage)
+			} else if phaseName == "FEEDBACK_POST" {
+				diffOutput := wh.getGitDiff()
+				reviewMessage := v2.FormatReviewPackage(state, diffOutput)
+				wh.postToDiscord(reviewMessage)
+			}
+
 			// Save state and return — next wake cycle will resume
 			v2.SaveCurrentWorkflowState(state, stateDir)
 			return fmt.Sprintf("Workflow paused at %s phase: %s. State saved for resumption.", phaseName, state.PauseReason), totalPromptTokens, totalCompletionTokens
@@ -1603,7 +1627,9 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 		// Check if workflow is done
 		if state.Status == v2.StatusCompleted {
 			v2.SaveCurrentWorkflowState(state, stateDir)
-			return formatWorkflowReport(state), totalPromptTokens, totalCompletionTokens
+			report := v2.FormatFinalReport(state)
+			wh.postToDiscord(report)
+			return report, totalPromptTokens, totalCompletionTokens
 		}
 		if state.Status == v2.StatusBlocked {
 			v2.SaveCurrentWorkflowState(state, stateDir)
