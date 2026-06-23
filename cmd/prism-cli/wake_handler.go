@@ -975,7 +975,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		}
 
 		// Parse the response
-		parsed := agent.ParseAgentOutput(responseText)
+		parsed := agent.ParseAgentOutputWithFallback(responseText)
 
 		if parsed.Type == agent.ResponseFinal {
 			log.Printf("[WAKE-TOOL] final response at iteration %d", i+1)

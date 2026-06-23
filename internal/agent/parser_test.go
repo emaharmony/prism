@@ -150,3 +150,48 @@ func containsStr(s, sub string) bool {
 	}
 	return false
 }
+func TestParseAgentOutputWithFallbackEmbeddedToolRequest(t *testing.T) {
+	// This is the exact pattern Prism produces: natural language + embedded JSON
+	input := `Let me start by staging the files. I'll also add the backward-compatible aliases. {"type":"tool_request","tool":"git_add","input":{"path":"/Users/ema/projects/repos/BassBook/apps/web/src/app/globals.css"}}`
+	resp := ParseAgentOutputWithFallback(input)
+
+	if resp.Type != ResponseToolRequest {
+		t.Errorf("expected type 'tool_request', got %s (content: %s)", resp.Type, resp.Content)
+	}
+	if resp.ToolName != "git_add" {
+		t.Errorf("expected tool 'git_add', got %s", resp.ToolName)
+	}
+}
+
+func TestParseAgentOutputWithFallbackPureToolRequest(t *testing.T) {
+	input := `{"type":"tool_request","tool":"read_file","input":{"path":"README.md"}}`
+	resp := ParseAgentOutputWithFallback(input)
+
+	if resp.Type != ResponseToolRequest {
+		t.Errorf("expected type 'tool_request', got %s", resp.Type)
+	}
+	if resp.ToolName != "read_file" {
+		t.Errorf("expected tool 'read_file', got %s", resp.ToolName)
+	}
+}
+
+func TestParseAgentOutputWithFallbackFinalResponse(t *testing.T) {
+	input := `{"type":"final","content":"Done working on BassBook."}`
+	resp := ParseAgentOutputWithFallback(input)
+
+	if resp.Type != ResponseFinal {
+		t.Errorf("expected type 'final', got %s", resp.Type)
+	}
+	if resp.Content != "Done working on BassBook." {
+		t.Errorf("unexpected content: %s", resp.Content)
+	}
+}
+
+func TestParseAgentOutputWithFallbackPlainText(t *testing.T) {
+	input := `I'll read the file now. Let me check the current state.`
+	resp := ParseAgentOutputWithFallback(input)
+
+	if resp.Type != ResponseFinal {
+		t.Errorf("expected type 'final' for plain text, got %s", resp.Type)
+	}
+}
