@@ -77,6 +77,79 @@ func ParseAgentOutput(raw string) AgentResponse {
 	}
 }
 
+// ParseAgentOutputWithFallback works like ParseAgentOutput but also scans
+// the raw text for embedded tool_request JSON. This handles the common case
+// where the LLM writes natural language followed by a JSON tool request,
+// e.g. "Let me read the file. {"type":"tool_request","tool":"read_file","input":{...}}"
+//
+// If a valid tool_request JSON is found anywhere in the text, it is extracted
+// and returned as a tool request. The surrounding text is discarded.
+// Only if no tool_request is found does it fall back to a final response.
+func ParseAgentOutputWithFallback(raw string) AgentResponse {
+	// First try the standard parser
+	parsed := ParseAgentOutput(raw)
+	if parsed.Type == ResponseToolRequest {
+		return parsed
+	}
+
+	// Standard parser returned final — but maybe there's an embedded tool_request
+	text := strings.TrimSpace(raw)
+
+	// Find all occurrences of "tool_request" in the text
+	searchText := text
+	for {
+		// Find the start of a JSON object that contains "tool_request"
+		idx := strings.Index(searchText, `"tool_request"`)
+		if idx == -1 {
+			break
+		}
+
+		// Find the opening { before this point
+		braceStart := strings.LastIndex(searchText[:idx], "{")
+		if braceStart == -1 {
+			// No opening brace — advance past this occurrence
+			searchText = searchText[idx+len(`"tool_request"`):]
+			continue
+		}
+
+		// Find the matching closing } by counting braces
+		depth := 0
+		braceEnd := -1
+		for i := braceStart; i < len(searchText); i++ {
+			if searchText[i] == '{' {
+				depth++
+			} else if searchText[i] == '}' {
+				depth--
+				if depth == 0 {
+					braceEnd = i
+					break
+				}
+			}
+		}
+
+		if braceEnd == -1 {
+			// No matching close brace — advance
+			searchText = searchText[idx+len(`"tool_request"`):]
+			continue
+		}
+
+		// Extract the JSON substring
+		jsonCandidate := searchText[braceStart : braceEnd+1]
+
+		// Try to parse it
+		var tr AgentResponse
+		if err := json.Unmarshal([]byte(jsonCandidate), &tr); err == nil && tr.Type == ResponseToolRequest && tr.ToolName != "" {
+			return tr
+		}
+
+		// Advance past this occurrence
+		searchText = searchText[braceEnd+1:]
+	}
+
+	// No tool_request found — return the final response from standard parser
+	return parsed
+}
+
 // extractJSON tries to pull JSON content out of markdown code fences.
 // If no fences are found, it returns the text unchanged.
 func extractJSON(text string) string {
