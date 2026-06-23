@@ -430,6 +430,74 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 	}, nil
 }
 
+// WriteFileDirect writes a file to disk immediately (no approval workflow).
+// This is used by autonomous wake handler actions where AutoApproveMutations is true.
+// It performs the same path safety checks as WriteFileProposal but writes directly.
+type WriteFileDirect struct {
+	WorkspaceRoot string
+	AllowedPaths  []string
+	Emit          func(eventType, source string, payload map[string]any)
+}
+
+func (t *WriteFileDirect) Name() string { return "write_file" }
+func (t *WriteFileDirect) Description() string {
+	return "Writes a file to disk. Use this to create or overwrite files. Requires a path (absolute or relative to workspace) and the full file content."
+}
+func (t *WriteFileDirect) Schema() ToolSchema {
+	return ToolSchema{
+		Input: map[string]ParamSpec{
+			"path":    {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
+			"content": {Type: "string", Description: "Full file content to write", Required: true},
+		},
+		Output: ParamSpec{Type: "object", Description: "Write result with path and bytes written"},
+	}
+}
+func (t *WriteFileDirect) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	pathVal, ok := input["path"].(string)
+	if !ok {
+		return ToolResult{Success: false, Error: "required parameter 'path' must be a string"}, nil
+	}
+	content, ok := input["content"].(string)
+	if !ok {
+		return ToolResult{Success: false, Error: "required parameter 'content' must be a string"}, nil
+	}
+	if strings.Contains(pathVal, "..") {
+		return ToolResult{Success: false, Error: "path traversal blocked"}, nil
+	}
+	roots := append([]string{t.WorkspaceRoot}, t.AllowedPaths...)
+	absPath, err := safety.ResolveAndContainMulti(roots, pathVal)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
+	}
+	const maxContentSize = 1024 * 1024
+	if len(content) > maxContentSize {
+		return ToolResult{Success: false, Error: fmt.Sprintf("content size %d exceeds 1MB limit", len(content))}, nil
+	}
+	// Create parent directories if needed
+	dir := filepath.Dir(absPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("failed to create directory: %v", err)}, nil
+	}
+	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("failed to write file: %v", err)}, nil
+	}
+	if t.Emit != nil {
+		t.Emit("prism.mutation.applied", "prism-tool-executor", map[string]any{
+			"mutation_type": "write_file",
+			"target_path":   absPath,
+			"content_size":  len(content),
+		})
+	}
+	return ToolResult{
+		Success: true,
+		Output: map[string]any{
+			"path":           absPath,
+			"bytes_written":  len(content),
+			"status":         "written",
+		},
+	}, nil
+}
+
 // ReadProjectTool recursively reads a project directory, returning the contents of
 // all text files within it. It respects .gitignore patterns and skips binary files,
 // large files, and common non-code directories (node_modules, .git, vendor, etc.).
