@@ -171,62 +171,60 @@ Be thorough, proactive, and fast. You are not just a reporter — you are a deve
 	"project_work": {
 		Prompt: `You are the project work agent. You work autonomously on assigned projects. You do NOT need permission — the assignment IS your permission. You do NOT ask for help unless you are genuinely blocked.
 
-## The Workflow (FOLLOW THESE STEPS IN ORDER)
+## PHASED WORKFLOW (SYSTEM-ENFORCED)
 
-### Step 1: Check Project State (1-2 tool calls max)
-Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md if it exists. This file tracks what has been done and what needs to happen next. If it does not exist, create it later.
+The system enforces a strict phase sequence. You CANNOT skip phases. Each phase has a hard iteration cap. The system tracks your tool usage and blocks tools not allowed in your current phase.
 
-### Step 2: Check Current Git State (1-2 tool calls max)
-- git_status on /Users/ema/projects/repos/BassBook — see what is modified, what is untracked
-- git_log on /Users/ema/projects/repos/BassBook — see recent commits
+### Phase 1: ORIENT (MAX 3 ITERATIONS)
+Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md. The system has already parsed this file and assigned you a specific task — it appears in the "SYSTEM-ASSIGNED TASK" message. Do not choose a different task. Also check git_status and git_branch_list.
 
-### Step 3: Decide What To Do
-Based on project state and git status, pick ONE concrete task:
-- If there are uncommitted changes: create a branch, stage, commit, push, then report
-- If there are no changes: pick the next task from PROJECT_STATE.md or the creative brief and start implementing it
-- If a task is already in progress: continue it
+### Phase 2: BRANCH (MAX 2 ITERATIONS)
+If you are on main/master, you MUST create a feature branch: feature/bb-{task-slug}. The system BLOCKS all file writes and git mutations while on main. You cannot proceed to IMPLEMENT until you are on a feature branch.
 
-DO NOT spend more than 2-3 iterations reading files. You should be WRITING by iteration 5 at the latest.
+### Phase 3: IMPLEMENT (MAX 8 ITERATIONS)
+Write code for your assigned task. You may read files to understand existing code, but after 3 read_file calls the system will deny further reads and force you to write. You MUST produce at least one write_file in this phase.
 
-### Step 4: Create Branch (if needed)
-Create a feature branch: feature/bb-{task-name}
-Use git tools or the branch creation command.
+### Phase 4: SELF_REVIEW (MAX 2 ITERATIONS)
+The system automatically runs git_diff and shows you your changes. Review for:
+- Syntax errors or typos
+- Missing imports or references
+- Incomplete logic
+- Does this actually complete the assigned task?
+If issues found, fix with write_file. If clean, respond with REVIEW_PASSED.
 
-### Step 5: Make Changes
-Use write_file to create or modify files. Use read_file only if you need to check a specific file content before modifying it — do NOT re-read files you already know.
+### Phase 5: COMMIT_PUSH (MAX 3 ITERATIONS)
+You MUST complete all three: git_add, git_commit, git_push. The system will NOT allow you to finish until you have committed and pushed. If you try to end early, your final response will be rejected.
 
-### Step 6: Stage, Commit, Push
-- git_add to stage your changes
-- git_commit with a clear message: "feat: description" or "fix: description"
-- git_push to push to remote
+### Phase 6: UPDATE_STATE (MAX 2 ITERATIONS)
+Update /Users/ema/projects/repos/BassBook/PROJECT_STATE.md to mark your task complete. Use [x] for completed tasks. Add your commit hash.
 
-### Step 7: Update Project State
-Write to /Users/ema/projects/repos/BassBook/PROJECT_STATE.md:
-- What was done this cycle
-- What still needs to be done
-- Any blockers or questions
-
-### Step 8: Report
-Post a final response with:
+### Phase 7: REPORT (1 ITERATION)
+Emit your final summary. No tools allowed. Include:
 1. What you did (files changed, branch name, commit hash)
 2. What is next
 3. Any questions for OpenClaw Lumi (tag <@1512994928769237002>)
 
-## Critical Rules
-- DO NOT just read files and report. You MUST write code, commit, and push.
-- DO NOT spend more than 3 iterations on reading. Start writing by iteration 5.
-- DO NOT create branches on main. Always use feature/bb-{name}.
-- DO NOT ask Ema for anything. Ask OpenClaw Lumi (<@1512994928769237002>) for creative direction only.
-- If git_push fails because of auth, report it and move on — do not loop on retries.
+## Critical Rules (SYSTEM-ENFORCED)
+- The system enforces phase progression. You cannot skip phases.
+- The system blocks mutations on main branch. You MUST be on a feature branch.
+- The system blocks final response until commit+push complete.
+- The system assigns your task — you do not choose.
+- The system shows you your diff for self-review before commit.
 - If a tool fails, try a different approach. Do not repeat the same failed call.
-- You have 20 iterations. Use them to ACT, not to explore.
+- You have 20 total iterations across all phases. Use them to ACT, not explore.
+- DO NOT ask Ema for anything. Ask OpenClaw Lumi (<@1512994928769237002>) for creative direction only.
 
-## Tool Calling Format
-Respond with JSON:
+## Tool Calling Format (CRITICAL)
+Every response MUST be PURE JSON. Start with {. End with }. NO prose, NO markdown fences, NO explanations before the JSON. The system parses JSON only. Any text outside the JSON object is discarded and wastes your iteration budget.
+
+Valid shapes:
 - Tool request: {"type": "tool_request", "tool": "tool_name", "input": {"key": "value"}}
 - Final response: {"type": "final", "content": "your summary"}
 
-One tool request per response. The system executes it and gives you the result.`,
+One tool request per response. The system executes it and gives you the result.
+
+## Phase Awareness
+The system tracks which phase you are in. If you try to use a tool not allowed in your current phase, it will be denied. Pay attention to phase transition messages from the system. They tell you what phase you are entering and what is expected.`,
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 4096,
 	},
@@ -589,6 +587,8 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 
 		// V35c: Write run summary to runs/ directory for dashboard visibility
 		if action == "project_work" || action == "auto_patch" {
+			// Clean JSON tool requests from the output before sending to Discord
+			responseContent = cleanForDiscord(responseContent)
 			wh.writeRunSummary(action, agentCfg.ID, responseContent, promptTokens, completionTokens)
 		}
 	}
@@ -810,6 +810,44 @@ func (wh *WakeHandler) notifyPendingApprovals(channelID string) {
 	log.Printf("[WAKE] notified %d pending approval plans", len(pendingApproval))
 }
 
+// cleanForDiscord strips embedded JSON tool_request objects from LLM output
+// before posting to Discord. The LLM sometimes generates natural language
+// with embedded {"type":"tool_request",...} JSON — this removes that JSON
+// so Discord readers see clean text.
+func cleanForDiscord(text string) string {
+	// Remove any {"type":"tool_request"...} blocks
+	for {
+		idx := strings.Index(text, `{"type":"tool_request"`)
+		if idx == -1 {
+			idx = strings.Index(text, `{"type": "tool_request"`)
+			if idx == -1 {
+				break
+			}
+		}
+		// Find the matching closing brace
+		depth := 0
+		end := -1
+		for i := idx; i < len(text); i++ {
+			if text[i] == '{' {
+				depth++
+			} else if text[i] == '}' {
+				depth--
+				if depth == 0 {
+					end = i
+					break
+				}
+			}
+		}
+		if end == -1 {
+			break
+		}
+		// Remove the JSON block and any trailing space
+		text = text[:idx] + text[end+1:]
+		text = strings.TrimSpace(text)
+	}
+	return strings.TrimSpace(text)
+}
+
 // writeRunSummary writes a run summary to the runs/ directory so the V11 dashboard
 // can display wake handler actions. Creates a run directory with summary.json,
 // events.jsonl, and projections/run_status.json.
@@ -897,10 +935,14 @@ func (wh *WakeHandler) writeRunSummary(action, agent, content string, promptToke
 // The LLM responds with JSON: {"type": "tool_request", "tool": "...", "input": {...}}
 // or {"type": "final", "content": "..."}.
 // We execute tool requests and feed results back until we get a final response.
-func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
-	const maxIterations = 20
+// runToolLoopWake V36 — Phased autonomous workflow with code-level enforcement.
+// Replaces the flat 20-iteration loop with 7 strict phases, branch protection,
+// commit-push enforcement, task assignment, and self-review.
 
-	// Build tool prompt suffix so the LLM knows how to call tools
+func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
+	const maxTotalIterations = 20
+
+	// Build tool prompt suffix
 	toolInfos := wh.toolReg.ListWithDescriptions()
 	workspaceRoot := wh.cfg.Prism.Workspace
 	if workspaceRoot == "" {
@@ -909,7 +951,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	toolSuffix := agent.BuildToolPromptSuffix(toolInfos, workspaceRoot, "/Users/ema/projects/repos/BassBook")
 	fullSystemPrompt := systemPrompt + toolSuffix
 
-	// Build message history
+	// Build initial messages
 	messages := []provider.ChatMessage{
 		{Role: "system", Content: fullSystemPrompt},
 		{Role: "user", Content: userPrompt},
@@ -920,23 +962,132 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 	chatProv, chatErr := wh.providers.GetChatProvider(model)
 
-	for i := 0; i < maxIterations; i++ {
-		log.Printf("[WAKE-TOOL] project_work iteration %d/%d", i+1, maxIterations)
+	// V36: Run state tracking
+	type RunState struct {
+		filesWritten   bool
+		filesStaged     bool
+		committed       bool
+		pushed          bool
+		readsInPhase    int
+		proseCount      int
+		branchName      string
+		assignedTask   string
+		lastToolHashes  []string
+		lastRespHashes  []string
+	}
+	state := RunState{}
+
+	// V36: Check current branch at start
+	state.branchName = wh.getCurrentBranch()
+
+	// V36: Parse PROJECT_STATE.md to assign a task
+	state.assignedTask = wh.parseProjectStateTask()
+
+	// V36: Inject task assignment into messages if found
+	if state.assignedTask != "" {
+		messages = append(messages, provider.ChatMessage{
+			Role: "system",
+			Content: fmt.Sprintf("## SYSTEM-ASSIGNED TASK (do not deviate)\n%s\n\nThis is the ONLY task you should work on this cycle. Do not pick any other task.", state.assignedTask),
+		})
+	}
+
+	// V36: Inject previous cycle state if available
+	prevState := wh.readPreviousWorkState()
+	if prevState != "" {
+		messages = append(messages, provider.ChatMessage{
+			Role: "system",
+			Content: fmt.Sprintf("## PREVIOUS CYCLE\n%s", prevState),
+		})
+	}
+
+	// V36: Phase definitions
+	type Phase struct {
+		Name          string
+		MaxIterations int
+		AllowedTools  map[string]bool // empty = all allowed
+		Description   string
+	}
+	phases := []Phase{
+		{Name: "ORIENT", MaxIterations: 3, AllowedTools: map[string]bool{"read_file": true, "git_status": true, "git_log": true, "git_branch_list": true, "project_overview": true, "list_dir": true}, Description: "Read PROJECT_STATE.md and check git state. The system has already assigned your task — confirm it."},
+		{Name: "BRANCH", MaxIterations: 2, AllowedTools: map[string]bool{"git_branch_list": true, "git_status": true, "read_file": true}, Description: "If on main/master, you MUST create a feature branch (feature/bb-{task-slug}). The system blocks all writes on main. If already on a feature branch, proceed."},
+		{Name: "IMPLEMENT", MaxIterations: 8, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "list_dir": true, "search_files": true, "git_status": true, "git_diff": true}, Description: "Write code for your assigned task. After 3 read_file calls, the system forces you to write. You MUST produce at least one write_file."},
+		{Name: "SELF_REVIEW", MaxIterations: 2, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "git_diff": true, "git_status": true}, Description: "Review your changes via git_diff. Fix obvious errors. Respond REVIEW_PASSED when clean."},
+		{Name: "COMMIT_PUSH", MaxIterations: 3, AllowedTools: map[string]bool{"git_add": true, "git_commit": true, "git_push": true, "git_status": true}, Description: "Stage, commit, and push your changes. All three must complete."},
+		{Name: "UPDATE_STATE", MaxIterations: 2, AllowedTools: map[string]bool{"write_file": true, "read_file": true}, Description: "Update PROJECT_STATE.md to mark your task complete with [x]."},
+		{Name: "REPORT", MaxIterations: 1, AllowedTools: map[string]bool{}, Description: "Emit final summary. No tools allowed."},
+	}
+
+	phaseIdx := 0
+	iterInPhase := 0
+
+	for totalIter := 0; totalIter < maxTotalIterations; totalIter++ {
+		phase := phases[phaseIdx]
+		log.Printf("[WAKE-TOOL] phase=%s iteration %d/%d (total %d/%d)", phase.Name, iterInPhase+1, phase.MaxIterations, totalIter+1, maxTotalIterations)
+
+		// V36: Phase transition enforcement
+		if iterInPhase >= phase.MaxIterations {
+			phaseIdx++
+			if phaseIdx >= len(phases) {
+				log.Printf("[WAKE-TOOL] all phases complete, forcing final")
+				break
+			}
+			iterInPhase = 0
+			state.readsInPhase = 0
+			nextPhase := phases[phaseIdx]
+			messages = append(messages, provider.ChatMessage{
+				Role: "system",
+				Content: fmt.Sprintf("PHASE %s COMPLETE. Moving to %s phase. You MUST now: %s", phase.Name, nextPhase.Name, nextPhase.Description),
+			})
+			log.Printf("[WAKE-TOOL] phase transition: %s → %s", phase.Name, nextPhase.Name)
+			continue
+		}
+
+		// V36: Phase-specific nudges
+		if phase.Name == "IMPLEMENT" && state.readsInPhase >= 3 && !state.filesWritten {
+			messages = append(messages, provider.ChatMessage{
+				Role: "system",
+				Content: "You have read enough files in IMPLEMENT phase. You MUST use write_file now. Further read_file calls will be denied.",
+			})
+		}
+
+		// V36: Self-review phase — auto-inject git diff
+		if phase.Name == "SELF_REVIEW" && iterInPhase == 0 {
+			diffOutput := wh.getGitDiff()
+			if diffOutput != "" {
+				messages = append(messages, provider.ChatMessage{
+					Role: "system",
+					Content: fmt.Sprintf("## Your Changes (git diff)\n```diff\n%s\n```\n\nReview these changes for:\n1. Syntax errors or typos\n2. Missing imports or references\n3. Incomplete logic\n4. Does this complete the assigned task?\n\nIf issues found, fix with write_file. If clean, respond with REVIEW_PASSED.", diffOutput),
+				})
+			} else {
+				// No changes — skip self-review
+				phaseIdx++
+				iterInPhase = 0
+				continue
+			}
+		}
+
+		// V36: Report phase — no tools allowed
+		if phase.Name == "REPORT" {
+			messages = append(messages, provider.ChatMessage{
+				Role: "system",
+				Content: "You are in REPORT phase. Emit your final summary now as {\"type\":\"final\",\"content\":\"...\"}. No tool calls.",
+			})
+		}
 
 		var responseText string
 
 		if chatErr == nil {
 			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
-				RunID: fmt.Sprintf("wake-project_work-%d", time.Now().Unix()),
-				Agent: agentCfg.ID,
-				Model: model,
-				Messages: messages,
+				RunID:       fmt.Sprintf("wake-project_work-%d", time.Now().Unix()),
+				Agent:       agentCfg.ID,
+				Model:       model,
+				Messages:    messages,
 				Temperature: 0.7,
-				MaxTokens: 4096,
+				MaxTokens:   4096,
 			})
 			if err != nil {
-				log.Printf("[WAKE-TOOL] ERROR LLM call failed iteration %d: %v", i+1, err)
-				return fmt.Sprintf("Project work failed at iteration %d: %v", i+1, err), totalPromptTokens, totalCompletionTokens
+				log.Printf("[WAKE-TOOL] ERROR LLM call failed: %v", err)
+				return fmt.Sprintf("Project work failed: %v", err), totalPromptTokens, totalCompletionTokens
 			}
 			responseText = resp.Content
 			totalPromptTokens += resp.PromptTokens
@@ -945,10 +1096,8 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			// Fall back to text provider
 			prov, provErr := wh.providers.Get(model)
 			if provErr != nil {
-				log.Printf("[WAKE-TOOL] ERROR no provider for model %q: %v", model, provErr)
 				return fmt.Sprintf("Project work failed: no provider for %q", model), totalPromptTokens, totalCompletionTokens
 			}
-			// Build a flat prompt from messages
 			flatPrompt := fullSystemPrompt + "\n\n"
 			for _, m := range messages {
 				if m.Role == "user" {
@@ -958,7 +1107,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				}
 			}
 			resp, err := prov.Generate(ctx, provider.GenerateRequest{
-				RunID:       fmt.Sprintf("wake-project_work-%d-iter%d", time.Now().Unix(), i),
+				RunID:       fmt.Sprintf("wake-project_work-%d-iter%d", time.Now().Unix(), totalIter),
 				Agent:       agentCfg.ID,
 				Model:       model,
 				Prompt:      flatPrompt,
@@ -966,51 +1115,176 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				MaxTokens:   4096,
 			})
 			if err != nil {
-				log.Printf("[WAKE-TOOL] ERROR text LLM call failed iteration %d: %v", i+1, err)
-				return fmt.Sprintf("Project work failed at iteration %d: %v", i+1, err), totalPromptTokens, totalCompletionTokens
+				return fmt.Sprintf("Project work failed at iteration %d: %v", totalIter+1, err), totalPromptTokens, totalCompletionTokens
 			}
 			responseText = resp.Text
 			totalPromptTokens += resp.PromptTokens
 			totalCompletionTokens += resp.OutputTokens
 		}
 
+		// V36: Prose detection
+		trimmed := strings.TrimSpace(responseText)
+		if len(trimmed) > 100 && (trimmed[0] != '{') {
+			state.proseCount++
+			log.Printf("[WAKE-TOOL] prose-before-JSON detected (count: %d)", state.proseCount)
+			if state.proseCount >= 3 {
+				messages = append(messages, provider.ChatMessage{
+					Role: "system",
+					Content: "STOP writing prose before JSON. Your last 3 responses wasted iterations on text that was discarded. PURE JSON only: start with { and end with }.",
+				})
+			}
+		}
+
+		// V36: Stuck detection
+		respHash := simpleHash(responseText)
+		state.lastRespHashes = append(state.lastRespHashes, respHash)
+		if len(state.lastRespHashes) >= 3 {
+			if state.lastRespHashes[len(state.lastRespHashes)-1] == state.lastRespHashes[len(state.lastRespHashes)-2] &&
+				state.lastRespHashes[len(state.lastRespHashes)-1] == state.lastRespHashes[len(state.lastRespHashes)-3] {
+				log.Printf("[WAKE-TOOL] STUCK: 3 identical responses detected")
+				messages = append(messages, provider.ChatMessage{
+					Role: "system",
+					Content: "YOU ARE STUCK. You have produced the same response 3 times. Try a completely different approach or move to the next phase.",
+				})
+				state.lastRespHashes = nil // reset
+			}
+		}
+
 		// Parse the response
 		parsed := agent.ParseAgentOutputWithFallback(responseText)
 
 		if parsed.Type == agent.ResponseFinal {
-			log.Printf("[WAKE-TOOL] final response at iteration %d", i+1)
+			// V36: Commit-Push Enforcement
+			if state.filesWritten && !state.committed {
+				log.Printf("[WAKE-TOOL] FINAL REJECTED: files written but not committed")
+				messages = append(messages, provider.ChatMessage{
+					Role: "system",
+					Content: "COMMIT REQUIRED: You wrote files but have not committed. You MUST use git_add then git_commit before finishing. Your final response is rejected.",
+				})
+				continue
+			}
+			if state.committed && !state.pushed {
+				log.Printf("[WAKE-TOOL] FINAL REJECTED: committed but not pushed")
+				messages = append(messages, provider.ChatMessage{
+					Role: "system",
+					Content: "PUSH REQUIRED: You committed but have not pushed. You MUST use git_push before finishing. Your final response is rejected.",
+				})
+				continue
+			}
+
+			log.Printf("[WAKE-TOOL] final response accepted at phase %s", phase.Name)
+
+			// V36: Write work state for next cycle
+			wh.writeWorkState(state.branchName, state.assignedTask, state.committed, state.pushed)
+
 			return parsed.Content, totalPromptTokens, totalCompletionTokens
 		}
 
 		if parsed.Type == agent.ResponseToolRequest {
-			log.Printf("[WAKE-TOOL] tool request: %s", parsed.ToolName)
+			log.Printf("[WAKE-TOOL] tool request: %s (phase: %s)", parsed.ToolName, phase.Name)
+
+			// V36: Phase tool enforcement — check if tool is allowed in current phase
+			if len(phase.AllowedTools) > 0 && !phase.AllowedTools[parsed.ToolName] {
+				log.Printf("[WAKE-TOOL] tool %s denied in phase %s", parsed.ToolName, phase.Name)
+				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+				messages = append(messages, provider.ChatMessage{
+					Role: "user",
+					Content: fmt.Sprintf("Tool %q is not allowed in the %s phase. You should be: %s", parsed.ToolName, phase.Name, phase.Description),
+				})
+				continue
+			}
+
+			// V36: Read budget in IMPLEMENT phase
+			if phase.Name == "IMPLEMENT" && (parsed.ToolName == "read_file" || parsed.ToolName == "list_dir" || parsed.ToolName == "search_files") {
+				state.readsInPhase++
+				if state.readsInPhase > 3 && !state.filesWritten {
+					log.Printf("[WAKE-TOOL] read budget exceeded in IMPLEMENT, denying %s", parsed.ToolName)
+					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+					messages = append(messages, provider.ChatMessage{
+						Role: "user",
+						Content: "READ BUDGET EXCEEDED. You have read enough. Use write_file to make your changes now.",
+					})
+					continue
+				}
+			}
+
+			// V36: Branch Protection Gate
+			writeTools := map[string]bool{"write_file": true, "git_add": true, "git_commit": true, "git_push": true}
+			if writeTools[parsed.ToolName] {
+				branch := wh.getCurrentBranch()
+				if branch == "main" || branch == "master" {
+					log.Printf("[WAKE-TOOL] BRANCH PROTECTION: %s denied on %s", parsed.ToolName, branch)
+					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+					messages = append(messages, provider.ChatMessage{
+						Role: "user",
+						Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Mutations are blocked. Create a feature branch first. The system cannot proceed until you are on a feature branch.", branch),
+					})
+					continue
+				}
+			}
 
 			// Execute the tool
 			result, err := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", fmt.Sprintf("wake-project_work-%d", time.Now().Unix()), parsed.ToolInput)
 			if err != nil {
 				log.Printf("[WAKE-TOOL] tool %s failed: %v", parsed.ToolName, err)
-				// Feed error back to LLM
 				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 				messages = append(messages, provider.ChatMessage{
 					Role: "user",
-					Content: fmt.Sprintf("Tool %q failed: %v. Please try a different approach or provide your final answer.", parsed.ToolName, err),
+					Content: fmt.Sprintf("Tool %q failed: %v. Try a different approach.", parsed.ToolName, err),
 				})
 				continue
 			}
 
-			// Format tool result from Output map
+			// Format tool result
 			resultStr := fmt.Sprintf("Tool %q result:\n%v", parsed.ToolName, result.Output)
 			if result.Error != "" {
 				resultStr = fmt.Sprintf("Tool %q error: %s", parsed.ToolName, result.Error)
 			}
 			log.Printf("[WAKE-TOOL] tool %s succeeded: %s", parsed.ToolName, truncateStr(resultStr, 100))
 
-			// Feed result back to LLM
+			// V36: Update run state
+			switch parsed.ToolName {
+			case "write_file":
+				state.filesWritten = true
+			case "git_add":
+				state.filesStaged = true
+			case "git_commit":
+				state.committed = true
+			case "git_push":
+				state.pushed = true
+			case "git_branch_list", "git_status":
+				// re-check branch after git operations
+				newBranch := wh.getCurrentBranch()
+				if newBranch != state.branchName {
+					state.branchName = newBranch
+					log.Printf("[WAKE-TOOL] branch changed to %s", newBranch)
+				}
+			}
+
+			// V36: Tool result summarization (truncate large outputs)
+			resultStr = summarizeToolResult(parsed.ToolName, resultStr)
+
+			// V36: Stuck detection for tool calls
+			toolHash := simpleHash(parsed.ToolName + fmt.Sprintf("%v", parsed.ToolInput))
+			state.lastToolHashes = append(state.lastToolHashes, toolHash)
+			if len(state.lastToolHashes) >= 3 {
+				if state.lastToolHashes[len(state.lastToolHashes)-1] == state.lastToolHashes[len(state.lastToolHashes)-2] &&
+					state.lastToolHashes[len(state.lastToolHashes)-1] == state.lastToolHashes[len(state.lastToolHashes)-3] {
+					log.Printf("[WAKE-TOOL] STUCK: 3 identical tool calls detected")
+					messages = append(messages, provider.ChatMessage{
+						Role: "system",
+						Content: fmt.Sprintf("YOU ARE STUCK. You have called %s with the same input 3 times. Try a different approach.", parsed.ToolName),
+					})
+					state.lastToolHashes = nil
+				}
+			}
+
 			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 			messages = append(messages, provider.ChatMessage{
 				Role: "user",
 				Content: resultStr,
 			})
+			iterInPhase++
 			continue
 		}
 
@@ -1018,7 +1292,115 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		return responseText, totalPromptTokens, totalCompletionTokens
 	}
 
-	// Max iterations reached
-	log.Printf("[WAKE-TOOL] max iterations reached, returning last response")
+	// V36: Write work state even on incomplete runs
+	wh.writeWorkState(state.branchName, state.assignedTask, state.committed, state.pushed)
+
+	log.Printf("[WAKE-TOOL] max iterations reached. State: written=%v staged=%v committed=%v pushed=%v", state.filesWritten, state.filesStaged, state.committed, state.pushed)
 	return "Project work cycle reached max iterations. See logs for details.", totalPromptTokens, totalCompletionTokens
+}
+
+// getCurrentBranch returns the current git branch in the BassBook repo.
+func (wh *WakeHandler) getCurrentBranch() string {
+	cmd := exec_command("git", []string{"branch", "--show-current"}, "/Users/ema/projects/repos/BassBook")
+	return strings.TrimSpace(cmd)
+}
+
+// parseProjectStateTask reads PROJECT_STATE.md and returns the first incomplete task.
+func (wh *WakeHandler) parseProjectStateTask() string {
+	statePath := "/Users/ema/projects/repos/BassBook/PROJECT_STATE.md"
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		log.Printf("[WAKE-TOOL] could not read PROJECT_STATE.md: %v", err)
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	var tasks []string
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Look for "- [ ]" markers (incomplete tasks)
+		if strings.HasPrefix(trimmed, "- [ ]") {
+			// Grab this line plus any following description lines until next task or blank
+			taskText := trimmed
+			for j := i + 1; j < len(lines) && j < i+3; j++ {
+				next := strings.TrimSpace(lines[j])
+				if next == "" || strings.HasPrefix(next, "- [") || strings.HasPrefix(next, "###") {
+					break
+				}
+				if !strings.HasPrefix(next, "-") && !strings.HasPrefix(next, "#") {
+					taskText += " " + next
+				}
+			}
+			tasks = append(tasks, taskText)
+		}
+		// Also look for "### Task N:" without ✅
+		if strings.HasPrefix(trimmed, "### Task ") && !strings.Contains(trimmed, "✅") {
+			tasks = append(tasks, trimmed)
+		}
+	}
+	if len(tasks) == 0 {
+		return ""
+	}
+	return tasks[0]
+}
+
+// readPreviousWorkState reads runs/current_work_state.json for continuity.
+func (wh *WakeHandler) readPreviousWorkState() string {
+	data, err := os.ReadFile("/Users/ema/projects/repos/prism/runs/current_work_state.json")
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("Last cycle state:\n%s", string(data))
+}
+
+// writeWorkState writes the current cycle state for the next cycle to read.
+func (wh *WakeHandler) writeWorkState(branch, task string, committed, pushed bool) {
+	state := fmt.Sprintf(`{
+  "last_branch": %q,
+  "last_task": %q,
+  "committed": %t,
+  "pushed": %t,
+  "completed_at": %q
+}`, branch, task, committed, pushed, time.Now().Format(time.RFC3339))
+	os.MkdirAll("/Users/ema/projects/repos/prism/runs", 0755)
+	os.WriteFile("/Users/ema/projects/repos/prism/runs/current_work_state.json", []byte(state), 0644)
+}
+
+// getGitDiff returns the git diff for the BassBook repo.
+func (wh *WakeHandler) getGitDiff() string {
+	cmd := exec_command("git", []string{"diff", "--stat"}, "/Users/ema/projects/repos/BassBook")
+	return cmd
+}
+
+// summarizeToolResult truncates large tool results before feeding back to the LLM.
+func summarizeToolResult(toolName, result string) string {
+	const maxLen = 3000
+	if len(result) <= maxLen {
+		return result
+	}
+	// Keep first 1500 + last 500 with truncation marker
+	first := result[:1500]
+	last := result[len(result)-500:]
+	return first + fmt.Sprintf("\n... [truncated: %d total chars] ...\n", len(result)) + last
+}
+
+// exec_command runs a command and returns its stdout as a string.
+func exec_command(name string, args []string, dir string) string {
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return string(output)
+}
+
+// simpleHash returns a simple hash of a string for stuck detection.
+func simpleHash(s string) string {
+	h := 0
+	for _, c := range s {
+		h = h*31 + int(c)
+	}
+	return fmt.Sprintf("%d", h)
 }
