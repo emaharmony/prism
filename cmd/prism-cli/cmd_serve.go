@@ -94,6 +94,7 @@ type discordBotClient interface {
 	SendPlaceholder(channelID, content string) (string, error)
 	EditMessage(channelID, messageID, content string) error
 	SelfID() string
+	GetRecentMessages(channelID string, limit int) []discordbot.RecentMessage
 }
 
 // conversationContext holds all the dependencies needed to process a
@@ -382,6 +383,9 @@ func executeServe(args []string) {
 	var ctxBuildr *context.Builder
 	var planMgr *plan.Manager
 	var improveMgr *improve.Manager
+	// V35: Tool registry and executor — hoisted for wake handler access
+	var toolReg *tool.Registry
+	var toolExec *tool.Executor
 
 	for _, ch := range cfg.Channels {
 		switch ch.Type {
@@ -443,9 +447,11 @@ func executeServe(args []string) {
 			readRoots := configuredReadRoots(cfg)
 			writeRoots := configuredWriteRoots(cfg)
 
-			toolReg := tool.NewRegistry()
+			toolReg = tool.NewRegistry()
 			tool.RegisterBuiltinsWithRoots(toolReg, workspaceRoot, 10*1024*1024, readRoots, writeRoots) // all read-only + project tools
 			toolReg.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
+			// V35: Direct write tool for autonomous wake actions (auto-approved via policy)
+			toolReg.Register(&tool.WriteFileDirect{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 			// V28: Git mutation tools (require approval)
 			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
@@ -480,7 +486,7 @@ func executeServe(args []string) {
 			toolPolicy.ReadRoots = readRoots
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
-			toolExec := tool.NewExecutor(toolReg, toolPolicy)
+			toolExec = tool.NewExecutor(toolReg, toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore("runs"))
 
 			convCtx := &conversationContext{
@@ -643,6 +649,9 @@ func executeServe(args []string) {
 			planMgr,
 			improveMgr,
 			factoryMon,
+			remClient,
+			toolExec,  // V35: Tool executor for project_work
+			toolReg,   // V35: Tool registry for project_work
 		)
 		if err := wakeHandler.Start(); err != nil {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
