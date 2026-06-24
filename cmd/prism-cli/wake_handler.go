@@ -1636,6 +1636,13 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 		parsed := agent.ParseAgentOutputWithFallback(responseText)
 
 		if parsed.Type == agent.ResponseFinal {
+			// V36: Write enforcement — she MUST write code, not just plan
+			if !hasWritten && phaseIdx <= 1 {
+				log.Printf("[V2] FINAL REJECTED: no files written — she must write code first")
+				messages = append(messages, provider.ChatMessage{Role: "system", Content: "WRITE REQUIRED: You have not written any files. Your final is rejected. Use write_file to write the CSS aliases to apps/web/src/app/globals.css. DO NOT report without writing code first."})
+				phaseIter--
+				continue
+			}
 			// V36: Commit-push enforcement
 			if hasWritten && !hasCommitted {
 				log.Printf("[V2] FINAL REJECTED: files written but not committed")
@@ -1689,8 +1696,10 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 			}
 
 			// Execute tool
+			log.Printf("[V2] executing tool %s with input: %v", parsed.ToolName, parsed.ToolInput)
 			result, execErr := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", runID, parsed.ToolInput)
 			if execErr != nil {
+				log.Printf("[V2] tool %s error: %v", parsed.ToolName, execErr)
 				// V36: Handle "nothing to commit"
 				if parsed.ToolName == "git_commit" && (strings.Contains(execErr.Error(), "nothing to commit") || strings.Contains(execErr.Error(), "no changes")) {
 					hasCommitted = true
@@ -1703,6 +1712,7 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 				continue
 			}
 
+			log.Printf("[V2] tool %s succeeded: %v", parsed.ToolName, result.Success)
 			// Track state
 			switch parsed.ToolName {
 			case "write_file":
