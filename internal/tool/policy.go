@@ -183,6 +183,16 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "git_status", "git_log", "git_diff", "git_branch_list":
 		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is read-only git, always approved", toolName)}
 
+	// Git branch operations — require approval but auto-approved for autonomous wake
+	case "git_checkout":
+		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose git mutations; route write requests through the orchestrator", agentID)}
+		}
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: git checkout approved for autonomous wake action"}
+		}
+		return PolicyResult{Decision: PolicyRequiresApproval, Reason: "git_checkout is a git mutation, requires approval"}
+
 	// V28: Git mutation tools — require approval
 	case "git_add", "git_commit", "git_push":
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {

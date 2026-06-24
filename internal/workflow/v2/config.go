@@ -205,7 +205,7 @@ func DefaultConfig() *WorkflowConfig {
 			{
 				Name: "PLAN", Type: "plan", Description: "Read project state, identify task, create plan",
 				MaxIterations: 5,
-				AllowedTools: []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list"},
+				AllowedTools: []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "git_checkout"},
 				Gate: GateConfig{Type: "plan_completeness", Threshold: 0.5,
 					Weights: map[string]float64{"tasks_identified": 0.5, "resources_assigned": 0.5}},
 				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_plan", Blocks: false},
@@ -213,7 +213,7 @@ func DefaultConfig() *WorkflowConfig {
 			{
 				Name: "EXECUTE", Type: "execution", Description: "Write code with branch protection, read budget, commit-push enforcement",
 				MaxIterations: 25,
-				AllowedTools: []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "project_overview"},
+				AllowedTools: []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "git_checkout", "project_overview"},
 				Gate: GateConfig{Type: "task_completion", Mode: "partial_allowed"},
 				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false},
 			},
