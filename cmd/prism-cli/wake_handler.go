@@ -1482,6 +1482,14 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 		engine.RegisterGate(phaseCfg.Name, gate)
 	}
 
+	// Parse PROJECT_STATE.md and inject assigned task
+	assignedTask := wh.parseProjectStateTask()
+	if assignedTask != "" {
+		log.Printf("[V2-NATURAL-GATES] assigned task: %s", assignedTask)
+	} else {
+		assignedTask = "No task found in PROJECT_STATE.md. Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md to find tasks."
+	}
+
 	// Auto-save goroutine
 	stopSave := make(chan struct{})
 	defer close(stopSave)
@@ -1498,8 +1506,14 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 	// Build initial messages
 	messages := []provider.ChatMessage{
 		{Role: "system", Content: naturalGatesPrompt},
-		{Role: "user", Content: userPrompt},
+		{Role: "user", Content: fmt.Sprintf("%s\n\n## SYSTEM-ASSIGNED TASK (do not deviate)\n%s", userPrompt, assignedTask)},
 	}
+
+	// Also inject BassBook repo path context
+	messages = append(messages, provider.ChatMessage{
+		Role: "system",
+		Content: "## Project Context\nProject repo: /Users/ema/projects/repos/BassBook/\nProject state: /Users/ema/projects/repos/BassBook/PROJECT_STATE.md\nWeb app: apps/web/ (Next.js 14)\nAPI: apps/api/ (ASP.NET Core)\nBuild: pnpm build (web), dotnet build (api)\nAll file paths should be absolute or relative to /Users/ema/projects/repos/BassBook/",
+	})
 
 	// Inject previous cycle wfState if resuming
 	if existingState != nil && existingState.Status == v2.StatusPaused {
@@ -1786,82 +1800,68 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 
 // buildNaturalGatesPrompt creates the system prompt for the Natural Gates workflow.
 func buildNaturalGatesPrompt(config *v2.WorkflowConfig, userPrompt string) string {
-	return fmt.Sprintf(`You are the project work agent running the Natural Gates Workflow System.
+	return fmt.Sprintf(`You are an autonomous project work agent. You build production-quality code.
 
-## How Natural Gates Work
+## Your Workflow
 
-You operate in 7 phases. Each phase has a NATURAL GATE — a real condition that must be met before you can move to the next phase. The system tracks your assumptions and confidence as structured state. You cannot skip phases.
+You operate in phases. The system tracks your progress and tells you which phase you are in. You MUST follow the phase instructions.
 
-## The 7 Phases
-
-### 1. PROBE — Reduce Assumptions
-Identify what you don't know. Declare each assumption:
+### Phase: PROBE
+Identify what you don't know. List your assumptions:
 ASSUMPTION: {statement} | confidence: {0.0-1.0} | criticality: {blocker|high|medium|low}
+Then ask questions or search to reduce them. Signal: PROBE_COMPLETE
 
-Ask questions via Discord or NATS. Search Remembrance for answers. The gate opens when your weighted assumption score drops below 2.0.
-Signal completion: PROBE_COMPLETE
-
-### 2. RESEARCH — Increase Confidence
-Search multiple sources (web, memory, codebase, agents). Declare confidence:
+### Phase: RESEARCH
+Search for answers. Build confidence in your approach:
 CONFIDENCE: {domain} | {0.0-1.0} | reason: {why}
-
 Domains: codebase_understanding, requirements_clarity, approach_viability, tool_capability, dependency_health, test_coverage, edge_case_awareness
-Gate: ALL domains must be >= 0.7 (weakest-link principle).
-Signal completion: RESEARCH_COMPLETE
+Signal: RESEARCH_COMPLETE
 
-### 3. PLAN — Create Structured Plan with Resource Delegation
-Break work into tasks. Assign each to an agent. Declare tasks:
+### Phase: PLAN
+Break work into tasks and assign to agents:
 TASK: {id} | description: {what} | agent: {prism|mango|junie|lumi} | depends_on: [{ids}] | success: {criteria}
+Signal: PLAN_COMPLETE
 
-Gate: plan completeness >= 0.9 (all tasks identified, assigned, with success criteria).
-Signal completion: PLAN_COMPLETE
+### Phase: FEEDBACK_PRE
+Your plan is posted to Discord for Lumi to approve. The workflow PAUSES. Wait for approval.
 
-### 4. FEEDBACK_PRE — Plan Approval (Workflow Pauses)
-Your plan is posted to Discord for Lumi/Ema to review. The workflow PAUSES until approved.
-- Low/medium risk: Lumi approval only
-- High risk: Lumi AND Ema approval required
-If changes requested: revise plan and re-submit.
+### Phase: EXECUTION
+Execute your tasks. Rules:
+- Create a feature branch before writing (writes blocked on main)
+- Write code using write_file
+- Review your changes with git_diff
+- Stage with git_add, commit with git_commit, push with git_push
+- You CANNOT finish until you have committed AND pushed
+Signal: EXECUTION_COMPLETE
 
-### 5. EXECUTION — Run the Plan
-Execute your tasks. V36 enforcement applies:
-- Branch protection: writes blocked on main/master
-- Commit-push gate: can't finish until committed AND pushed
-- Self-review: system auto-injects git diff before commit
-Signal completion: EXECUTION_COMPLETE
+### Phase: FEEDBACK_POST
+Your work is reviewed by Lumi and Mango. Wait for review.
 
-### 6. FEEDBACK_POST — Post-Execution Review (Workflow Pauses)
-Your work is reviewed by Lumi AND Mango. Mango is ALWAYS required.
-6 review dimensions: code_quality, task_completion, regression_check, test_coverage, documentation, git_hygiene
-If issues found: fix and re-submit. Max 3 review cycles.
-
-### 7. REPORT — Final Report with Proof
-**MANDATORY**: Every report MUST tag <@1512994928769237002> (OpenClaw Lumi) at the start.
-Format: <@1512994928769237002> + your report content. This is non-negotiable — Lumi monitors and relays your updates to Ema.
-Include all 5 sections:
+### Phase: REPORT
+Post a final report with:
 ## Change Summary
-## Proof of Work (file paths, commit hashes, PR URLs)
+## Proof of Work (file paths, commit hashes, branch name)
 ## Impact
 ## Next Steps
 ## Learnings
-Signal completion: REPORT_COMPLETE
+Start your report with <@1512994928769237002> to tag OpenClaw Lumi.
+Signal: REPORT_COMPLETE
 
 ## Response Format
 Every response MUST be PURE JSON:
 - Tool request: {"type":"tool_request","tool":"tool_name","input":{"key":"value"}}
 - Final response: {"type":"final","content":"your summary"}
 
-You can also include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and phase-complete signals (PROBE_COMPLETE, etc.) in your response text before the JSON.
+You can include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and signals (PROBE_COMPLETE, etc.) in your response text before the JSON.
 
-## Current Task
-%s
-
-## Important Rules
-- DO NOT ask Ema for anything. Ask Lumi (<@1512994928769237002>) for creative direction.
-- The system assigns your task from PROJECT_STATE.md — do not choose your own.
-- The system tracks your assumptions and confidence — declare them honestly.
-- The system pauses at feedback gates — work stops until approval arrives.
-- Mango MUST review your work — this is not optional.
-`, userPrompt)
+## Critical Rules
+- The system tells you which phase you are in. Follow it.
+- The system assigns your task. Do not choose your own.
+- All file paths are relative to /Users/ema/projects/repos/BassBook/
+- DO NOT ask Ema. Ask Lumi (<@1512994928769237002>) for direction.
+- You MUST write code, commit, and push. Reading is not enough.
+- Mango MUST review your work — this is mandatory.
+`)
 }
 
 // formatWorkflowReport creates a human-readable report from workflow state.
