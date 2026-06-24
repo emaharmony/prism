@@ -187,67 +187,49 @@ func NewGateFromConfig(cfg GateConfig) Gate {
 	}
 }
 
-// DefaultConfig returns the default Natural Gates workflow configuration.
+// DefaultConfig returns the simplified 3-phase Natural Gates workflow configuration.
+// PLAN → EXECUTE → REPORT. Proven V36 enforcement merged into EXECUTE phase.
 func DefaultConfig() *WorkflowConfig {
 	return &WorkflowConfig{
 		Name:    "natural-gates-project-work",
-		Version: 1,
-		Description: "7-phase natural gates workflow for autonomous project work",
+		Version: 2,
+		Description: "3-phase autonomous workflow: PLAN → EXECUTE → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:  60,
-			MaxTotalTime:        "4h",
+			MaxTotalIterations:  40,
+			MaxTotalTime:        "30m",
 			StatePersistenceDir: "runs/natural-gates",
 			EventEmission:       true,
 		},
-		ConfidenceDomains: []string{
-			"codebase_understanding",
-			"requirements_clarity",
-			"approach_viability",
-			"tool_capability",
-			"dependency_health",
-			"test_coverage",
-			"edge_case_awareness",
-		},
+		ConfidenceDomains: []string{}, // not used in 3-phase mode
 		Phases: []PhaseConfig{
-			{Name: "PROBE", Type: "probe", Description: "Reduce assumptions", MaxIterations: 10,
-				AllowedTools: []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "remembrance_search", "web_search", "nats_query"},
-				Gate: GateConfig{Type: "assumption_threshold", Threshold: 2.0, Weights: map[string]float64{"blocker": 4.0, "high": 2.0, "medium": 1.0, "low": 0.5}},
-				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_warning", Blocks: false}},
-			{Name: "RESEARCH", Type: "research", Description: "Increase confidence", MaxIterations: 12,
-				AllowedTools: []string{"read_file", "list_dir", "search_files", "project_overview", "web_search", "remembrance_search", "git_log", "git_diff", "nats_query"},
-				Gate: GateConfig{Type: "confidence_threshold", Threshold: 0.7, Domains: []string{"codebase_understanding", "requirements_clarity", "approach_viability", "tool_capability", "dependency_health", "test_coverage", "edge_case_awareness"}},
-				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_low_confidence_flag", Blocks: false}},
-			{Name: "PLAN", Type: "plan", Description: "Create plan with resource delegation", MaxIterations: 8,
-				AllowedTools: []string{"read_file", "write_file", "list_dir", "search_files", "remembrance_search", "nats_query", "agent_list", "agent_create"},
-				Gate: GateConfig{Type: "plan_completeness", Threshold: 0.9, Weights: map[string]float64{"tasks_identified": 0.3, "resources_assigned": 0.3, "dependencies_ordered": 0.2, "success_criteria": 0.1, "risk_mitigation": 0.1}},
-				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_plan", Blocks: false}},
-			{Name: "FEEDBACK_PRE", Type: "feedback_pre", Description: "Get plan approval", MaxIterations: 1,
-				AllowedTools: []string{"read_file"},
-				Gate: GateConfig{Type: "approval", Approvers: []string{"lumi", "ema"}, Mode: "require_any"},
-				Fallback: FallbackConfig{OnMaxIterations: "timeout", Blocks: true}},
-			{Name: "EXECUTION", Type: "execution", Description: "Execute with V36 enforcement", MaxIterations: 30,
-				AllowedTools: []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "project_overview", "nats_delegate", "nats_query"},
-				Gate: GateConfig{Type: "task_completion", Mode: "all_tasks"},
-				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false}},
-			{Name: "FEEDBACK_POST", Type: "feedback_post", Description: "Post-execution review", MaxIterations: 1,
-				AllowedTools: []string{"read_file", "git_diff", "git_log", "nats_query"},
-				Gate: GateConfig{Type: "review_pass", RequiredReviewers: []string{"mango", "lumi"}, MaxWarn: 2},
-				Fallback: FallbackConfig{OnMaxIterations: "timeout", Blocks: true}},
-			{Name: "REPORT", Type: "report", Description: "Final report with proof", MaxIterations: 3,
+			{
+				Name: "PLAN", Type: "plan", Description: "Read project state, identify task, create plan",
+				MaxIterations: 5,
+				AllowedTools: []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list"},
+				Gate: GateConfig{Type: "plan_completeness", Threshold: 0.5,
+					Weights: map[string]float64{"tasks_identified": 0.5, "resources_assigned": 0.5}},
+				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_plan", Blocks: false},
+			},
+			{
+				Name: "EXECUTE", Type: "execution", Description: "Write code with branch protection, read budget, commit-push enforcement",
+				MaxIterations: 25,
+				AllowedTools: []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "project_overview"},
+				Gate: GateConfig{Type: "task_completion", Mode: "partial_allowed"},
+				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false},
+			},
+			{
+				Name: "REPORT", Type: "report", Description: "Final report with proof of work",
+				MaxIterations: 3,
 				AllowedTools: []string{"read_file", "git_log", "git_status"},
 				Gate: GateConfig{Type: "report_completeness"},
-				Fallback: FallbackConfig{OnMaxIterations: "auto_generate", Blocks: false}},
+				Fallback: FallbackConfig{OnMaxIterations: "auto_generate", Blocks: false},
+			},
 		},
 		Agents: []AgentConfig{
 			{Name: "prism", Role: "implementation", Capabilities: []string{"write_code", "git_operations", "file_operations", "code_review"}, Provider: "ollama", Model: "glm-5.2:cloud", Availability: "online"},
 			{Name: "mango", Role: "implementation-review", Capabilities: []string{"write_code", "data_structuring", "complex_computation", "code_review", "test_writing"}, Provider: "openclaw-subagent", Model: "deepseek-v4-pro:cloud", Availability: "online"},
-			{Name: "junie", Role: "implementation", Capabilities: []string{"write_code", "refactoring", "test_writing", "debugging"}, Provider: "openclaw-subagent", Model: "glm-5.2:cloud", Availability: "online"},
 			{Name: "lumi", Role: "architect-reviewer", Capabilities: []string{"architecture_design", "code_review", "creative_direction", "plan_approval", "agent_orchestration"}, Provider: "openclaw", Model: "deepseek-v4-pro:cloud", Availability: "online"},
 		},
-		FastPath: &FastPathConfig{
-			Enabled:    true,
-			RiskLevels: []string{"low"},
-			SkipPhases: []string{"PROBE", "RESEARCH"},
-		},
+		FastPath: &FastPathConfig{Enabled: false}, // all tasks go through full 3-phase
 	}
 }
