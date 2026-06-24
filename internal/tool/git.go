@@ -280,6 +280,72 @@ func (t *GitBranchListTool) Execute(ctx context.Context, input map[string]any) (
 	}, nil
 }
 
+// GitCheckoutTool creates and/or switches git branches. This is a mutation.
+type GitCheckoutTool struct {
+	ToolPaths ToolPaths
+}
+
+func (t *GitCheckoutTool) Name() string { return "git_checkout" }
+func (t *GitCheckoutTool) Description() string {
+	return "Creates a new git branch and switches to it, or switches to an existing branch. Use this to create feature branches before writing code. Example: create branch 'feature/bb-auth-fix' from main."
+}
+func (t *GitCheckoutTool) Schema() ToolSchema {
+	return ToolSchema{
+		Input: map[string]ParamSpec{
+			"branch":     {Type: "string", Description: "Branch name to create or switch to (e.g. feature/bb-auth-fix)", Required: true},
+			"create":     {Type: "boolean", Description: "If true, create the branch (-b flag). If false, just switch to existing branch.", Required: false},
+			"repo_path":  {Type: "string", Description: "Absolute path to the git repository", Required: false},
+		},
+		Output: ParamSpec{Type: "string", Description: "Checkout result"},
+	}
+}
+func (t *GitCheckoutTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir := t.ToolPaths.WorkspaceRoot
+	if p, ok := input["repo_path"].(string); ok && p != "" {
+		resolved, err := FuzzyResolvePath(t.ToolPaths, p)
+		if err != nil {
+			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
+		}
+		repoDir = resolved
+	}
+
+	branchVal, ok := input["branch"].(string)
+	if !ok || branchVal == "" {
+		return ToolResult{Success: false, Error: "required parameter 'branch' must be a non-empty string"}, nil
+	}
+
+	// Block dangerous branch names
+	if strings.Contains(branchVal, "..") || strings.Contains(branchVal, ";") || strings.Contains(branchVal, "&") || strings.Contains(branchVal, "|") {
+		return ToolResult{Success: false, Error: "invalid branch name"}, nil
+	}
+
+	create, _ := input["create"].(bool)
+
+	var args []string
+	if create {
+		args = []string{"checkout", "-b", branchVal}
+	} else {
+		args = []string{"checkout", branchVal}
+	}
+
+	out, exitCode, err := runGitCommand(repoDir, args...)
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("git checkout failed: %v", err)}, nil
+	}
+	if exitCode != 0 {
+		return ToolResult{Success: false, Error: fmt.Sprintf("git checkout exited with code %d: %s", exitCode, out)}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Output: map[string]any{
+			"branch":  branchVal,
+			"created": create,
+			"message": fmt.Sprintf("Switched to branch '%s'", branchVal),
+		},
+	}, nil
+}
+
 // GitAddTool stages files for commit. This is a mutation — it requires approval.
 type GitAddTool struct {
 	ToolPaths ToolPaths

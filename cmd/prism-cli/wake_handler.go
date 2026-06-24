@@ -1490,7 +1490,8 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 
 ### Phase 1: PLAN (max 5 iterations)
 - Read PROJECT_STATE.md and relevant files to understand the task
-- Create a feature branch: feature/bb-{task-slug}
+- IMPORTANT: Create a feature branch using git_checkout with create=true: {"type":"tool_request","tool":"git_checkout","input":{"branch":"feature/bb-{task-slug}","create":true}}
+- You CANNOT write files on main. You MUST create a branch first.
 - Decide what files to change
 - The system will tell you when to move to EXECUTE
 
