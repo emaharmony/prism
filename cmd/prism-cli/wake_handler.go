@@ -1448,185 +1448,138 @@ func simpleHash(s string) string {
 // This is the primary workflow engine — it handles all 7 phases with natural gates,
 // multi-agent delegation, feedback checkpoints, and resumability.
 func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
-	log.Printf("[V2-NATURAL-GATES] starting workflow for agent %s", agentCfg.ID)
+	log.Printf("[V2] starting 3-phase workflow for agent %s", agentCfg.ID)
 
-	// Load or create workflow config
 	config := v2.DefaultConfig()
-
-	var wfState *v2.WorkflowState
-	// Check for existing workflow state (resumability)
 	stateDir := "/Users/ema/projects/repos/prism/runs/natural-gates"
+
+	// Check for paused workflow to resume
 	existingState, err := v2.LoadCurrentWorkflowState(stateDir)
-	if err == nil && existingState != nil && (existingState.Status == v2.StatusPaused || existingState.Status == v2.StatusInProgress) {
-		log.Printf("[V2-NATURAL-GATES] resuming workflow %s at phase idx %d", existingState.RunID, existingState.CurrentPhaseIdx)
-		wfState = existingState
-	} else {
-		// Start new workflow
-		runID := fmt.Sprintf("ng-%d", time.Now().Unix())
-		wfState = v2.NewWorkflowState(config)
-		wfState.RunID = runID
-		wfState.CorrelationID = runID
-		wfState.Status = v2.StatusInProgress
+	if err == nil && existingState != nil && existingState.Status == v2.StatusPaused {
+		log.Printf("[V2] resuming paused workflow %s", existingState.RunID)
+		// For now, just start fresh — full resume is Phase 5
 	}
 
-	// Create delegation manager
-	delegation := v2.NewDelegationManager("prism.agent.openclaw", "prism.workflow.task.complete")
+	// Start new workflow
+	runID := fmt.Sprintf("ng-%d", time.Now().Unix())
+	wfState := v2.NewWorkflowState(config)
+	wfState.RunID = runID
+	wfState.Status = v2.StatusInProgress
 
-	// Create engine (but don't call Run — we drive it manually)
-	emitter := &v2.LogEmitter{}
-	engine := v2.NewEngineWithState(config, wfState, emitter, delegation)
-
-	// Register gates for each phase
-	for _, phaseCfg := range config.Phases {
-		gate := v2.NewGateFromConfig(phaseCfg.Gate)
-		engine.RegisterGate(phaseCfg.Name, gate)
-	}
-
-	// Parse PROJECT_STATE.md and inject assigned task
+	// Parse PROJECT_STATE.md and assign task
 	assignedTask := wh.parseProjectStateTask()
-	if assignedTask != "" {
-		log.Printf("[V2-NATURAL-GATES] assigned task: %s", assignedTask)
-	} else {
-		assignedTask = "No task found in PROJECT_STATE.md. Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md to find tasks."
+	if assignedTask == "" {
+		assignedTask = "No task found in PROJECT_STATE.md. Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md and pick the first incomplete task."
 	}
+	log.Printf("[V2] assigned task: %s", truncateStr(assignedTask, 100))
 
-	// Auto-save goroutine
-	stopSave := make(chan struct{})
-	defer close(stopSave)
-	go v2.AutoSave(wfState, stateDir, 30*time.Second, stopSave)
+	// Build prompt — simple and directive
+	systemPromptFull := fmt.Sprintf(`You are an autonomous project work agent. You build production-quality code.
+
+## Your Task (assigned by the system — do not deviate)
+%s
+
+## Project Context
+- Repo: /Users/ema/projects/repos/BassBook/
+- State: /Users/ema/projects/repos/BassBook/PROJECT_STATE.md
+- Web: apps/web/ (Next.js 14) — pnpm build
+- API: apps/api/ (ASP.NET Core) — dotnet build
+- All file paths relative to /Users/ema/projects/repos/BassBook/
+
+## Workflow: 3 Phases
+
+### Phase 1: PLAN (max 5 iterations)
+- Read PROJECT_STATE.md and relevant files to understand the task
+- Create a feature branch: feature/bb-{task-slug}
+- Decide what files to change
+- The system will tell you when to move to EXECUTE
+
+### Phase 2: EXECUTE (max 25 iterations)
+- Write code using write_file
+- You can read files, but after 3 reads with no write, the system will force you to write
+- Stage with git_add, commit with git_commit, push with git_push
+- You CANNOT finish until you have committed AND pushed
+- The system blocks writes on main — you MUST be on a feature branch
+- Review your changes with git_diff before committing
+
+### Phase 3: REPORT (1 iteration)
+- Post a final summary with:
+  ## Change Summary
+  ## Proof of Work (file paths, commit hashes, branch name)
+  ## Next Steps
+- Start with <@1512994928769237002> to tag OpenClaw Lumi
+
+## Rules
+- Response format: PURE JSON only
+  - Tool: {"type":"tool_request","tool":"tool_name","input":{"key":"value"}}
+  - Final: {"type":"final","content":"your summary"}
+- No prose before JSON — the system only parses JSON
+- DO NOT ask Ema. Tag Lumi (<@1512994928769237002>) for direction.
+- You MUST write code, commit, and push. Reading is not enough.
+- Mango MUST review your work — this is mandatory.
+`, assignedTask)
+
+	messages := []provider.ChatMessage{
+		{Role: "system", Content: systemPromptFull},
+		{Role: "user", Content: fmt.Sprintf("Begin working on: %s", assignedTask)},
+	}
 
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
-
 	chatProv, chatErr := wh.providers.GetChatProvider(model)
 
-	// Build the natural gates system prompt
-	naturalGatesPrompt := buildNaturalGatesPrompt(config, userPrompt)
+	// V36 enforcement state
+	hasWritten := false
+	hasCommitted := false
+	hasPushed := false
+	readsInPhase := 0
+	currentBranch := wh.getCurrentBranch()
+	var lastToolHashes []string
+	var lastRespHashes []string
 
-	// Build initial messages
-	messages := []provider.ChatMessage{
-		{Role: "system", Content: naturalGatesPrompt},
-		{Role: "user", Content: fmt.Sprintf("%s\n\n## SYSTEM-ASSIGNED TASK (do not deviate)\n%s", userPrompt, assignedTask)},
-	}
+	phaseIdx := 0
+	phaseNames := []string{"PLAN", "EXECUTE", "REPORT"}
+	phaseMaxIter := []int{5, 25, 3}
+	phaseIter := 0
 
-	// Also inject BassBook repo path context
-	messages = append(messages, provider.ChatMessage{
-		Role: "system",
-		Content: "## Project Context\nProject repo: /Users/ema/projects/repos/BassBook/\nProject state: /Users/ema/projects/repos/BassBook/PROJECT_STATE.md\nWeb app: apps/web/ (Next.js 14)\nAPI: apps/api/ (ASP.NET Core)\nBuild: pnpm build (web), dotnet build (api)\nAll file paths should be absolute or relative to /Users/ema/projects/repos/BassBook/",
-	})
+	// Auto-save
+	stopSave := make(chan struct{})
+	defer close(stopSave)
+	go v2.AutoSave(wfState, stateDir, 15*time.Second, stopSave)
 
-	// Inject previous cycle wfState if resuming
-	if existingState != nil && existingState.Status == v2.StatusPaused {
-		messages = append(messages, provider.ChatMessage{
-			Role: "system",
-			Content: fmt.Sprintf("## Resuming Paused Workflow\nYou are resuming a workflow that was paused at phase: %s. Reason: %s. Continue from where you left off.", existingState.CurrentPhase(), existingState.PauseReason),
-		})
-	}
-
-	// Main interaction loop — drive the engine manually
-	maxTotalIterations := 60
-	for totalIter := 0; totalIter < maxTotalIterations; totalIter++ {
-		// Check if workflow is completed or blocked
-		if wfState.Status == v2.StatusCompleted {
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-			report := v2.FormatFinalReport(wfState)
-			wh.postToDiscord(report)
-			return report, totalPromptTokens, totalCompletionTokens
-		}
-		if wfState.Status == v2.StatusBlocked {
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-			return fmt.Sprintf("Workflow blocked: %s", wfState.PauseReason), totalPromptTokens, totalCompletionTokens
-		}
-
-		// Get current phase
-		phaseIdx := wfState.CurrentPhaseIdx
-		if phaseIdx >= len(config.Phases) {
-			// All phases done
-			wfState.Status = v2.StatusCompleted
-			wfState.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-			report := v2.FormatFinalReport(wfState)
-			wh.postToDiscord(report)
-			return report, totalPromptTokens, totalCompletionTokens
-		}
-
-		phaseCfg := config.Phases[phaseIdx]
-		phaseName := phaseCfg.Name
-		phase := engine.GetPhase(phaseIdx)
-		phaseState := wfState.PhaseStates[phaseName]
-
-		// Check if phase needs to be entered
-		if phaseState.Status == v2.PhaseStatusPending || phaseState.Status == "" {
-			log.Printf("[V2-NATURAL-GATES] entering phase %s (idx %d)", phaseName, phaseIdx)
-			phase.Enter(ctx, wfState)
-		}
-
-		// Check if workflow is paused (feedback gates)
-		if wfState.Status == v2.StatusPaused {
-			log.Printf("[V2-NATURAL-GATES] workflow paused at phase %s: %s", phaseName, wfState.PauseReason)
-
-			// Post to Discord for feedback
-			if phaseName == "FEEDBACK_PRE" {
-				planMessage := v2.FormatPlanForApproval(wfState)
-				wh.postToDiscord(planMessage)
-			} else if phaseName == "FEEDBACK_POST" {
-				diffOutput := wh.getGitDiff()
-				reviewMessage := v2.FormatReviewPackage(wfState, diffOutput)
-				wh.postToDiscord(reviewMessage)
-			}
-
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-			return fmt.Sprintf("Workflow paused at %s phase: %s. State saved for resumption. Next cycle will resume.", phaseName, wfState.PauseReason), totalPromptTokens, totalCompletionTokens
-		}
-
-		// Check if phase has exceeded its max iterations
-		if phaseState.Iterations >= phaseCfg.MaxIterations {
-			log.Printf("[V2-NATURAL-GATES] phase %s max iterations (%d) reached, advancing", phaseName, phaseCfg.MaxIterations)
-			phase.Exit(ctx, wfState)
-			wfState.PhaseStates[phaseName].Status = v2.PhaseStatusFallback
-
-			// Check if this is a blocking phase
-			if phaseCfg.Fallback.Blocks {
-				wfState.Status = v2.StatusBlocked
-				wfState.PauseReason = fmt.Sprintf("Phase %s failed (blocking)", phaseName)
-				v2.SaveCurrentWorkflowState(wfState, stateDir)
-				return fmt.Sprintf("Workflow blocked: phase %s failed", phaseName), totalPromptTokens, totalCompletionTokens
-			}
-
-			// Advance to next phase
-			wfState.CurrentPhaseIdx++
-			continue
-		}
-
-		// Check for phase-specific nudges
-		// Self-review: auto-inject git diff on first iteration
-		if phaseName == "SELF_REVIEW" && phaseState.Iterations == 0 {
-			diffOutput := wh.getGitDiff()
-			if diffOutput != "" {
+	for totalIter := 0; totalIter < 40; totalIter++ {
+		// Check phase transitions
+		if phaseIter >= phaseMaxIter[phaseIdx] {
+			if phaseIdx < 2 {
+				log.Printf("[V2] phase %s max iterations (%d) reached, advancing to %s", phaseNames[phaseIdx], phaseMaxIter[phaseIdx], phaseNames[phaseIdx+1])
+				phaseIdx++
+				phaseIter = 0
+				readsInPhase = 0
 				messages = append(messages, provider.ChatMessage{
 					Role: "system",
-					Content: fmt.Sprintf("## Your Changes (git diff)\n```diff\n%s\n```\n\nReview for errors. If clean, respond REVIEW_PASSED.", diffOutput),
+					Content: fmt.Sprintf("PHASE CHANGE: You are now in %s phase. Follow the %s phase instructions.", phaseNames[phaseIdx], phaseNames[phaseIdx]),
 				})
 			}
 		}
 
-		// Get system messages (gate feedback)
-		sysMsgs := wfState.GetSystemMessages(phaseName)
-		for _, msg := range sysMsgs {
-			messages = append(messages, provider.ChatMessage{Role: "system", Content: msg})
-		}
-
-		// Add phase context to messages
-		phaseContext := fmt.Sprintf("You are in phase: %s. %s Iteration %d/%d. Allowed tools: %s",
-			phaseName, phaseCfg.Description, phaseState.Iterations+1, phaseCfg.MaxIterations,
-			strings.Join(phaseCfg.AllowedTools, ", "))
+		// Add phase context
+		phaseContext := fmt.Sprintf("[PHASE: %s | iteration %d/%d | branch: %s | written: %v | committed: %v | pushed: %v]",
+			phaseNames[phaseIdx], phaseIter+1, phaseMaxIter[phaseIdx], currentBranch, hasWritten, hasCommitted, hasPushed)
 		messages = append(messages, provider.ChatMessage{Role: "system", Content: phaseContext})
+
+		// V36 enforcement: read budget in EXECUTE phase
+		if phaseIdx == 1 && readsInPhase >= 3 && !hasWritten {
+			messages = append(messages, provider.ChatMessage{
+				Role: "system",
+				Content: "READ BUDGET EXCEEDED. You have read enough. You MUST use write_file now. Further reads will be denied.",
+			})
+		}
 
 		// Call LLM
 		var responseText string
 		if chatErr == nil {
 			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
-				RunID:       fmt.Sprintf("wake-ng-%d", time.Now().Unix()),
+				RunID:       fmt.Sprintf("wake-v2-%d", time.Now().Unix()),
 				Agent:       agentCfg.ID,
 				Model:       model,
 				Messages:    messages,
@@ -1634,27 +1587,25 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 				MaxTokens:   4096,
 			})
 			if err != nil {
-				log.Printf("[V2-NATURAL-GATES] LLM error: %v", err)
+				log.Printf("[V2] LLM error: %v", err)
 				return fmt.Sprintf("Workflow failed: %v", err), totalPromptTokens, totalCompletionTokens
 			}
 			responseText = resp.Content
 			totalPromptTokens += resp.PromptTokens
 			totalCompletionTokens += resp.OutputTokens
-			wfState.AddTokens(resp.PromptTokens, resp.OutputTokens)
 		} else {
-			// Text provider fallback
 			prov, provErr := wh.providers.Get(model)
 			if provErr != nil {
-				return fmt.Sprintf("Workflow failed: no provider for %q", model), totalPromptTokens, totalCompletionTokens
+				return fmt.Sprintf("Workflow failed: no provider"), totalPromptTokens, totalCompletionTokens
 			}
-			flatPrompt := naturalGatesPrompt + "\n\n"
+			flatPrompt := systemPromptFull + "\n\n"
 			for _, m := range messages {
 				if m.Role == "user" || m.Role == "system" {
 					flatPrompt += m.Content + "\n\n"
 				}
 			}
 			resp, err := prov.Generate(ctx, provider.GenerateRequest{
-				RunID:       fmt.Sprintf("wake-ng-%d-iter%d", time.Now().Unix(), totalIter),
+				RunID:       fmt.Sprintf("wake-v2-%d-iter%d", time.Now().Unix(), totalIter),
 				Agent:       agentCfg.ID,
 				Model:       model,
 				Prompt:      flatPrompt,
@@ -1667,135 +1618,134 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 			responseText = resp.Text
 			totalPromptTokens += resp.PromptTokens
 			totalCompletionTokens += resp.OutputTokens
-			wfState.AddTokens(resp.PromptTokens, resp.OutputTokens)
 		}
 
-		log.Printf("[V2-NATURAL-GATES] phase %s iteration %d: got %d char response", phaseName, phaseState.Iterations+1, len(responseText))
+		log.Printf("[V2] phase %s iteration %d: %d chars", phaseNames[phaseIdx], phaseIter+1, len(responseText))
+		phaseIter++
 
-		// Process the LLM response through the V2 engine
-		action, _ := engine.ProcessLLMResponse(responseText)
-		wfState.IncrementPhaseIteration(phaseName)
+		// Stuck detection
+		respHash := simpleHash(responseText)
+		lastRespHashes = append(lastRespHashes, respHash)
+		if len(lastRespHashes) >= 3 && lastRespHashes[len(lastRespHashes)-1] == lastRespHashes[len(lastRespHashes)-2] && lastRespHashes[len(lastRespHashes)-1] == lastRespHashes[len(lastRespHashes)-3] {
+			messages = append(messages, provider.ChatMessage{Role: "system", Content: "STUCK: 3 identical responses. Try a different approach."})
+			lastRespHashes = nil
+		}
 
-		switch action.Type {
-		case v2.ActionToolCall:
-			if action.ToolRequest != nil {
-				// Check if tool is allowed in this phase
-				allowed := false
-				for _, t := range phaseCfg.AllowedTools {
-					if t == action.ToolRequest.Tool {
-						allowed = true
-						break
-					}
-				}
-				if !allowed {
+		// Parse response
+		parsed := agent.ParseAgentOutputWithFallback(responseText)
+
+		if parsed.Type == agent.ResponseFinal {
+			// V36: Commit-push enforcement
+			if hasWritten && !hasCommitted {
+				log.Printf("[V2] FINAL REJECTED: files written but not committed")
+				messages = append(messages, provider.ChatMessage{Role: "system", Content: "COMMIT REQUIRED: You wrote files but haven't committed. Use git_add then git_commit. Your final is rejected."})
+				phaseIter-- // don't count this as an iteration
+				continue
+			}
+			if hasCommitted && !hasPushed {
+				log.Printf("[V2] FINAL REJECTED: committed but not pushed")
+				messages = append(messages, provider.ChatMessage{Role: "system", Content: "PUSH REQUIRED: You committed but haven't pushed. Use git_push. Your final is rejected."})
+				phaseIter--
+				continue
+			}
+
+			// Clean JSON from output
+			cleanOutput := cleanForDiscord(parsed.Content)
+			log.Printf("[V2] workflow complete: %d iters, written=%v committed=%v pushed=%v", totalIter+1, hasWritten, hasCommitted, hasPushed)
+
+			// Save state
+			wfState.Status = v2.StatusCompleted
+			wfState.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+
+			return cleanOutput, totalPromptTokens, totalCompletionTokens
+		}
+
+		if parsed.Type == agent.ResponseToolRequest {
+			log.Printf("[V2] tool: %s (phase: %s)", parsed.ToolName, phaseNames[phaseIdx])
+
+			// V36: Read budget in EXECUTE phase
+			if phaseIdx == 1 && (parsed.ToolName == "read_file" || parsed.ToolName == "list_dir" || parsed.ToolName == "search_files") {
+				readsInPhase++
+				if readsInPhase > 3 && !hasWritten {
+					log.Printf("[V2] read budget exceeded, denying %s", parsed.ToolName)
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("Tool %q is not allowed in phase %s.", action.ToolRequest.Tool, phaseName)})
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: "READ BUDGET EXCEEDED. Use write_file now."})
 					continue
 				}
+			}
 
-				// V36 enforcement: branch protection
-				writeTools := map[string]bool{"write_file": true, "git_add": true, "git_commit": true, "git_push": true}
-				if writeTools[action.ToolRequest.Tool] {
-					branch := wh.getCurrentBranch()
-					if branch == "main" || branch == "master" {
-						messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-						messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Mutations blocked. Create a feature branch first.", branch)})
-						continue
-					}
-				}
-
-				// Execute the tool
-				result, execErr := exec.ExecuteWithPolicy(ctx, action.ToolRequest.Tool, agentCfg.ID, "bassbook", wfState.RunID, action.ToolRequest.Input)
-				if execErr != nil {
-					// V36: Handle git_commit "nothing to commit"
-					if action.ToolRequest.Tool == "git_commit" && (strings.Contains(execErr.Error(), "nothing to commit") || strings.Contains(execErr.Error(), "no changes")) {
-						messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-						messages = append(messages, provider.ChatMessage{Role: "user", Content: "Commit succeeded (nothing to commit — changes already staged). Proceed to push."})
-						continue
-					}
+			// V36: Branch protection
+			writeTools := map[string]bool{"write_file": true, "git_add": true, "git_commit": true, "git_push": true}
+			if writeTools[parsed.ToolName] {
+				currentBranch = wh.getCurrentBranch()
+				if currentBranch == "main" || currentBranch == "master" {
+					log.Printf("[V2] BRANCH PROTECTION: %s denied on %s", parsed.ToolName, currentBranch)
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("Tool %q failed: %v. Try a different approach.", action.ToolRequest.Tool, execErr)})
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Create a feature branch first (feature/bb-{task}).", currentBranch)})
 					continue
 				}
+			}
 
-				// Format result
-				resultStr := fmt.Sprintf("Tool %q result:\n%v", action.ToolRequest.Tool, result.Output)
-				if result.Error != "" {
-					resultStr = fmt.Sprintf("Tool %q error: %s", action.ToolRequest.Tool, result.Error)
+			// Execute tool
+			result, execErr := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", runID, parsed.ToolInput)
+			if execErr != nil {
+				// V36: Handle "nothing to commit"
+				if parsed.ToolName == "git_commit" && (strings.Contains(execErr.Error(), "nothing to commit") || strings.Contains(execErr.Error(), "no changes")) {
+					hasCommitted = true
+					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: "Commit succeeded (nothing to commit). Proceed to push."})
+					continue
 				}
-				if len(resultStr) > 3000 {
-					resultStr = resultStr[:1500] + fmt.Sprintf("\n... [truncated: %d total chars] ...\n", len(resultStr)) + resultStr[len(resultStr)-500:]
-				}
-
 				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-				messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
+				messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("Tool %q failed: %v. Try differently.", parsed.ToolName, execErr)})
+				continue
 			}
 
-		case v2.ActionPhaseComplete:
-			// Evaluate the gate
-			if gate, ok := engine.GetGate(phaseName); ok {
-				gateResult := gate.Evaluate(wfState)
-				wfState.SetPhaseGateResult(phaseName, gateResult)
-				if gateResult.Passed {
-					log.Printf("[V2-NATURAL-GATES] phase %s gate PASSED (score: %.2f)", phaseName, gateResult.Score)
-					phase.Exit(ctx, wfState)
-					wfState.PhaseStates[phaseName].Status = v2.PhaseStatusCompleted
-					wfState.CurrentPhaseIdx++
-				} else {
-					log.Printf("[V2-NATURAL-GATES] phase %s gate FAILED (score: %.2f): %s", phaseName, gateResult.Score, gateResult.Reason)
-					wfState.AddSystemMessage(phaseName, gateResult.Reason)
-				}
-			} else {
-				// No gate — just advance
-				phase.Exit(ctx, wfState)
-				wfState.PhaseStates[phaseName].Status = v2.PhaseStatusCompleted
-				wfState.CurrentPhaseIdx++
+			// Track state
+			switch parsed.ToolName {
+			case "write_file":
+				hasWritten = true
+			case "git_add":
+				// staging
+			case "git_commit":
+				hasCommitted = true
+			case "git_push":
+				hasPushed = true
 			}
 
-		case v2.ActionFinal:
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-			report := action.FinalContent
-			if wfState.Status == v2.StatusCompleted || wfState.CurrentPhaseIdx >= len(config.Phases) {
-				report = v2.FormatFinalReport(wfState)
-				wh.postToDiscord(report)
+			// Format result (truncate large outputs)
+			resultStr := fmt.Sprintf("Tool %q result:\n%v", parsed.ToolName, result.Output)
+			if result.Error != "" {
+				resultStr = fmt.Sprintf("Tool %q error: %s", parsed.ToolName, result.Error)
 			}
-			return report, totalPromptTokens, totalCompletionTokens
-
-		case v2.ActionWaitExternal:
-			// Feedback gate — pause and save
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-			return fmt.Sprintf("Workflow paused at %s waiting for feedback. State saved.", phaseName), totalPromptTokens, totalCompletionTokens
-
-		case v2.ActionContinue:
-			// Check gate after each iteration
-			if gate, ok := engine.GetGate(phaseName); ok {
-				gateResult := gate.Evaluate(wfState)
-				if gateResult.Passed {
-					log.Printf("[V2-NATURAL-GATES] phase %s gate PASSED during continue (score: %.2f)", phaseName, gateResult.Score)
-					wfState.SetPhaseGateResult(phaseName, gateResult)
-					phase.Exit(ctx, wfState)
-					wfState.PhaseStates[phaseName].Status = v2.PhaseStatusCompleted
-					wfState.CurrentPhaseIdx++
-				}
+			if len(resultStr) > 3000 {
+				resultStr = resultStr[:1500] + fmt.Sprintf("\n... [truncated: %d total] ...\n", len(resultStr)) + resultStr[len(resultStr)-500:]
 			}
+
 			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+			messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
+
+			// Stuck detection for tool calls
+			toolHash := simpleHash(parsed.ToolName + fmt.Sprintf("%v", parsed.ToolInput))
+			lastToolHashes = append(lastToolHashes, toolHash)
+			if len(lastToolHashes) >= 3 && lastToolHashes[len(lastToolHashes)-1] == lastToolHashes[len(lastToolHashes)-2] && lastToolHashes[len(lastToolHashes)-1] == lastToolHashes[len(lastToolHashes)-3] {
+				messages = append(messages, provider.ChatMessage{Role: "system", Content: fmt.Sprintf("STUCK: calling %s with same args 3 times. Try different approach.", parsed.ToolName)})
+				lastToolHashes = nil
+			}
+
+			continue
 		}
 
-		// Check for phase cycling (e.g., FEEDBACK_POST → EXECUTION for fixes)
-		if wfState.NextPhase != "" {
-			for i, p := range config.Phases {
-				if p.Name == wfState.NextPhase {
-					wfState.CurrentPhaseIdx = i
-					wfState.NextPhase = ""
-					break
-				}
-			}
-		}
+		// Unknown response — treat as final
+		return responseText, totalPromptTokens, totalCompletionTokens
 	}
 
-	// Max iterations reached
+	// Max iterations
+	log.Printf("[V2] max iterations. written=%v committed=%v pushed=%v", hasWritten, hasCommitted, hasPushed)
+	wfState.Status = v2.StatusCompleted
 	v2.SaveCurrentWorkflowState(wfState, stateDir)
-	return formatWorkflowReport(wfState), totalPromptTokens, totalCompletionTokens
+	return fmt.Sprintf("Workflow reached max iterations. written=%v committed=%v pushed=%v. See logs.", hasWritten, hasCommitted, hasPushed), totalPromptTokens, totalCompletionTokens
 }
 
 // buildNaturalGatesPrompt creates the system prompt for the Natural Gates workflow.
