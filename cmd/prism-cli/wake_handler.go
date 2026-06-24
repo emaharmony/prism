@@ -1697,6 +1697,13 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 
 			// Execute tool
 			log.Printf("[V2] executing tool %s with input: %v", parsed.ToolName, parsed.ToolInput)
+			// Inject repo_path for git tools if not provided — default to BassBook
+			gitTools := map[string]bool{"git_checkout": true, "git_status": true, "git_log": true, "git_diff": true, "git_branch_list": true, "git_add": true, "git_commit": true, "git_push": true}
+			if gitTools[parsed.ToolName] {
+				if _, ok := parsed.ToolInput["repo_path"]; !ok {
+					parsed.ToolInput["repo_path"] = "/Users/ema/projects/repos/BassBook"
+				}
+			}
 			result, execErr := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", runID, parsed.ToolInput)
 			if execErr != nil {
 				log.Printf("[V2] tool %s error: %v", parsed.ToolName, execErr)
