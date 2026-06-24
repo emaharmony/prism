@@ -704,6 +704,7 @@ func RegisterBuiltinsWithRoots(registry *Registry, workspaceRoot string, maxFile
 	registry.Register(&GitLogTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: readRoots}})
 	registry.Register(&GitDiffTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: readRoots}})
 	registry.Register(&GitBranchListTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: readRoots}})
+	registry.Register(&GitCheckoutTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 
 	return registry
 }
