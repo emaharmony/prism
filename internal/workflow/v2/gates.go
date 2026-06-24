@@ -16,6 +16,14 @@ type AssumptionThresholdGate struct {
 func (g *AssumptionThresholdGate) Name() string { return "assumption_threshold" }
 
 func (g *AssumptionThresholdGate) Evaluate(state *WorkflowState) GateResult {
+	if len(state.Assumptions) == 0 {
+		return GateResult{
+			Passed:  false,
+			Score:   999,
+			Reason:  "No assumptions declared. Declare at least one: ASSUMPTION: {statement} | confidence: {0.0-1.0} | criticality: {blocker|high|medium|low}",
+			Missing: []string{"at least one assumption"},
+		}
+	}
 	score := state.GetAssumptionScore(g.Weights)
 	passed := score < g.Threshold
 
@@ -56,6 +64,21 @@ type ConfidenceThresholdGate struct {
 func (g *ConfidenceThresholdGate) Name() string { return "confidence_threshold" }
 
 func (g *ConfidenceThresholdGate) Evaluate(state *WorkflowState) GateResult {
+	anySet := false
+	for _, cd := range state.ConfidenceMatrix {
+		if cd.Score > 0 {
+			anySet = true
+			break
+		}
+	}
+	if !anySet {
+		return GateResult{
+			Passed:  false,
+			Score:   0.0,
+			Reason:  "No confidence declared. Declare each domain: CONFIDENCE: {domain} | {0.0-1.0} | reason: {why}",
+			Missing: g.Domains,
+		}
+	}
 	minConfidence := state.GetMinConfidence()
 	passed := minConfidence >= g.Threshold
 
