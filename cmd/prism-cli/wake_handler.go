@@ -1835,6 +1835,8 @@ Your work is reviewed by Lumi AND Mango. Mango is ALWAYS required.
 If issues found: fix and re-submit. Max 3 review cycles.
 
 ### 7. REPORT — Final Report with Proof
+**MANDATORY**: Every report MUST tag <@1512994928769237002> (OpenClaw Lumi) at the start.
+Format: <@1512994928769237002> + your report content. This is non-negotiable — Lumi monitors and relays your updates to Ema.
 Include all 5 sections:
 ## Change Summary
 ## Proof of Work (file paths, commit hashes, PR URLs)
