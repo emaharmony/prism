@@ -346,6 +346,20 @@ func (e *Engine) ProcessLLMResponse(response string) (PhaseAction, error) {
 	return phase.RunIteration(context.Background(), e.state, response)
 }
 
+// GetPhase returns the phase at the given index.
+func (e *Engine) GetPhase(idx int) Phase {
+	if idx < 0 || idx >= len(e.phases) {
+		return nil
+	}
+	return e.phases[idx]
+}
+
+// GetGate returns the gate for a given phase name.
+func (e *Engine) GetGate(phaseName string) (Gate, bool) {
+	g, ok := e.gates[phaseName]
+	return g, ok
+}
+
 // GetState returns the current workflow state.
 func (e *Engine) GetState() *WorkflowState {
 	return e.state
