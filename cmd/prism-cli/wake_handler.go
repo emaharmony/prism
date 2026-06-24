@@ -1453,34 +1453,28 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 	// Load or create workflow config
 	config := v2.DefaultConfig()
 
+	var wfState *v2.WorkflowState
 	// Check for existing workflow state (resumability)
 	stateDir := "/Users/ema/projects/repos/prism/runs/natural-gates"
 	existingState, err := v2.LoadCurrentWorkflowState(stateDir)
-	if err == nil && existingState != nil && existingState.Status == v2.StatusPaused {
-		log.Printf("[V2-NATURAL-GATES] resuming paused workflow %s at phase %s", existingState.RunID, existingState.CurrentPhase())
-		// Resume — create engine with existing state
-		engine := v2.NewEngineWithState(config, existingState, &v2.LogEmitter{}, nil)
-		// Run the resumed workflow
-		state, err := engine.Run(ctx)
-		if err != nil {
-			log.Printf("[V2-NATURAL-GATES] resumed workflow error: %v", err)
-			return fmt.Sprintf("Workflow resumed but encountered error: %v", err), 0, 0
-		}
-		return formatWorkflowReport(state), state.GetTotalPromptTokens(), state.GetTotalCompletionTokens()
+	if err == nil && existingState != nil && (existingState.Status == v2.StatusPaused || existingState.Status == v2.StatusInProgress) {
+		log.Printf("[V2-NATURAL-GATES] resuming workflow %s at phase idx %d", existingState.RunID, existingState.CurrentPhaseIdx)
+		wfState = existingState
+	} else {
+		// Start new workflow
+		runID := fmt.Sprintf("ng-%d", time.Now().Unix())
+		wfState = v2.NewWorkflowState(config)
+		wfState.RunID = runID
+		wfState.CorrelationID = runID
+		wfState.Status = v2.StatusInProgress
 	}
-
-	// Start new workflow
-	runID := fmt.Sprintf("ng-%d", time.Now().Unix())
-	state := v2.NewWorkflowState(config)
-	state.RunID = runID
-	state.CorrelationID = runID
 
 	// Create delegation manager
 	delegation := v2.NewDelegationManager("prism.agent.openclaw", "prism.workflow.task.complete")
 
-	// Create engine
+	// Create engine (but don't call Run — we drive it manually)
 	emitter := &v2.LogEmitter{}
-	engine := v2.NewEngineWithState(config, state, emitter, delegation)
+	engine := v2.NewEngineWithState(config, wfState, emitter, delegation)
 
 	// Register gates for each phase
 	for _, phaseCfg := range config.Phases {
@@ -1491,12 +1485,7 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 	// Auto-save goroutine
 	stopSave := make(chan struct{})
 	defer close(stopSave)
-	go v2.AutoSave(state, stateDir, 30*time.Second, stopSave)
-
-	// Run the workflow
-	// The engine handles phase transitions, gate checks, and delegation.
-	// The LLM interaction loop is handled by the engine through ProcessLLMResponse.
-	// We need to drive the LLM calls here.
+	go v2.AutoSave(wfState, stateDir, 30*time.Second, stopSave)
 
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
@@ -1505,48 +1494,125 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 
 	// Build the natural gates system prompt
 	naturalGatesPrompt := buildNaturalGatesPrompt(config, userPrompt)
+
+	// Build initial messages
 	messages := []provider.ChatMessage{
 		{Role: "system", Content: naturalGatesPrompt},
 		{Role: "user", Content: userPrompt},
 	}
 
-	// Main interaction loop
-	for {
-		phaseName := state.CurrentPhase()
-		if phaseName == "" {
-			break
+	// Inject previous cycle wfState if resuming
+	if existingState != nil && existingState.Status == v2.StatusPaused {
+		messages = append(messages, provider.ChatMessage{
+			Role: "system",
+			Content: fmt.Sprintf("## Resuming Paused Workflow\nYou are resuming a workflow that was paused at phase: %s. Reason: %s. Continue from where you left off.", existingState.CurrentPhase(), existingState.PauseReason),
+		})
+	}
+
+	// Main interaction loop — drive the engine manually
+	maxTotalIterations := 60
+	for totalIter := 0; totalIter < maxTotalIterations; totalIter++ {
+		// Check if workflow is completed or blocked
+		if wfState.Status == v2.StatusCompleted {
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+			report := v2.FormatFinalReport(wfState)
+			wh.postToDiscord(report)
+			return report, totalPromptTokens, totalCompletionTokens
+		}
+		if wfState.Status == v2.StatusBlocked {
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+			return fmt.Sprintf("Workflow blocked: %s", wfState.PauseReason), totalPromptTokens, totalCompletionTokens
+		}
+
+		// Get current phase
+		phaseIdx := wfState.CurrentPhaseIdx
+		if phaseIdx >= len(config.Phases) {
+			// All phases done
+			wfState.Status = v2.StatusCompleted
+			wfState.CompletedAt = time.Now().UTC().Format(time.RFC3339)
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+			report := v2.FormatFinalReport(wfState)
+			wh.postToDiscord(report)
+			return report, totalPromptTokens, totalCompletionTokens
+		}
+
+		phaseCfg := config.Phases[phaseIdx]
+		phaseName := phaseCfg.Name
+		phase := engine.GetPhase(phaseIdx)
+		phaseState := wfState.PhaseStates[phaseName]
+
+		// Check if phase needs to be entered
+		if phaseState.Status == v2.PhaseStatusPending || phaseState.Status == "" {
+			log.Printf("[V2-NATURAL-GATES] entering phase %s (idx %d)", phaseName, phaseIdx)
+			phase.Enter(ctx, wfState)
 		}
 
 		// Check if workflow is paused (feedback gates)
-		if state.Status == v2.StatusPaused {
-			log.Printf("[V2-NATURAL-GATES] workflow paused at phase %s: %s", phaseName, state.PauseReason)
+		if wfState.Status == v2.StatusPaused {
+			log.Printf("[V2-NATURAL-GATES] workflow paused at phase %s: %s", phaseName, wfState.PauseReason)
 
 			// Post to Discord for feedback
 			if phaseName == "FEEDBACK_PRE" {
-				planMessage := v2.FormatPlanForApproval(state)
+				planMessage := v2.FormatPlanForApproval(wfState)
 				wh.postToDiscord(planMessage)
 			} else if phaseName == "FEEDBACK_POST" {
 				diffOutput := wh.getGitDiff()
-				reviewMessage := v2.FormatReviewPackage(state, diffOutput)
+				reviewMessage := v2.FormatReviewPackage(wfState, diffOutput)
 				wh.postToDiscord(reviewMessage)
 			}
 
-			// Save state and return — next wake cycle will resume
-			v2.SaveCurrentWorkflowState(state, stateDir)
-			return fmt.Sprintf("Workflow paused at %s phase: %s. State saved for resumption.", phaseName, state.PauseReason), totalPromptTokens, totalCompletionTokens
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+			return fmt.Sprintf("Workflow paused at %s phase: %s. State saved for resumption. Next cycle will resume.", phaseName, wfState.PauseReason), totalPromptTokens, totalCompletionTokens
 		}
 
-		// Get system messages to inject (gate feedback)
-		sysMsgs := state.GetSystemMessages(phaseName)
+		// Check if phase has exceeded its max iterations
+		if phaseState.Iterations >= phaseCfg.MaxIterations {
+			log.Printf("[V2-NATURAL-GATES] phase %s max iterations (%d) reached, advancing", phaseName, phaseCfg.MaxIterations)
+			phase.Exit(ctx, wfState)
+			wfState.PhaseStates[phaseName].Status = v2.PhaseStatusFallback
+
+			// Check if this is a blocking phase
+			if phaseCfg.Fallback.Blocks {
+				wfState.Status = v2.StatusBlocked
+				wfState.PauseReason = fmt.Sprintf("Phase %s failed (blocking)", phaseName)
+				v2.SaveCurrentWorkflowState(wfState, stateDir)
+				return fmt.Sprintf("Workflow blocked: phase %s failed", phaseName), totalPromptTokens, totalCompletionTokens
+			}
+
+			// Advance to next phase
+			wfState.CurrentPhaseIdx++
+			continue
+		}
+
+		// Check for phase-specific nudges
+		// Self-review: auto-inject git diff on first iteration
+		if phaseName == "SELF_REVIEW" && phaseState.Iterations == 0 {
+			diffOutput := wh.getGitDiff()
+			if diffOutput != "" {
+				messages = append(messages, provider.ChatMessage{
+					Role: "system",
+					Content: fmt.Sprintf("## Your Changes (git diff)\n```diff\n%s\n```\n\nReview for errors. If clean, respond REVIEW_PASSED.", diffOutput),
+				})
+			}
+		}
+
+		// Get system messages (gate feedback)
+		sysMsgs := wfState.GetSystemMessages(phaseName)
 		for _, msg := range sysMsgs {
 			messages = append(messages, provider.ChatMessage{Role: "system", Content: msg})
 		}
+
+		// Add phase context to messages
+		phaseContext := fmt.Sprintf("You are in phase: %s. %s Iteration %d/%d. Allowed tools: %s",
+			phaseName, phaseCfg.Description, phaseState.Iterations+1, phaseCfg.MaxIterations,
+			strings.Join(phaseCfg.AllowedTools, ", "))
+		messages = append(messages, provider.ChatMessage{Role: "system", Content: phaseContext})
 
 		// Call LLM
 		var responseText string
 		if chatErr == nil {
 			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
-				RunID:       fmt.Sprintf("wake-natural-gates-%d", time.Now().Unix()),
+				RunID:       fmt.Sprintf("wake-ng-%d", time.Now().Unix()),
 				Agent:       agentCfg.ID,
 				Model:       model,
 				Messages:    messages,
@@ -1560,6 +1626,7 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 			responseText = resp.Content
 			totalPromptTokens += resp.PromptTokens
 			totalCompletionTokens += resp.OutputTokens
+			wfState.AddTokens(resp.PromptTokens, resp.OutputTokens)
 		} else {
 			// Text provider fallback
 			prov, provErr := wh.providers.Get(model)
@@ -1568,12 +1635,12 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 			}
 			flatPrompt := naturalGatesPrompt + "\n\n"
 			for _, m := range messages {
-				if m.Role == "user" {
+				if m.Role == "user" || m.Role == "system" {
 					flatPrompt += m.Content + "\n\n"
 				}
 			}
 			resp, err := prov.Generate(ctx, provider.GenerateRequest{
-				RunID:       fmt.Sprintf("wake-natural-gates-%d", time.Now().Unix()),
+				RunID:       fmt.Sprintf("wake-ng-%d-iter%d", time.Now().Unix(), totalIter),
 				Agent:       agentCfg.ID,
 				Model:       model,
 				Prompt:      flatPrompt,
@@ -1586,59 +1653,135 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 			responseText = resp.Text
 			totalPromptTokens += resp.PromptTokens
 			totalCompletionTokens += resp.OutputTokens
+			wfState.AddTokens(resp.PromptTokens, resp.OutputTokens)
 		}
 
+		log.Printf("[V2-NATURAL-GATES] phase %s iteration %d: got %d char response", phaseName, phaseState.Iterations+1, len(responseText))
+
 		// Process the LLM response through the V2 engine
-		action, err := engine.ProcessLLMResponse(responseText)
-		if err != nil {
-			log.Printf("[V2-NATURAL-GATES] process error: %v", err)
-		}
+		action, _ := engine.ProcessLLMResponse(responseText)
+		wfState.IncrementPhaseIteration(phaseName)
 
 		switch action.Type {
 		case v2.ActionToolCall:
 			if action.ToolRequest != nil {
-				// Execute the tool
-				result, execErr := exec.ExecuteWithPolicy(ctx, action.ToolRequest.Tool, agentCfg.ID, "bassbook", runID, action.ToolRequest.Input)
-				if execErr != nil {
-					resultStr := fmt.Sprintf("Tool %q failed: %v", action.ToolRequest.Tool, execErr)
+				// Check if tool is allowed in this phase
+				allowed := false
+				for _, t := range phaseCfg.AllowedTools {
+					if t == action.ToolRequest.Tool {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
-				} else {
-					resultStr := fmt.Sprintf("Tool %q result:\n%v", action.ToolRequest.Tool, result.Output)
-					if result.Error != "" {
-						resultStr = fmt.Sprintf("Tool %q error: %s", action.ToolRequest.Tool, result.Error)
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("Tool %q is not allowed in phase %s.", action.ToolRequest.Tool, phaseName)})
+					continue
+				}
+
+				// V36 enforcement: branch protection
+				writeTools := map[string]bool{"write_file": true, "git_add": true, "git_commit": true, "git_push": true}
+				if writeTools[action.ToolRequest.Tool] {
+					branch := wh.getCurrentBranch()
+					if branch == "main" || branch == "master" {
+						messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+						messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Mutations blocked. Create a feature branch first.", branch)})
+						continue
+					}
+				}
+
+				// Execute the tool
+				result, execErr := exec.ExecuteWithPolicy(ctx, action.ToolRequest.Tool, agentCfg.ID, "bassbook", wfState.RunID, action.ToolRequest.Input)
+				if execErr != nil {
+					// V36: Handle git_commit "nothing to commit"
+					if action.ToolRequest.Tool == "git_commit" && (strings.Contains(execErr.Error(), "nothing to commit") || strings.Contains(execErr.Error(), "no changes")) {
+						messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+						messages = append(messages, provider.ChatMessage{Role: "user", Content: "Commit succeeded (nothing to commit — changes already staged). Proceed to push."})
+						continue
 					}
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
+					messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("Tool %q failed: %v. Try a different approach.", action.ToolRequest.Tool, execErr)})
+					continue
+				}
+
+				// Format result
+				resultStr := fmt.Sprintf("Tool %q result:\n%v", action.ToolRequest.Tool, result.Output)
+				if result.Error != "" {
+					resultStr = fmt.Sprintf("Tool %q error: %s", action.ToolRequest.Tool, result.Error)
+				}
+				if len(resultStr) > 3000 {
+					resultStr = resultStr[:1500] + fmt.Sprintf("\n... [truncated: %d total chars] ...\n", len(resultStr)) + resultStr[len(resultStr)-500:]
+				}
+
+				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
+				messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
+			}
+
+		case v2.ActionPhaseComplete:
+			// Evaluate the gate
+			if gate, ok := engine.GetGate(phaseName); ok {
+				gateResult := gate.Evaluate(wfState)
+				wfState.SetPhaseGateResult(phaseName, gateResult)
+				if gateResult.Passed {
+					log.Printf("[V2-NATURAL-GATES] phase %s gate PASSED (score: %.2f)", phaseName, gateResult.Score)
+					phase.Exit(ctx, wfState)
+					wfState.PhaseStates[phaseName].Status = v2.PhaseStatusCompleted
+					wfState.CurrentPhaseIdx++
+				} else {
+					log.Printf("[V2-NATURAL-GATES] phase %s gate FAILED (score: %.2f): %s", phaseName, gateResult.Score, gateResult.Reason)
+					wfState.AddSystemMessage(phaseName, gateResult.Reason)
+				}
+			} else {
+				// No gate — just advance
+				phase.Exit(ctx, wfState)
+				wfState.PhaseStates[phaseName].Status = v2.PhaseStatusCompleted
+				wfState.CurrentPhaseIdx++
+			}
+
+		case v2.ActionFinal:
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+			report := action.FinalContent
+			if wfState.Status == v2.StatusCompleted || wfState.CurrentPhaseIdx >= len(config.Phases) {
+				report = v2.FormatFinalReport(wfState)
+				wh.postToDiscord(report)
+			}
+			return report, totalPromptTokens, totalCompletionTokens
+
+		case v2.ActionWaitExternal:
+			// Feedback gate — pause and save
+			v2.SaveCurrentWorkflowState(wfState, stateDir)
+			return fmt.Sprintf("Workflow paused at %s waiting for feedback. State saved.", phaseName), totalPromptTokens, totalCompletionTokens
+
+		case v2.ActionContinue:
+			// Check gate after each iteration
+			if gate, ok := engine.GetGate(phaseName); ok {
+				gateResult := gate.Evaluate(wfState)
+				if gateResult.Passed {
+					log.Printf("[V2-NATURAL-GATES] phase %s gate PASSED during continue (score: %.2f)", phaseName, gateResult.Score)
+					wfState.SetPhaseGateResult(phaseName, gateResult)
+					phase.Exit(ctx, wfState)
+					wfState.PhaseStates[phaseName].Status = v2.PhaseStatusCompleted
+					wfState.CurrentPhaseIdx++
 				}
 			}
-		case v2.ActionPhaseComplete:
 			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-			messages = append(messages, provider.ChatMessage{Role: "system", Content: "Phase complete. Transitioning to next phase."})
-		case v2.ActionFinal:
-			v2.SaveCurrentWorkflowState(state, stateDir)
-			return action.FinalContent, totalPromptTokens, totalCompletionTokens
-		case v2.ActionWaitExternal:
-			// Workflow needs to pause for external input (feedback gate)
-			v2.SaveCurrentWorkflowState(state, stateDir)
-			return fmt.Sprintf("Workflow paused at %s phase waiting for feedback. State saved.", phaseName), totalPromptTokens, totalCompletionTokens
 		}
 
-		// Check if workflow is done
-		if state.Status == v2.StatusCompleted {
-			v2.SaveCurrentWorkflowState(state, stateDir)
-			report := v2.FormatFinalReport(state)
-			wh.postToDiscord(report)
-			return report, totalPromptTokens, totalCompletionTokens
-		}
-		if state.Status == v2.StatusBlocked {
-			v2.SaveCurrentWorkflowState(state, stateDir)
-			return fmt.Sprintf("Workflow blocked at phase %s. State saved for review.", phaseName), totalPromptTokens, totalCompletionTokens
+		// Check for phase cycling (e.g., FEEDBACK_POST → EXECUTION for fixes)
+		if wfState.NextPhase != "" {
+			for i, p := range config.Phases {
+				if p.Name == wfState.NextPhase {
+					wfState.CurrentPhaseIdx = i
+					wfState.NextPhase = ""
+					break
+				}
+			}
 		}
 	}
 
-	v2.SaveCurrentWorkflowState(state, stateDir)
-	return formatWorkflowReport(state), totalPromptTokens, totalCompletionTokens
+	// Max iterations reached
+	v2.SaveCurrentWorkflowState(wfState, stateDir)
+	return formatWorkflowReport(wfState), totalPromptTokens, totalCompletionTokens
 }
 
 // buildNaturalGatesPrompt creates the system prompt for the Natural Gates workflow.
