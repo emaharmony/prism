@@ -1729,7 +1729,9 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 			case "git_commit":
 				hasCommitted = true
 			case "git_push":
-				hasPushed = true
+				if result.Success {
+					hasPushed = true
+				}
 			}
 
 			// Format result (truncate large outputs)
