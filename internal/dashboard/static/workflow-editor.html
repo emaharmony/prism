@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prism — Gated Loop Editor</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:14px; }
+  header h1 { font-size:16px; margin:0; }
+  .pill { font-size:12px; color:#8b949e; }
+  main { display:grid; grid-template-columns: 1fr 380px; gap:16px; padding:16px; align-items:start; }
+  @media (max-width: 900px){ main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:#8b949e; margin:0 0 10px; }
+  .phase { border:1px solid var(--border); border-radius:6px; padding:10px; margin-bottom:10px; background:#0d1117; }
+  .phase .row { display:flex; gap:8px; align-items:center; margin-bottom:6px; flex-wrap:wrap; }
+  label { font-size:11px; color:#8b949e; display:block; margin-bottom:2px; }
+  input, select, textarea { background:#010409; color:var(--fg); border:1px solid var(--border); border-radius:5px; padding:5px 7px; font-size:13px; font-family:inherit; }
+  input[type=number]{ width:80px; }
+  .grow { flex:1; min-width:120px; }
+  .field { display:flex; flex-direction:column; }
+  button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:5px; padding:6px 12px; font-size:13px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#0d1117; border-color:var(--accent); font-weight:600; }
+  button.danger { color:var(--err); }
+  button.ok { color:var(--ok); }
+  .bar { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .gate { border-top:1px dashed var(--border); margin-top:6px; padding-top:6px; }
+  #log { font-family:ui-monospace,Menlo,monospace; font-size:12px; height:260px; overflow:auto; background:#010409; border:1px solid var(--border); border-radius:6px; padding:8px; white-space:pre-wrap; }
+  .evt { margin-bottom:3px; }
+  .evt .t { color:var(--accent); }
+  .evt .paused { color:var(--warn); }
+  .evt .done { color:var(--ok); }
+  .toast { position:fixed; bottom:16px; right:16px; padding:10px 14px; border-radius:6px; font-size:13px; display:none; }
+  .toast.ok { background:#10331b; border:1px solid var(--ok); color:var(--ok); }
+  .toast.err { background:#3a1414; border:1px solid var(--err); color:var(--err); }
+  small.help { color:#6e7681; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔁 Gated Loop Editor</h1>
+  <span class="pill" id="cfgName">loading…</span>
+  <span class="pill" id="apiInfo"></span>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Phases &amp; Gates</h2>
+    <div id="phases"></div>
+    <div class="bar">
+      <button onclick="addPhase()">+ Add phase</button>
+      <button class="primary" onclick="saveConfig()">💾 Save workflow</button>
+      <button onclick="loadConfig()">↻ Reload</button>
+    </div>
+    <p><small class="help">Order is execution order. Gate types: assumption_threshold, confidence_threshold, plan_completeness, approval, task_completion, review_pass, report_completeness. Saving requires <code>prism.workflow_config</code> to be set.</small></p>
+  </section>
+
+  <aside style="display:flex; flex-direction:column; gap:16px;">
+    <section class="panel">
+      <h2>Run the loop</h2>
+      <div class="field"><label>Project ID (blank = default)</label><input id="runProject" placeholder="bassbook"></div>
+      <div class="field" style="margin-top:6px;"><label>Prompt</label><textarea id="runPrompt" rows="3" placeholder="Add a dark-mode toggle to settings"></textarea></div>
+      <div class="bar"><button class="primary" onclick="startRun()">▶ Start gated loop</button></div>
+    </section>
+
+    <section class="panel">
+      <h2>Live phase events</h2>
+      <div id="log"></div>
+      <div class="bar">
+        <input id="reviewer" placeholder="reviewer (optional)" class="grow">
+      </div>
+      <div class="bar">
+        <button class="ok" onclick="feedback('approved')">✓ Approve</button>
+        <button onclick="feedback('changes_requested')">↩ Request changes</button>
+        <button class="danger" onclick="feedback('rejected')">✕ Reject</button>
+      </div>
+      <p><small class="help">Approve/request-changes/reject releases a paused FEEDBACK gate. Request-changes loops the workflow back.</small></p>
+    </section>
+  </aside>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = window.location.origin.replace(/:\d+/, '') + ':8322';
+document.getElementById('apiInfo').textContent = API;
+let currentConfig = null;
+
+function toast(msg, ok){ const t=document.getElementById('toast'); t.textContent=msg; t.className='toast '+(ok?'ok':'err'); t.style.display='block'; setTimeout(()=>t.style.display='none', 3500); }
+function csv(arr){ return (arr||[]).join(', '); }
+function parseCsv(s){ return s.split(',').map(x=>x.trim()).filter(Boolean); }
+
+async function loadConfig(){
+  try {
+    const r = await fetch(API + '/api/v1/workflow-config');
+    if(!r.ok) throw new Error(await r.text());
+    currentConfig = await r.json();
+    document.getElementById('cfgName').textContent = (currentConfig.name||'workflow') + ' · v' + (currentConfig.version||1) + ' · ' + (currentConfig.phases||[]).length + ' phases';
+    renderPhases();
+  } catch(e){ toast('Load failed: '+e.message, false); }
+}
+
+function renderPhases(){
+  const wrap = document.getElementById('phases');
+  wrap.innerHTML = '';
+  (currentConfig.phases||[]).forEach((p, i) => {
+    const g = p.gate || {};
+    const el = document.createElement('div');
+    el.className = 'phase';
+    el.innerHTML = `
+      <div class="row">
+        <div class="field"><label>Name</label><input data-f="name" value="${p.name||''}"></div>
+        <div class="field"><label>Type</label>
+          <select data-f="type">
+            ${['probe','research','plan','feedback_pre','execution','feedback_post','report'].map(t=>`<option ${t===p.type?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label>Max iter</label><input type="number" data-f="max_iterations" value="${p.max_iterations||0}"></div>
+        <div style="margin-left:auto; display:flex; gap:6px; align-items:end;">
+          <button onclick="movePhase(${i},-1)">↑</button>
+          <button onclick="movePhase(${i},1)">↓</button>
+          <button class="danger" onclick="removePhase(${i})">✕</button>
+        </div>
+      </div>
+      <div class="field"><label>Allowed tools (comma-separated)</label><input data-f="allowed_tools" class="grow" value="${csv(p.allowed_tools)}"></div>
+      <div class="gate">
+        <div class="row">
+          <div class="field"><label>Gate type</label>
+            <select data-g="type">
+              ${['','assumption_threshold','confidence_threshold','plan_completeness','approval','task_completion','review_pass','report_completeness'].map(t=>`<option ${t===(g.type||'')?'selected':''}>${t}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field"><label>Threshold</label><input type="number" step="0.1" data-g="threshold" value="${g.threshold||0}"></div>
+          <div class="field"><label>Mode</label><input data-g="mode" value="${g.mode||''}" placeholder="require_any / partial_allowed"></div>
+          <div class="field"><label>Max warn</label><input type="number" data-g="max_warn" value="${g.max_warn||0}"></div>
+        </div>
+        <div class="row">
+          <div class="field grow"><label>Approvers (comma)</label><input data-g="approvers" value="${csv(g.approvers)}" placeholder="ema"></div>
+          <div class="field grow"><label>Required reviewers (comma)</label><input data-g="required_reviewers" value="${csv(g.required_reviewers)}" placeholder="ema, mango"></div>
+        </div>
+      </div>`;
+    el.dataset.idx = i;
+    wrap.appendChild(el);
+  });
+}
+
+function collectPhases(){
+  const out = [];
+  document.querySelectorAll('#phases .phase').forEach(el => {
+    const get = sel => el.querySelector(sel);
+    const num = v => { const n = parseFloat(v); return isNaN(n)?0:n; };
+    const phase = {
+      name: get('[data-f="name"]').value.trim(),
+      type: get('[data-f="type"]').value,
+      max_iterations: num(get('[data-f="max_iterations"]').value),
+      allowed_tools: parseCsv(get('[data-f="allowed_tools"]').value),
+      gate: {}
+    };
+    const gt = get('[data-g="type"]').value;
+    if(gt) phase.gate.type = gt;
+    const thr = num(get('[data-g="threshold"]').value); if(thr) phase.gate.threshold = thr;
+    const mode = get('[data-g="mode"]').value.trim(); if(mode) phase.gate.mode = mode;
+    const mw = num(get('[data-g="max_warn"]').value); if(mw) phase.gate.max_warn = mw;
+    const ap = parseCsv(get('[data-g="approvers"]').value); if(ap.length) phase.gate.approvers = ap;
+    const rv = parseCsv(get('[data-g="required_reviewers"]').value); if(rv.length) phase.gate.required_reviewers = rv;
+    out.push(phase);
+  });
+  return out;
+}
+
+function addPhase(){ currentConfig.phases = currentConfig.phases||[]; currentConfig.phases = collectPhases(); currentConfig.phases.push({name:'NEW', type:'execution', max_iterations:5, allowed_tools:[], gate:{}}); renderPhases(); }
+function removePhase(i){ currentConfig.phases = collectPhases(); currentConfig.phases.splice(i,1); renderPhases(); }
+function movePhase(i,d){ currentConfig.phases = collectPhases(); const j=i+d; if(j<0||j>=currentConfig.phases.length) return; const t=currentConfig.phases[i]; currentConfig.phases[i]=currentConfig.phases[j]; currentConfig.phases[j]=t; renderPhases(); }
+
+async function saveConfig(){
+  currentConfig.phases = collectPhases();
+  try {
+    const r = await fetch(API + '/api/v1/workflow-config', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(currentConfig) });
+    const body = await r.json();
+    if(!r.ok) throw new Error(body.error||'save failed');
+    toast('Saved ' + body.phases + ' phases → ' + body.path, true);
+  } catch(e){ toast('Save failed: '+e.message, false); }
+}
+
+async function startRun(){
+  const prompt = document.getElementById('runPrompt').value.trim();
+  if(!prompt){ toast('Enter a prompt', false); return; }
+  try {
+    const r = await fetch(API + '/api/v1/workflows/start', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ project: document.getElementById('runProject').value.trim(), prompt }) });
+    const body = await r.json();
+    if(!r.ok) throw new Error(body.error||'start failed');
+    toast('Gated loop started', true);
+    logLine('started', { project: body.project || '(default)' });
+  } catch(e){ toast('Start failed: '+e.message, false); }
+}
+
+async function feedback(decision){
+  try {
+    const r = await fetch(API + '/api/v1/workflows/feedback', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ decision, reviewer: document.getElementById('reviewer').value.trim() }) });
+    const body = await r.json();
+    if(!r.ok) throw new Error(body.error||'failed');
+    toast('Sent: '+decision, true);
+  } catch(e){ toast('Feedback failed: '+e.message, false); }
+}
+
+function logLine(type, payload){
+  const log = document.getElementById('log');
+  const cls = type.includes('paused') ? 'paused' : (type.includes('completed') ? 'done' : 't');
+  const div = document.createElement('div');
+  div.className = 'evt';
+  const detail = payload ? JSON.stringify(payload) : '';
+  div.innerHTML = `<span class="${cls}">${type}</span> ${detail}`;
+  log.appendChild(div); log.scrollTop = log.scrollHeight;
+}
+
+function connectEvents(){
+  const es = new EventSource(API + '/api/v1/events/stream?subject=' + encodeURIComponent('prism.workflow.>'));
+  const names = ['workflow.started','phase.entered','phase.gate_check','phase.exited','phase.fallback',
+    'workflow.paused','feedback.requested','workflow.iteration','workflow.completed','workflow.blocked'];
+  names.forEach(n => {
+    es.addEventListener('prism.workflow.' + n, ev => {
+      try { const d = JSON.parse(ev.data); logLine(n, d.payload || d); } catch { logLine(n, null); }
+    });
+  });
+  es.onerror = () => { /* auto-reconnects */ };
+}
+
+loadConfig();
+connectEvents();
+</script>
+</body>
+</html>

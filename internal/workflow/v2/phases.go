@@ -163,6 +163,7 @@ func (p *PlanPhase) Exit(_ context.Context, state *WorkflowState) error {
 type FeedbackPrePhase struct {
 	AllowedToolsList []string
 	MaxIter          int
+	Approvers        []string // who must approve (from gate config); empty → human "ema"
 }
 
 func (p *FeedbackPrePhase) Name() string         { return "FEEDBACK_PRE" }
@@ -242,10 +243,11 @@ func (p *ExecutionPhase) Exit(_ context.Context, state *WorkflowState) error {
 	return nil
 }
 
-// FeedbackPostPhase — post-execution review by Lumi and Mango. Pauses workflow.
+// FeedbackPostPhase — post-execution review. Pauses workflow.
 type FeedbackPostPhase struct {
 	AllowedToolsList []string
 	MaxIter          int
+	Reviewers        []string // required reviewers (from gate config); empty → human "ema"
 }
 
 func (p *FeedbackPostPhase) Name() string         { return "FEEDBACK_POST" }
@@ -263,15 +265,19 @@ func (p *FeedbackPostPhase) Enter(_ context.Context, state *WorkflowState) error
 			Reviewers: make(map[string]*ReviewerState),
 		}
 	}
-	// Ensure Mango and Lumi are in the reviewers
+	// Seed the required reviewers from config. Defaults to the human "ema" so the
+	// post-execution gate blocks on a person unless sub-agent reviewers are configured.
 	if state.Feedback.PostExecution.Reviewers == nil {
 		state.Feedback.PostExecution.Reviewers = make(map[string]*ReviewerState)
 	}
-	if _, ok := state.Feedback.PostExecution.Reviewers["mango"]; !ok {
-		state.Feedback.PostExecution.Reviewers["mango"] = &ReviewerState{Status: "pending"}
+	reviewers := p.Reviewers
+	if len(reviewers) == 0 {
+		reviewers = []string{"ema"}
 	}
-	if _, ok := state.Feedback.PostExecution.Reviewers["lumi"]; !ok {
-		state.Feedback.PostExecution.Reviewers["lumi"] = &ReviewerState{Status: "pending"}
+	for _, r := range reviewers {
+		if _, ok := state.Feedback.PostExecution.Reviewers[r]; !ok {
+			state.Feedback.PostExecution.Reviewers[r] = &ReviewerState{Status: "pending"}
+		}
 	}
 	// Pause and wait for reviews
 	state.Status = StatusPaused

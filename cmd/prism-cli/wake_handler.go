@@ -170,63 +170,12 @@ Be thorough, proactive, and fast. You are not just a reporter — you are a deve
 		MaxTokens: 1024,
 	},
 	"project_work": {
-		Prompt: `You are the project work agent. You work autonomously on assigned projects. You do NOT need permission — the assignment IS your permission. You do NOT ask for help unless you are genuinely blocked.
-
-## PHASED WORKFLOW (SYSTEM-ENFORCED)
-
-The system enforces a strict phase sequence. You CANNOT skip phases. Each phase has a hard iteration cap. The system tracks your tool usage and blocks tools not allowed in your current phase.
-
-### Phase 1: ORIENT (MAX 3 ITERATIONS)
-Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md. The system has already parsed this file and assigned you a specific task — it appears in the "SYSTEM-ASSIGNED TASK" message. Do not choose a different task. Also check git_status and git_branch_list.
-
-### Phase 2: BRANCH (MAX 2 ITERATIONS)
-If you are on main/master, you MUST create a feature branch: feature/bb-{task-slug}. The system BLOCKS all file writes and git mutations while on main. You cannot proceed to IMPLEMENT until you are on a feature branch.
-
-### Phase 3: IMPLEMENT (MAX 8 ITERATIONS)
-Write code for your assigned task. You may read files to understand existing code, but after 3 read_file calls the system will deny further reads and force you to write. You MUST produce at least one write_file in this phase.
-
-### Phase 4: SELF_REVIEW (MAX 2 ITERATIONS)
-The system automatically runs git_diff and shows you your changes. Review for:
-- Syntax errors or typos
-- Missing imports or references
-- Incomplete logic
-- Does this actually complete the assigned task?
-If issues found, fix with write_file. If clean, respond with REVIEW_PASSED.
-
-### Phase 5: COMMIT_PUSH (MAX 3 ITERATIONS)
-You MUST complete all three: git_add, git_commit, git_push. The system will NOT allow you to finish until you have committed and pushed. If you try to end early, your final response will be rejected.
-
-### Phase 6: UPDATE_STATE (MAX 2 ITERATIONS)
-Update /Users/ema/projects/repos/BassBook/PROJECT_STATE.md to mark your task complete. Use [x] for completed tasks. Add your commit hash.
-
-### Phase 7: REPORT (1 ITERATION)
-Emit your final summary. No tools allowed. Include:
-1. What you did (files changed, branch name, commit hash)
-2. What is next
-3. Any questions for OpenClaw Lumi (tag <@1512994928769237002>)
-
-## Critical Rules (SYSTEM-ENFORCED)
-- The system enforces phase progression. You cannot skip phases.
-- The system blocks mutations on main branch. You MUST be on a feature branch.
-- The system blocks final response until commit+push complete.
-- The system assigns your task — you do not choose.
-- The system shows you your diff for self-review before commit.
-- If a tool fails, try a different approach. Do not repeat the same failed call.
-- You have 20 total iterations across all phases. Use them to ACT, not explore.
-- DO NOT ask Ema for anything. Ask OpenClaw Lumi (<@1512994928769237002>) for creative direction only.
-
-## Tool Calling Format (CRITICAL)
-Every response MUST be PURE JSON. Start with {. End with }. NO prose, NO markdown fences, NO explanations before the JSON. The system parses JSON only. Any text outside the JSON object is discarded and wastes your iteration budget.
-
-Valid shapes:
-- Tool request: {"type": "tool_request", "tool": "tool_name", "input": {"key": "value"}}
-- Final response: {"type": "final", "content": "your summary"}
-
-One tool request per response. The system executes it and gives you the result.
-
-## Phase Awareness
-The system tracks which phase you are in. If you try to use a tool not allowed in your current phase, it will be denied. Pay attention to phase transition messages from the system. They tell you what phase you are entering and what is expected.`,
-		ChannelID: "1491622581348864162", // manager-room
+		// project_work runs the full gated loop via runNaturalGatesWorkflow →
+		// RunGatedLoop. The actual phase prompt is built dynamically per project
+		// in buildGatedLoopSystemPrompt, so this static prompt is only a seed used
+		// when no project state file supplies a task.
+		Prompt:    `Work autonomously on the assigned project task using the gated loop.`,
+		ChannelID: "1491622581348864162", // manager-room (fallback; project.channel preferred)
 		MaxTokens: 4096,
 	},
 }
@@ -300,6 +249,111 @@ func (wh *WakeHandler) Start() error {
 	}
 	log.Printf("[WAKE] subscribed to prism.agent.openclaw")
 
+	// Interactive gated-loop trigger: any client (CLI, API, Discord) can start a
+	// gated loop for {project, prompt} by publishing here.
+	_, err = wh.natsConn.Subscribe("prism.workflow.start", func(msg *nats.Msg) {
+		var req struct {
+			Project string `json:"project"`
+			Prompt  string `json:"prompt"`
+			Channel string `json:"channel"`
+		}
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			log.Printf("[WAKE] failed to parse workflow.start: %v", err)
+			return
+		}
+		go wh.handleWorkflowStart(req.Project, req.Prompt, req.Channel)
+	})
+	if err != nil {
+		return fmt.Errorf("subscribe to prism.workflow.start: %w", err)
+	}
+	log.Printf("[WAKE] subscribed to prism.workflow.start")
+
+	return nil
+}
+
+// newAutoExec builds an auto-approving tool executor for autonomous loop
+// execution. The human control points are the FEEDBACK_PRE/POST gates, not
+// per-tool approval, so EXECUTION mutations auto-apply once the plan is approved.
+func (wh *WakeHandler) newAutoExec() *tool.Executor {
+	autoPolicy := wh.toolExec.Policy
+	autoPolicy.AutoApproveMutations = true
+	autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
+	if wh.toolExec.Emit != nil {
+		autoExec.SetEmitter(wh.toolExec.Emit)
+	}
+	if wh.toolExec.ApprovalStore != nil {
+		autoExec.SetApprovalStore(wh.toolExec.ApprovalStore)
+	}
+	return autoExec
+}
+
+// handleWorkflowStart runs the gated loop for an interactively-triggered
+// {project, prompt}. The project is resolved from config by ID (falling back to
+// the default project); results post to the given channel or the project channel.
+func (wh *WakeHandler) handleWorkflowStart(projectID, prompt, channel string) {
+	if wh.toolExec == nil || wh.toolReg == nil {
+		log.Printf("[WAKE] workflow.start ignored: tool executor not configured")
+		return
+	}
+
+	var project *orchestrator.ProjectConfig
+	if projectID != "" {
+		project = wh.cfg.FindProject(projectID)
+		if project == nil {
+			log.Printf("[WAKE] workflow.start: unknown project %q, using default", projectID)
+		}
+	}
+	if project == nil {
+		project = wh.cfg.DefaultProject()
+	}
+
+	agentCfg := wh.primaryAgent()
+	if agentCfg == nil {
+		log.Printf("[WAKE] workflow.start: no agent configured")
+		return
+	}
+	model := agentCfg.Model
+	if model == "" {
+		model = "glm-5.1:cloud"
+	}
+
+	// Resolve the result channel: explicit → project → manager-room fallback.
+	if channel == "" && project != nil {
+		channel = project.Channel
+	}
+	if channel == "" {
+		channel = "1491622581348864162"
+	}
+
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 60*time.Minute)
+	defer cancel()
+
+	log.Printf("[WAKE] workflow.start: project=%v prompt=%q", project, truncate(prompt, 80))
+	content, pt, ct := wh.RunGatedLoop(ctx, project, prompt, model, agentCfg, wh.newAutoExec())
+
+	if wh.bot != nil && channel != "" {
+		wh.bot.Send(&discordbot.OutboundMessage{
+			ChannelID: channel,
+			Content:   fmt.Sprintf("🔁 **Gated Loop**\n\n%s", cleanForDiscord(content)),
+		})
+	}
+	pid := "default"
+	if project != nil && project.ID != "" {
+		pid = project.ID
+	}
+	wh.writeRunSummary("gated_loop:"+pid, agentCfg.ID, content, pt, ct)
+}
+
+// primaryAgent returns the primary agent config, or the first agent.
+func (wh *WakeHandler) primaryAgent() *orchestrator.AgentConfig {
+	for i := range wh.cfg.Agents {
+		if wh.cfg.Agents[i].Primary {
+			return &wh.cfg.Agents[i]
+		}
+	}
+	if len(wh.cfg.Agents) > 0 {
+		return &wh.cfg.Agents[0]
+	}
 	return nil
 }
 
@@ -974,7 +1028,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	if workspaceRoot == "" {
 		workspaceRoot = "."
 	}
-	toolSuffix := agent.BuildToolPromptSuffix(toolInfos, workspaceRoot, "/Users/ema/projects/repos/BassBook")
+	toolSuffix := agent.BuildToolPromptSuffix(toolInfos, workspaceRoot, wh.defaultRepoPath())
 	fullSystemPrompt := systemPrompt + toolSuffix
 
 	// Build initial messages
@@ -1338,17 +1392,54 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 }
 
 // getCurrentBranch returns the current git branch in the BassBook repo.
-func (wh *WakeHandler) getCurrentBranch() string {
-	cmd := exec_command("git", []string{"branch", "--show-current"}, "/Users/ema/projects/repos/BassBook")
-	return strings.TrimSpace(cmd)
+// defaultRepoPath resolves the working repo from the default project, falling
+// back to the workspace root. Replaces the hardcoded BassBook path.
+func (wh *WakeHandler) defaultRepoPath() string {
+	if p := wh.cfg.DefaultProject(); p != nil && p.RepoPath != "" {
+		return p.RepoPath
+	}
+	if wh.cfg.Prism.Workspace != "" {
+		return wh.cfg.Prism.Workspace
+	}
+	return "."
 }
 
-// parseProjectStateTask reads PROJECT_STATE.md and returns the first incomplete task.
+// projectStatePath resolves a project's state file to an absolute path.
+func (wh *WakeHandler) projectStatePath(p *orchestrator.ProjectConfig) string {
+	if p == nil || p.StateFile == "" {
+		return ""
+	}
+	if filepath.IsAbs(p.StateFile) {
+		return p.StateFile
+	}
+	return filepath.Join(p.RepoPath, p.StateFile)
+}
+
+func (wh *WakeHandler) getCurrentBranch() string {
+	return wh.getCurrentBranchIn(wh.defaultRepoPath())
+}
+
+// getCurrentBranchIn returns the current git branch for the given repo.
+func (wh *WakeHandler) getCurrentBranchIn(repoPath string) string {
+	if repoPath == "" {
+		repoPath = "."
+	}
+	return strings.TrimSpace(exec_command("git", []string{"branch", "--show-current"}, repoPath))
+}
+
+// parseProjectStateTask reads the default project's state file and returns the first incomplete task.
 func (wh *WakeHandler) parseProjectStateTask() string {
-	statePath := "/Users/ema/projects/repos/BassBook/PROJECT_STATE.md"
+	return wh.parseProjectStateTaskFrom(wh.projectStatePath(wh.cfg.DefaultProject()))
+}
+
+// parseProjectStateTaskFrom reads a project state file and returns the first incomplete task.
+func (wh *WakeHandler) parseProjectStateTaskFrom(statePath string) string {
+	if statePath == "" {
+		return ""
+	}
 	data, err := os.ReadFile(statePath)
 	if err != nil {
-		log.Printf("[WAKE-TOOL] could not read PROJECT_STATE.md: %v", err)
+		log.Printf("[WAKE-TOOL] could not read state file %s: %v", statePath, err)
 		return ""
 	}
 	lines := strings.Split(string(data), "\n")
@@ -1381,9 +1472,18 @@ func (wh *WakeHandler) parseProjectStateTask() string {
 	return tasks[0]
 }
 
-// readPreviousWorkState reads runs/current_work_state.json for continuity.
+// workStatePath returns the path to the cross-cycle work state file under the workspace.
+func (wh *WakeHandler) workStatePath() string {
+	root := wh.cfg.Prism.Workspace
+	if root == "" {
+		root = "."
+	}
+	return filepath.Join(root, "runs", "current_work_state.json")
+}
+
+// readPreviousWorkState reads the cross-cycle work state for continuity.
 func (wh *WakeHandler) readPreviousWorkState() string {
-	data, err := os.ReadFile("/Users/ema/projects/repos/prism/runs/current_work_state.json")
+	data, err := os.ReadFile(wh.workStatePath())
 	if err != nil {
 		return ""
 	}
@@ -1399,14 +1499,22 @@ func (wh *WakeHandler) writeWorkState(branch, task string, committed, pushed boo
   "pushed": %t,
   "completed_at": %q
 }`, branch, task, committed, pushed, time.Now().Format(time.RFC3339))
-	os.MkdirAll("/Users/ema/projects/repos/prism/runs", 0755)
-	os.WriteFile("/Users/ema/projects/repos/prism/runs/current_work_state.json", []byte(state), 0644)
+	path := wh.workStatePath()
+	os.MkdirAll(filepath.Dir(path), 0755)
+	os.WriteFile(path, []byte(state), 0644)
 }
 
-// getGitDiff returns the git diff for the BassBook repo.
+// getGitDiff returns the git diff for the default project's repo.
 func (wh *WakeHandler) getGitDiff() string {
-	cmd := exec_command("git", []string{"diff", "--stat"}, "/Users/ema/projects/repos/BassBook")
-	return cmd
+	return wh.getGitDiffIn(wh.defaultRepoPath())
+}
+
+// getGitDiffIn returns the git diff --stat for the given repo.
+func (wh *WakeHandler) getGitDiffIn(repoPath string) string {
+	if repoPath == "" {
+		repoPath = "."
+	}
+	return exec_command("git", []string{"diff", "--stat"}, repoPath)
 }
 
 // summarizeToolResult truncates large tool results before feeding back to the LLM.
@@ -1444,394 +1552,234 @@ func simpleHash(s string) string {
 }
 
 
-// runNaturalGatesWorkflow runs the V2 Natural Gates Workflow System for project_work.
-// This is the primary workflow engine — it handles all 7 phases with natural gates,
-// multi-agent delegation, feedback checkpoints, and resumability.
-func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
-	log.Printf("[V2] starting 3-phase workflow for agent %s", agentCfg.ID)
-
-	config := v2.DefaultConfig()
-	stateDir := "/Users/ema/projects/repos/prism/runs/natural-gates"
-
-	// Check for paused workflow to resume
-	existingState, err := v2.LoadCurrentWorkflowState(stateDir)
-	if err == nil && existingState != nil && existingState.Status == v2.StatusPaused {
-		log.Printf("[V2] resuming paused workflow %s", existingState.RunID)
-		// For now, just start fresh — full resume is Phase 5
+// loadWorkflowConfig resolves the gated-loop workflow definition: a project
+// override takes precedence, then the global prism.workflow_config, then the
+// built-in 7-phase DefaultConfig.
+func (wh *WakeHandler) loadWorkflowConfig(project *orchestrator.ProjectConfig) *v2.WorkflowConfig {
+	var paths []string
+	if project != nil && project.WorkflowConfig != "" {
+		paths = append(paths, project.WorkflowConfig)
 	}
-
-	// Start new workflow
-	runID := fmt.Sprintf("ng-%d", time.Now().Unix())
-	wfState := v2.NewWorkflowState(config)
-	wfState.RunID = runID
-	wfState.Status = v2.StatusInProgress
-
-	// Parse PROJECT_STATE.md and assign task
-	assignedTask := wh.parseProjectStateTask()
-	if assignedTask == "" {
-		assignedTask = "No task found in PROJECT_STATE.md. Read /Users/ema/projects/repos/BassBook/PROJECT_STATE.md and pick the first incomplete task."
+	if wh.cfg.Prism.WorkflowConfig != "" {
+		paths = append(paths, wh.cfg.Prism.WorkflowConfig)
 	}
-	log.Printf("[V2] assigned task: %s", truncateStr(assignedTask, 100))
-
-	// Build prompt — simple and directive
-	systemPromptFull := fmt.Sprintf(`You are an autonomous project work agent. You build production-quality code.
-
-## Your Task (assigned by the system — do not deviate)
-%s
-
-## Project Context
-- Repo: /Users/ema/projects/repos/BassBook/
-- State: /Users/ema/projects/repos/BassBook/PROJECT_STATE.md
-- Web: apps/web/ (Next.js 14) — pnpm build
-- API: apps/api/ (ASP.NET Core) — dotnet build
-- All file paths relative to /Users/ema/projects/repos/BassBook/
-
-## Workflow: 3 Phases
-
-### Phase 1: PLAN (max 5 iterations)
-- Read PROJECT_STATE.md and relevant files to understand the task
-- IMPORTANT: Create a feature branch using git_checkout with create=true: {"type":"tool_request","tool":"git_checkout","input":{"branch":"feature/bb-{task-slug}","create":true}}
-- You CANNOT write files on main. You MUST create a branch first.
-- Decide what files to change
-- The system will tell you when to move to EXECUTE
-
-### Phase 2: EXECUTE (max 25 iterations)
-- Write code using write_file
-- You can read files, but after 3 reads with no write, the system will force you to write
-- Stage with git_add, commit with git_commit, push with git_push
-- You CANNOT finish until you have committed AND pushed
-- The system blocks writes on main — you MUST be on a feature branch
-- Review your changes with git_diff before committing
-
-### Phase 3: REPORT (1 iteration)
-- Post a final summary with:
-  ## Change Summary
-  ## Proof of Work (file paths, commit hashes, branch name)
-  ## Next Steps
-- Start with <@1512994928769237002> to tag OpenClaw Lumi
-
-## Rules
-- Response format: PURE JSON only
-  - Tool: {"type":"tool_request","tool":"tool_name","input":{"key":"value"}}
-  - Final: {"type":"final","content":"your summary"}
-- No prose before JSON — the system only parses JSON
-- DO NOT ask Ema. Tag Lumi (<@1512994928769237002>) for direction.
-- You MUST write code, commit, and push. Reading is not enough.
-- Mango MUST review your work — this is mandatory.
-`, assignedTask)
-
-	messages := []provider.ChatMessage{
-		{Role: "system", Content: systemPromptFull},
-		{Role: "user", Content: fmt.Sprintf("Begin working on: %s", assignedTask)},
-	}
-
-	totalPromptTokens := 0
-	totalCompletionTokens := 0
-	chatProv, chatErr := wh.providers.GetChatProvider(model)
-
-	// V36 enforcement state
-	hasWritten := false
-	hasCommitted := false
-	hasPushed := false
-	readsInPhase := 0
-	currentBranch := wh.getCurrentBranch()
-	var lastToolHashes []string
-	var lastRespHashes []string
-
-	phaseIdx := 0
-	phaseNames := []string{"PLAN", "EXECUTE", "REPORT"}
-	phaseMaxIter := []int{5, 25, 3}
-	phaseIter := 0
-
-	// Auto-save
-	stopSave := make(chan struct{})
-	defer close(stopSave)
-	go v2.AutoSave(wfState, stateDir, 15*time.Second, stopSave)
-
-	for totalIter := 0; totalIter < 40; totalIter++ {
-		// Check phase transitions
-		if phaseIter >= phaseMaxIter[phaseIdx] {
-			if phaseIdx < 2 {
-				log.Printf("[V2] phase %s max iterations (%d) reached, advancing to %s", phaseNames[phaseIdx], phaseMaxIter[phaseIdx], phaseNames[phaseIdx+1])
-				phaseIdx++
-				phaseIter = 0
-				readsInPhase = 0
-				messages = append(messages, provider.ChatMessage{
-					Role: "system",
-					Content: fmt.Sprintf("PHASE CHANGE: You are now in %s phase. Follow the %s phase instructions.", phaseNames[phaseIdx], phaseNames[phaseIdx]),
-				})
-			}
-		}
-
-		// Add phase context
-		phaseContext := fmt.Sprintf("[PHASE: %s | iteration %d/%d | branch: %s | written: %v | committed: %v | pushed: %v]",
-			phaseNames[phaseIdx], phaseIter+1, phaseMaxIter[phaseIdx], currentBranch, hasWritten, hasCommitted, hasPushed)
-		messages = append(messages, provider.ChatMessage{Role: "system", Content: phaseContext})
-
-		// V36 enforcement: read budget in EXECUTE phase
-		if phaseIdx == 1 && readsInPhase >= 3 && !hasWritten {
-			messages = append(messages, provider.ChatMessage{
-				Role: "system",
-				Content: "READ BUDGET EXCEEDED. You have read enough. You MUST use write_file now. Further reads will be denied.",
-			})
-		}
-
-		// Call LLM
-		var responseText string
-		if chatErr == nil {
-			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
-				RunID:       fmt.Sprintf("wake-v2-%d", time.Now().Unix()),
-				Agent:       agentCfg.ID,
-				Model:       model,
-				Messages:    messages,
-				Temperature: 0.7,
-				MaxTokens:   4096,
-			})
-			if err != nil {
-				log.Printf("[V2] LLM error: %v", err)
-				return fmt.Sprintf("Workflow failed: %v", err), totalPromptTokens, totalCompletionTokens
-			}
-			responseText = resp.Content
-			totalPromptTokens += resp.PromptTokens
-			totalCompletionTokens += resp.OutputTokens
+	for _, p := range paths {
+		if cfg, err := v2.LoadConfig(p); err == nil {
+			log.Printf("[GATED-LOOP] loaded workflow config %s (%d phases)", p, len(cfg.Phases))
+			return cfg
 		} else {
-			prov, provErr := wh.providers.Get(model)
-			if provErr != nil {
-				return fmt.Sprintf("Workflow failed: no provider"), totalPromptTokens, totalCompletionTokens
-			}
-			flatPrompt := systemPromptFull + "\n\n"
-			for _, m := range messages {
-				if m.Role == "user" || m.Role == "system" {
-					flatPrompt += m.Content + "\n\n"
-				}
-			}
-			resp, err := prov.Generate(ctx, provider.GenerateRequest{
-				RunID:       fmt.Sprintf("wake-v2-%d-iter%d", time.Now().Unix(), totalIter),
-				Agent:       agentCfg.ID,
-				Model:       model,
-				Prompt:      flatPrompt,
-				Temperature: 0.7,
-				MaxTokens:   4096,
-			})
-			if err != nil {
-				return fmt.Sprintf("Workflow failed: %v", err), totalPromptTokens, totalCompletionTokens
-			}
-			responseText = resp.Text
-			totalPromptTokens += resp.PromptTokens
-			totalCompletionTokens += resp.OutputTokens
+			log.Printf("[GATED-LOOP] WARN could not load workflow config %s: %v", p, err)
 		}
-
-		log.Printf("[V2] phase %s iteration %d: %d chars", phaseNames[phaseIdx], phaseIter+1, len(responseText))
-		phaseIter++
-
-		// Stuck detection
-		respHash := simpleHash(responseText)
-		lastRespHashes = append(lastRespHashes, respHash)
-		if len(lastRespHashes) >= 3 && lastRespHashes[len(lastRespHashes)-1] == lastRespHashes[len(lastRespHashes)-2] && lastRespHashes[len(lastRespHashes)-1] == lastRespHashes[len(lastRespHashes)-3] {
-			messages = append(messages, provider.ChatMessage{Role: "system", Content: "STUCK: 3 identical responses. Try a different approach."})
-			lastRespHashes = nil
-		}
-
-		// Parse response
-		parsed := agent.ParseAgentOutputWithFallback(responseText)
-
-		if parsed.Type == agent.ResponseFinal {
-			// V36: Write enforcement — she MUST write code, not just plan
-			if !hasWritten && phaseIdx <= 1 {
-				log.Printf("[V2] FINAL REJECTED: no files written — she must write code first")
-				messages = append(messages, provider.ChatMessage{Role: "system", Content: "WRITE REQUIRED: You have not written any files. Your final is rejected. Use write_file to write the CSS aliases to apps/web/src/app/globals.css. DO NOT report without writing code first."})
-				phaseIter--
-				continue
-			}
-			// V36: Commit-push enforcement
-			if hasWritten && !hasCommitted {
-				log.Printf("[V2] FINAL REJECTED: files written but not committed")
-				messages = append(messages, provider.ChatMessage{Role: "system", Content: "COMMIT REQUIRED: You wrote files but haven't committed. Use git_add then git_commit. Your final is rejected."})
-				phaseIter-- // don't count this as an iteration
-				continue
-			}
-			if hasCommitted && !hasPushed {
-				log.Printf("[V2] FINAL REJECTED: committed but not pushed")
-				messages = append(messages, provider.ChatMessage{Role: "system", Content: "PUSH REQUIRED: You committed but haven't pushed. Use git_push. Your final is rejected."})
-				phaseIter--
-				continue
-			}
-
-			// Clean JSON from output
-			cleanOutput := cleanForDiscord(parsed.Content)
-			log.Printf("[V2] workflow complete: %d iters, written=%v committed=%v pushed=%v", totalIter+1, hasWritten, hasCommitted, hasPushed)
-
-			// Save state
-			wfState.Status = v2.StatusCompleted
-			wfState.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-			v2.SaveCurrentWorkflowState(wfState, stateDir)
-
-			return cleanOutput, totalPromptTokens, totalCompletionTokens
-		}
-
-		if parsed.Type == agent.ResponseToolRequest {
-			log.Printf("[V2] tool: %s (phase: %s)", parsed.ToolName, phaseNames[phaseIdx])
-
-			// V36: Read budget in EXECUTE phase
-			if phaseIdx == 1 && (parsed.ToolName == "read_file" || parsed.ToolName == "list_dir" || parsed.ToolName == "search_files") {
-				readsInPhase++
-				if readsInPhase > 3 && !hasWritten {
-					log.Printf("[V2] read budget exceeded, denying %s", parsed.ToolName)
-					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: "READ BUDGET EXCEEDED. Use write_file now."})
-					continue
-				}
-			}
-
-			// V36: Branch protection
-			writeTools := map[string]bool{"write_file": true, "git_add": true, "git_commit": true, "git_push": true}
-			if writeTools[parsed.ToolName] {
-				currentBranch = wh.getCurrentBranch()
-				if currentBranch == "main" || currentBranch == "master" {
-					log.Printf("[V2] BRANCH PROTECTION: %s denied on %s", parsed.ToolName, currentBranch)
-					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Create a feature branch first (feature/bb-{task}).", currentBranch)})
-					continue
-				}
-			}
-
-			// Execute tool
-			log.Printf("[V2] executing tool %s with input: %v", parsed.ToolName, parsed.ToolInput)
-			// Inject repo_path for git tools if not provided — default to BassBook
-			gitTools := map[string]bool{"git_checkout": true, "git_status": true, "git_log": true, "git_diff": true, "git_branch_list": true, "git_add": true, "git_commit": true, "git_push": true}
-			if gitTools[parsed.ToolName] {
-				if _, ok := parsed.ToolInput["repo_path"]; !ok {
-					parsed.ToolInput["repo_path"] = "/Users/ema/projects/repos/BassBook"
-				}
-			}
-			result, execErr := exec.ExecuteWithPolicy(ctx, parsed.ToolName, agentCfg.ID, "bassbook", runID, parsed.ToolInput)
-			if execErr != nil {
-				log.Printf("[V2] tool %s error: %v", parsed.ToolName, execErr)
-				// V36: Handle "nothing to commit"
-				if parsed.ToolName == "git_commit" && (strings.Contains(execErr.Error(), "nothing to commit") || strings.Contains(execErr.Error(), "no changes")) {
-					hasCommitted = true
-					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-					messages = append(messages, provider.ChatMessage{Role: "user", Content: "Commit succeeded (nothing to commit). Proceed to push."})
-					continue
-				}
-				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-				messages = append(messages, provider.ChatMessage{Role: "user", Content: fmt.Sprintf("Tool %q failed: %v. Try differently.", parsed.ToolName, execErr)})
-				continue
-			}
-
-			log.Printf("[V2] tool %s succeeded: %v", parsed.ToolName, result.Success)
-			// Track state
-			switch parsed.ToolName {
-			case "write_file":
-				hasWritten = true
-			case "git_add":
-				// staging
-			case "git_commit":
-				hasCommitted = true
-			case "git_push":
-				if result.Success {
-					hasPushed = true
-				}
-			}
-
-			// Format result (truncate large outputs)
-			resultStr := fmt.Sprintf("Tool %q result:\n%v", parsed.ToolName, result.Output)
-			if result.Error != "" {
-				resultStr = fmt.Sprintf("Tool %q error: %s", parsed.ToolName, result.Error)
-			}
-			if len(resultStr) > 3000 {
-				resultStr = resultStr[:1500] + fmt.Sprintf("\n... [truncated: %d total] ...\n", len(resultStr)) + resultStr[len(resultStr)-500:]
-			}
-
-			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
-			messages = append(messages, provider.ChatMessage{Role: "user", Content: resultStr})
-
-			// Stuck detection for tool calls
-			toolHash := simpleHash(parsed.ToolName + fmt.Sprintf("%v", parsed.ToolInput))
-			lastToolHashes = append(lastToolHashes, toolHash)
-			if len(lastToolHashes) >= 3 && lastToolHashes[len(lastToolHashes)-1] == lastToolHashes[len(lastToolHashes)-2] && lastToolHashes[len(lastToolHashes)-1] == lastToolHashes[len(lastToolHashes)-3] {
-				messages = append(messages, provider.ChatMessage{Role: "system", Content: fmt.Sprintf("STUCK: calling %s with same args 3 times. Try different approach.", parsed.ToolName)})
-				lastToolHashes = nil
-			}
-
-			continue
-		}
-
-		// Unknown response — treat as final
-		return responseText, totalPromptTokens, totalCompletionTokens
 	}
-
-	// Max iterations
-	log.Printf("[V2] max iterations. written=%v committed=%v pushed=%v", hasWritten, hasCommitted, hasPushed)
-	wfState.Status = v2.StatusCompleted
-	v2.SaveCurrentWorkflowState(wfState, stateDir)
-	return fmt.Sprintf("Workflow reached max iterations. written=%v committed=%v pushed=%v. See logs.", hasWritten, hasCommitted, hasPushed), totalPromptTokens, totalCompletionTokens
+	return v2.DefaultConfig()
 }
 
-// buildNaturalGatesPrompt creates the system prompt for the Natural Gates workflow.
-func buildNaturalGatesPrompt(config *v2.WorkflowConfig, userPrompt string) string {
-	return fmt.Sprintf(`You are an autonomous project work agent. You build production-quality code.
+// runNaturalGatesWorkflow is the scheduled entry point: resolve the default
+// project, seed a task from its state file (or the prompt), then run the loop.
+func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
+	project := wh.cfg.DefaultProject()
+	task := wh.parseProjectStateTaskFrom(wh.projectStatePath(project))
+	if task == "" {
+		task = userPrompt
+	}
+	return wh.RunGatedLoop(ctx, project, task, model, agentCfg, exec)
+}
 
-## Your Workflow
+// RunGatedLoop runs the full 7-phase gated loop for {project, prompt}. It is the
+// single implementation shared by the scheduled wake action and the interactive
+// trigger (CLI/API), driving the real v2.Engine via Engine.Drive.
+func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrator.ProjectConfig, taskPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
+	config := wh.loadWorkflowConfig(project)
 
-You operate in phases. The system tracks your progress and tells you which phase you are in. You MUST follow the phase instructions.
+	repoPath := "."
+	projectID := "default"
+	if project != nil {
+		if project.RepoPath != "" {
+			repoPath = project.RepoPath
+		}
+		if project.ID != "" {
+			projectID = project.ID
+		}
+	} else if wh.cfg.Prism.Workspace != "" {
+		repoPath = wh.cfg.Prism.Workspace
+	}
 
-### Phase: PROBE
-Identify what you don't know. List your assumptions:
-ASSUMPTION: {statement} | confidence: {0.0-1.0} | criticality: {blocker|high|medium|low}
-Then ask questions or search to reduce them. Signal: PROBE_COMPLETE
+	stateDir := config.Global.StatePersistenceDir
+	if stateDir == "" {
+		stateDir = "runs/gated-loop"
+	}
+	runID := fmt.Sprintf("gl-%d", time.Now().Unix())
 
-### Phase: RESEARCH
-Search for answers. Build confidence in your approach:
-CONFIDENCE: {domain} | {0.0-1.0} | reason: {why}
-Domains: codebase_understanding, requirements_clarity, approach_viability, tool_capability, dependency_health, test_coverage, edge_case_awareness
-Signal: RESEARCH_COMPLETE
+	// Engine: NATS emitter for dashboard observability + delegation for optional
+	// sub-agent reviewers. Falls back to a no-op log emitter without NATS.
+	var emitter v2.EventEmitter = &v2.LogEmitter{}
+	if wh.natsConn != nil {
+		emitter = v2.NewNATSEmitter(v2.NewNATSPublisherFromConn(wh.natsConn), "prism.workflow")
+	}
+	delegation := v2.NewDelegationManager("prism.agent.openclaw", "prism.workflow.task.complete")
+	engine := v2.NewEngine(config, emitter, delegation)
+	engine.GetState().RunID = runID
 
-### Phase: PLAN
-Break work into tasks and assign to agents:
-TASK: {id} | description: {what} | agent: {prism|mango|junie|lumi} | depends_on: [{ids}] | success: {criteria}
-Signal: PLAN_COMPLETE
+	// Feedback resume: forward approval/review responses from NATS into the engine
+	// so FEEDBACK_PRE/FEEDBACK_POST pauses can be released from Discord/dashboard/API.
+	if wh.natsConn != nil {
+		eventCh := engine.GetExternalEventChannel()
+		sub, subErr := wh.natsConn.Subscribe("prism.workflow.feedback.response", func(msg *nats.Msg) {
+			var payload map[string]any
+			if err := json.Unmarshal(msg.Data, &payload); err != nil {
+				return
+			}
+			decision, _ := payload["decision"].(string)
+			reviewer, _ := payload["reviewer"].(string)
+			extType := "approval"
+			if reviewer != "" || payload["type"] == "review_response" {
+				extType = "review"
+			}
+			evt := v2.ExternalEvent{
+				Type:          extType,
+				CorrelationID: runID,
+				Source:        "nats",
+				Data: map[string]any{
+					"decision":   decision,
+					"reviewer":   reviewer,
+					"notes":      payload["notes"],
+					"dimensions": payload["dimensions"],
+				},
+			}
+			select {
+			case eventCh <- evt:
+			default:
+			}
+		})
+		if subErr == nil {
+			defer sub.Unsubscribe()
+		}
+	}
 
-### Phase: FEEDBACK_PRE
-Your plan is posted to Discord for Lumi to approve. The workflow PAUSES. Wait for approval.
+	// System prompt (project-aware, no hardcoded paths) + tool schemas.
+	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, repoPath)
+	if wh.toolReg != nil {
+		toolInfos := wh.toolReg.ListWithDescriptions()
+		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, repoPath, repoPath)
+	}
+	userPromptFull := fmt.Sprintf("Begin the gated loop. Task: %s", taskPrompt)
 
-### Phase: EXECUTION
-Execute your tasks. Rules:
-- Create a feature branch before writing (writes blocked on main)
-- Write code using write_file
-- Review your changes with git_diff
-- Stage with git_add, commit with git_commit, push with git_push
-- You CANNOT finish until you have committed AND pushed
-Signal: EXECUTION_COMPLETE
+	// LLM callback — prefer the tool-calling chat provider, fall back to text.
+	chatProv, chatErr := wh.providers.GetChatProvider(model)
+	llm := func(c stdcontext.Context, msgs []v2.Message) (string, int, int, error) {
+		if chatErr == nil {
+			cm := make([]provider.ChatMessage, len(msgs))
+			for i, m := range msgs {
+				cm[i] = provider.ChatMessage{Role: m.Role, Content: m.Content}
+			}
+			resp, err := chatProv.ChatGenerate(c, provider.ChatGenerateRequest{
+				RunID: runID, Agent: agentCfg.ID, Model: model, Messages: cm,
+				Temperature: 0.7, MaxTokens: 4096,
+			})
+			if err != nil {
+				return "", 0, 0, err
+			}
+			return resp.Content, resp.PromptTokens, resp.OutputTokens, nil
+		}
+		prov, provErr := wh.providers.Get(model)
+		if provErr != nil {
+			return "", 0, 0, provErr
+		}
+		var flat strings.Builder
+		for _, m := range msgs {
+			flat.WriteString(m.Content)
+			flat.WriteString("\n\n")
+		}
+		resp, err := prov.Generate(c, provider.GenerateRequest{
+			RunID: runID, Agent: agentCfg.ID, Model: model, Prompt: flat.String(),
+			Temperature: 0.7, MaxTokens: 4096,
+		})
+		if err != nil {
+			return "", 0, 0, err
+		}
+		return resp.Text, resp.PromptTokens, resp.OutputTokens, nil
+	}
 
-### Phase: FEEDBACK_POST
-Your work is reviewed by Lumi and Mango. Wait for review.
+	// Tool callback — inject the project's repo_path for git tools, run under policy.
+	gitTools := map[string]bool{"git_checkout": true, "git_status": true, "git_log": true, "git_diff": true, "git_branch_list": true, "git_add": true, "git_commit": true, "git_push": true}
+	toolFn := func(c stdcontext.Context, phase string, req *v2.ToolRequest) (string, error) {
+		input := req.Input
+		if input == nil {
+			input = map[string]any{}
+		}
+		if gitTools[req.Tool] {
+			if _, ok := input["repo_path"]; !ok {
+				input["repo_path"] = repoPath
+			}
+		}
+		result, err := exec.ExecuteWithPolicy(c, req.Tool, agentCfg.ID, projectID, runID, input)
+		if err != nil {
+			return "", err
+		}
+		if !result.Success {
+			if result.Error != "" {
+				return "", fmt.Errorf("%s", result.Error)
+			}
+			return "", fmt.Errorf("tool %s failed", req.Tool)
+		}
+		return summarizeToolResult(req.Tool, fmt.Sprintf("%v", result.Output)), nil
+	}
 
-### Phase: REPORT
-Post a final report with:
-## Change Summary
-## Proof of Work (file paths, commit hashes, branch name)
-## Impact
-## Next Steps
-## Learnings
-Start your report with <@1512994928769237002> to tag OpenClaw Lumi.
-Signal: REPORT_COMPLETE
+	getBranch := func() string { return wh.getCurrentBranchIn(repoPath) }
 
-## Response Format
-Every response MUST be PURE JSON:
-- Tool request: {"type":"tool_request","tool":"tool_name","input":{"key":"value"}}
-- Final response: {"type":"final","content":"your summary"}
+	log.Printf("[GATED-LOOP] starting %q project=%s repo=%s (%d phases)", config.Name, projectID, repoPath, len(config.Phases))
+	wfState, driveErr := engine.Drive(ctx, llm, toolFn, v2.DriveOptions{
+		SystemPrompt: systemPromptFull,
+		UserPrompt:   userPromptFull,
+		StateDir:     stateDir,
+		RepoPath:     repoPath,
+		GetBranch:    getBranch,
+	})
+	if driveErr != nil {
+		log.Printf("[GATED-LOOP] ended: %v", driveErr)
+	}
 
-You can include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and signals (PROBE_COMPLETE, etc.) in your response text before the JSON.
+	pt := wfState.GetTotalPromptTokens()
+	ct := wfState.GetTotalCompletionTokens()
 
-## Critical Rules
-- The system tells you which phase you are in. Follow it.
-- The system assigns your task. Do not choose your own.
-- All file paths are relative to /Users/ema/projects/repos/BassBook/
-- DO NOT ask Ema. Ask Lumi (<@1512994928769237002>) for direction.
-- You MUST write code, commit, and push. Reading is not enough.
-- Mango MUST review your work — this is mandatory.
+	content := ""
+	if wfState.Report != nil && wfState.Report.Content != "" {
+		content = cleanForDiscord(wfState.Report.Content)
+	} else {
+		content = formatWorkflowReport(wfState)
+	}
+	return content, pt, ct
+}
+
+// buildGatedLoopSystemPrompt builds the project-aware system prompt for the loop.
+// No hardcoded repo paths or agent IDs — everything comes from the project config.
+func (wh *WakeHandler) buildGatedLoopSystemPrompt(project *orchestrator.ProjectConfig, taskPrompt, repoPath string) string {
+	var b strings.Builder
+	b.WriteString("You are an autonomous engineering agent running a gated dev loop. You build production-quality code.\n\n")
+	b.WriteString("## Task (assigned by the system — do not deviate)\n")
+	b.WriteString(taskPrompt + "\n\n")
+	b.WriteString("## Project\n")
+	fmt.Fprintf(&b, "- Repo: %s\n", repoPath)
+	if project != nil && project.StateFile != "" {
+		fmt.Fprintf(&b, "- State file: %s\n", project.StateFile)
+	}
+	b.WriteString("- Relative file paths resolve against the repo root above.\n\n")
+	b.WriteString(`## How the loop works
+You move through phases: PROBE -> RESEARCH -> PLAN -> FEEDBACK_PRE -> EXECUTION -> FEEDBACK_POST -> REPORT.
+The system tells you the current phase, the allowed tools, and the completion signal. Follow them.
+- PROBE: surface assumptions and reduce them with web_search / memory_search / file reads.
+- RESEARCH: raise confidence across domains using the web, memory, and the codebase.
+- PLAN: break the work into tasks with success criteria.
+- FEEDBACK_PRE: the loop PAUSES for human approval of your plan. Do NOT write code yet.
+- EXECUTION: create a feature branch (writes are blocked on the protected branch), write code, commit, and push. You cannot finish until you have committed AND pushed.
+- FEEDBACK_POST: the loop PAUSES for review. If changes are requested it loops back to EXECUTION.
+- REPORT: summarize with proof of work (files, branch, commit hashes).
+
+## Response format
+Respond with PURE JSON: {"type":"tool_request","tool":"...","input":{...}} or {"type":"final","content":"..."}.
+You may include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and the phase completion signal in your text before the JSON.
 `)
+	return b.String()
 }
 
 // formatWorkflowReport creates a human-readable report from workflow state.
