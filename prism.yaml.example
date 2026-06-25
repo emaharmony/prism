@@ -30,6 +30,10 @@ prism:
     - "D:/Projects"
   # Legacy alias for both read and write roots when read_roots/write_roots are omitted.
   allowed_paths: []
+  # Gated-loop workflow definition (phases + gates). When set and loadable, it
+  # overrides the built-in 7-phase DefaultConfig. Editable from the dashboard at
+  # /workflow-editor.html. See examples/workflows/gated-loop.yaml.
+  workflow_config: "examples/workflows/gated-loop.yaml"
   # Local Ollama base URL used by serve-mode Ollama agents.
   ollama_url: "http://localhost:11434"
   # Serve-mode LLM timeout in seconds. Local models often need more than 60s.
@@ -148,6 +152,35 @@ codex:
   max_concurrency: 1
   capture_diff: true
   extra_args: []
+
+# Claude Code sub-agent reviewer for the gated loop. When enabled, it runs the
+# `claude` CLI in print mode to review paused FEEDBACK_PRE/FEEDBACK_POST gates
+# whose approvers/required_reviewers include `reviewer_name`. Read-only by
+# default (no edits). Run `claude` once interactively to authenticate first.
+# To use it, add the reviewer name to a gate in your workflow config, e.g.
+#   FEEDBACK_POST gate: { type: review_pass, required_reviewers: [claude] }
+# or keep a human too: required_reviewers: [ema, claude].
+claude_code:
+  enabled: false
+  executable: ""          # empty = claude.cmd on Windows, claude elsewhere
+  model: ""               # empty = CLI default; e.g. claude-opus-4-8
+  reviewer_name: "claude" # gate approver/reviewer name this fulfills
+  timeout_minutes: 10
+  allowed_tools: ""       # empty = read-only default (Read/Grep/Glob + git reads)
+  extra_args: []
+
+# Projects the gated loop can work on. Replaces hardcoded repo paths so projects
+# are assignable/dynamic. Start a loop with:
+#   prism workflow start --project <id> --prompt "..."
+# or POST /api/v1/workflows/start {"project":"<id>","prompt":"..."}.
+projects:
+  - id: example
+    repo_path: "D:/_projects_/example"   # absolute path to the project's git repo
+    state_file: "PROJECT_STATE.md"        # optional; relative to repo_path
+    default_branch: "main"                 # protected branch (writes blocked here)
+    channel: ""                            # messaging channel for results/feedback
+    workflow_config: ""                    # optional per-project workflow override
+    default: true                          # used when no --project is given
 
 agents:
   - id: astraea

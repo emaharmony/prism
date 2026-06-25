@@ -44,6 +44,7 @@ import (
 	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/bus"
 	"github.com/emaharmony/prism/internal/codesummary"
+	"github.com/emaharmony/prism/internal/claudeworker"
 	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/crossprism"
@@ -466,6 +467,15 @@ func executeServe(args []string) {
 			planMgr.EnsureDir()
 			tool.RegisterPlanTools(toolReg, planMgr)
 
+			// Gated loop: RESEARCH-phase tools (web_search + memory_search).
+			// Pass the Remembrance client only when available so memory_search
+			// reports "disabled" instead of dereferencing a nil client.
+			var memSearcher tool.MemorySearcher
+			if remClient != nil {
+				memSearcher = remClient
+			}
+			tool.RegisterResearchTools(toolReg, memSearcher, tool.WebSearchConfig{})
+
 			// V34: Cross-Prism bridge tool — send messages to remote Prism instances
 			if crossSvc != nil {
 				toolReg.Register(tool.NewSendCrossMessageTool(crossSvc))
@@ -571,8 +581,9 @@ func executeServe(args []string) {
 		AutoPatch:      autopatcher,
 		NATS:           natsConn,
 		AuthToken:      cfg.API.ResolveAuthToken(),
-		AllowedOrigins: cfg.API.AllowedOrigins,
-		ConfigDir:      filepath.Dir(*configPath),
+		AllowedOrigins:     cfg.API.AllowedOrigins,
+		ConfigDir:          filepath.Dir(*configPath),
+		WorkflowConfigPath: cfg.Prism.WorkflowConfig,
 	})
 	go func() {
 		if err := apiServer.Start(); err != nil {
@@ -657,6 +668,23 @@ func executeServe(args []string) {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
 		} else {
 			log.Printf("[WAKE] handler started, listening for scheduled events")
+		}
+	}
+
+	// Claude Code sub-agent reviewer — fulfills gated-loop feedback gates that
+	// require the configured reviewer name. Independent of the scheduler.
+	if cfg.ClaudeCode.Enabled && natsConn != nil {
+		reviewer := claudeworker.New(claudeworker.Config{
+			Enabled:        true,
+			Executable:     cfg.ClaudeCode.Executable,
+			Model:          cfg.ClaudeCode.Model,
+			ReviewerName:   cfg.ClaudeCode.ReviewerName,
+			TimeoutMinutes: cfg.ClaudeCode.TimeoutMinutes,
+			AllowedTools:   cfg.ClaudeCode.AllowedTools,
+			ExtraArgs:      cfg.ClaudeCode.ExtraArgs,
+		})
+		if err := startClaudeReviewer(natsConn, reviewer, cfg); err != nil {
+			log.Printf("[CLAUDE-REVIEW] WARN failed to start: %v", err)
 		}
 	}
 

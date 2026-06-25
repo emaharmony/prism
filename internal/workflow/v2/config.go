@@ -3,7 +3,11 @@ package v2
 import (
 	"os"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // WorkflowConfig is the YAML/JSON configuration for a Natural Gates workflow.
@@ -76,17 +80,69 @@ func (c *WorkflowConfig) GetPhase(name string) *PhaseConfig {
 	return nil
 }
 
-// LoadConfig loads a workflow config from a JSON file.
+// LoadConfig loads a workflow config from a JSON or YAML file.
+// The format is detected by file extension; .yaml/.yml are parsed via a
+// YAML→JSON bridge so the struct's existing json tags (snake_case) keep
+// working without duplicating yaml tags.
 func LoadConfig(path string) (*WorkflowConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return parseConfigBytes(data, path)
+}
+
+// parseConfigBytes unmarshals workflow config bytes, choosing the decoder by
+// extension. YAML is converted to a generic structure and re-encoded as JSON so
+// the json struct tags drive field mapping for both formats.
+func parseConfigBytes(data []byte, path string) (*WorkflowConfig, error) {
 	var config WorkflowConfig
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".yaml" || ext == ".yml" {
+		var raw any
+		if err := yaml.Unmarshal(data, &raw); err != nil {
+			return nil, fmt.Errorf("parse yaml %s: %w", path, err)
+		}
+		jsonData, err := json.Marshal(normalizeYAML(raw))
+		if err != nil {
+			return nil, fmt.Errorf("convert yaml %s: %w", path, err)
+		}
+		if err := json.Unmarshal(jsonData, &config); err != nil {
+			return nil, fmt.Errorf("decode yaml %s: %w", path, err)
+		}
+		return &config, nil
+	}
 	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode json %s: %w", path, err)
 	}
 	return &config, nil
+}
+
+// normalizeYAML converts yaml.v3's map[interface{}]interface{} values into
+// map[string]interface{} so the result can be marshaled to JSON.
+func normalizeYAML(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(val))
+		for k, item := range val {
+			m[k] = normalizeYAML(item)
+		}
+		return m
+	case map[any]any:
+		m := make(map[string]any, len(val))
+		for k, item := range val {
+			m[fmt.Sprintf("%v", k)] = normalizeYAML(item)
+		}
+		return m
+	case []any:
+		s := make([]any, len(val))
+		for i, item := range val {
+			s[i] = normalizeYAML(item)
+		}
+		return s
+	default:
+		return v
+	}
 }
 
 // LoadConfigFromDir loads all workflow configs from a directory.
@@ -114,6 +170,58 @@ func LoadConfigFromDir(dir string) (map[string]*WorkflowConfig, error) {
 	return configs, nil
 }
 
+// MarshalConfigYAML serializes a workflow config to YAML with snake_case keys
+// (matching the json tags), so it round-trips through LoadConfig. Used by the
+// dashboard workflow editor when persisting edits.
+func MarshalConfigYAML(cfg *WorkflowConfig) ([]byte, error) {
+	jsonBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config json: %w", err)
+	}
+	var generic map[string]any
+	if err := json.Unmarshal(jsonBytes, &generic); err != nil {
+		return nil, fmt.Errorf("intermediate decode: %w", err)
+	}
+	return yaml.Marshal(generic)
+}
+
+// ValidateConfig checks a workflow config for structural problems and returns a
+// list of human-readable errors (empty when valid).
+func ValidateConfig(cfg *WorkflowConfig) []string {
+	var errs []string
+	if cfg == nil {
+		return []string{"config is nil"}
+	}
+	if strings.TrimSpace(cfg.Name) == "" {
+		errs = append(errs, "workflow name is required")
+	}
+	if len(cfg.Phases) == 0 {
+		errs = append(errs, "at least one phase is required")
+	}
+	validPhase := map[string]bool{"probe": true, "research": true, "plan": true, "feedback_pre": true, "execution": true, "feedback_post": true, "report": true}
+	validGate := map[string]bool{"assumption_threshold": true, "confidence_threshold": true, "plan_completeness": true, "approval": true, "task_completion": true, "review_pass": true, "report_completeness": true, "": true}
+	seen := map[string]bool{}
+	for i, p := range cfg.Phases {
+		if strings.TrimSpace(p.Name) == "" {
+			errs = append(errs, fmt.Sprintf("phase %d: name is required", i))
+		}
+		if seen[p.Name] {
+			errs = append(errs, fmt.Sprintf("duplicate phase name %q", p.Name))
+		}
+		seen[p.Name] = true
+		if !validPhase[p.Type] {
+			errs = append(errs, fmt.Sprintf("phase %q: unknown type %q", p.Name, p.Type))
+		}
+		if !validGate[p.Gate.Type] {
+			errs = append(errs, fmt.Sprintf("phase %q: unknown gate type %q", p.Name, p.Gate.Type))
+		}
+		if p.MaxIterations < 0 {
+			errs = append(errs, fmt.Sprintf("phase %q: max_iterations must be >= 0", p.Name))
+		}
+	}
+	return errs
+}
+
 // NewPhaseFromConfig creates a Phase instance from config.
 func NewPhaseFromConfig(cfg PhaseConfig) Phase {
 	switch cfg.Type {
@@ -124,11 +232,11 @@ func NewPhaseFromConfig(cfg PhaseConfig) Phase {
 	case "plan":
 		return &PlanPhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations}
 	case "feedback_pre":
-		return &FeedbackPrePhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations}
+		return &FeedbackPrePhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations, Approvers: cfg.Gate.Approvers}
 	case "execution":
 		return &ExecutionPhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations}
 	case "feedback_post":
-		return &FeedbackPostPhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations}
+		return &FeedbackPostPhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations, Reviewers: cfg.Gate.RequiredReviewers}
 	case "report":
 		return &ReportPhase{AllowedToolsList: cfg.AllowedTools, MaxIter: cfg.MaxIterations}
 	default:
@@ -187,49 +295,85 @@ func NewGateFromConfig(cfg GateConfig) Gate {
 	}
 }
 
-// DefaultConfig returns the simplified 3-phase Natural Gates workflow configuration.
-// PLAN → EXECUTE → REPORT. Proven V36 enforcement merged into EXECUTE phase.
+// DefaultConfig returns the full 7-phase gated-loop workflow configuration:
+//
+//	PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT
+//
+// Each phase has a natural gate. FEEDBACK_PRE pauses for human approval before any
+// code is written; FEEDBACK_POST pauses for review after execution and can loop back
+// to EXECUTION when changes are requested. V36 safety enforcement (branch protection,
+// read budget, commit/push) lives in the EXECUTION phase via the driver.
+//
+// This is the out-of-the-box flow; it can be overridden by a workflow config file
+// (see prism.workflow_config) loaded with LoadConfig.
 func DefaultConfig() *WorkflowConfig {
 	return &WorkflowConfig{
-		Name:    "natural-gates-project-work",
-		Version: 2,
-		Description: "3-phase autonomous workflow: PLAN → EXECUTE → REPORT",
+		Name:        "gated-loop",
+		Version:     2,
+		Description: "7-phase gated loop: PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:  40,
-			MaxTotalTime:        "30m",
-			StatePersistenceDir: "runs/natural-gates",
+			MaxTotalIterations:  60,
+			MaxTotalTime:        "60m",
+			StatePersistenceDir: "runs/gated-loop",
 			EventEmission:       true,
 		},
-		ConfidenceDomains: []string{}, // not used in 3-phase mode
+		ConfidenceDomains: []string{
+			"codebase_understanding", "requirements_clarity", "approach_viability",
+			"tool_capability", "dependency_health", "test_coverage", "edge_case_awareness",
+		},
 		Phases: []PhaseConfig{
 			{
-				Name: "PLAN", Type: "plan", Description: "Read project state, identify task, create plan",
+				Name: "PROBE", Type: "probe", Description: "Reduce assumptions by asking questions and searching",
+				MaxIterations: 4,
+				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "web_search", "memory_search"},
+				Gate:          GateConfig{Type: "assumption_threshold", Threshold: 2.0},
+				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_open_assumptions", Blocks: false},
+			},
+			{
+				Name: "RESEARCH", Type: "research", Description: "Increase confidence by searching the web, memory, and the codebase",
+				MaxIterations: 6,
+				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "web_search", "memory_search"},
+				Gate:          GateConfig{Type: "confidence_threshold", Threshold: 0.7},
+				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_partial_confidence", Blocks: false},
+			},
+			{
+				Name: "PLAN", Type: "plan", Description: "Create a structured plan with tasks and resource assignments",
 				MaxIterations: 5,
-				AllowedTools: []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "git_checkout"},
+				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "git_checkout", "memory_search"},
 				Gate: GateConfig{Type: "plan_completeness", Threshold: 0.5,
 					Weights: map[string]float64{"tasks_identified": 0.5, "resources_assigned": 0.5}},
 				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_plan", Blocks: false},
 			},
 			{
-				Name: "EXECUTE", Type: "execution", Description: "Write code with branch protection, read budget, commit-push enforcement",
-				MaxIterations: 25,
-				AllowedTools: []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "git_checkout", "project_overview"},
-				Gate: GateConfig{Type: "task_completion", Mode: "partial_allowed"},
-				Fallback: FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false},
+				Name: "FEEDBACK_PRE", Type: "feedback_pre", Description: "Pause for plan approval before execution",
+				MaxIterations: 1,
+				AllowedTools:  []string{},
+				Gate:          GateConfig{Type: "approval", Approvers: []string{"ema"}, Mode: "require_any"},
+				Fallback:      FallbackConfig{OnMaxIterations: "wait", Blocks: true},
 			},
 			{
-				Name: "REPORT", Type: "report", Description: "Final report with proof of work",
+				Name: "EXECUTION", Type: "execution", Description: "Write code with branch protection, read budget, and commit/push enforcement",
+				MaxIterations: 25,
+				AllowedTools:  []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "git_checkout", "project_overview"},
+				Gate:          GateConfig{Type: "task_completion", Mode: "partial_allowed"},
+				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false},
+			},
+			{
+				Name: "FEEDBACK_POST", Type: "feedback_post", Description: "Pause for post-execution review; loops back to EXECUTION on changes requested",
+				MaxIterations: 1,
+				AllowedTools:  []string{},
+				Gate:          GateConfig{Type: "review_pass", RequiredReviewers: []string{"ema"}, MaxWarn: 2},
+				Fallback:      FallbackConfig{OnMaxIterations: "wait", Blocks: true},
+			},
+			{
+				Name: "REPORT", Type: "report", Description: "Produce a final report with proof of work",
 				MaxIterations: 3,
-				AllowedTools: []string{"read_file", "git_log", "git_status"},
-				Gate: GateConfig{Type: "report_completeness"},
-				Fallback: FallbackConfig{OnMaxIterations: "auto_generate", Blocks: false},
+				AllowedTools:  []string{"read_file", "git_log", "git_status"},
+				Gate:          GateConfig{Type: "report_completeness"},
+				Fallback:      FallbackConfig{OnMaxIterations: "auto_generate", Blocks: false},
 			},
 		},
-		Agents: []AgentConfig{
-			{Name: "prism", Role: "implementation", Capabilities: []string{"write_code", "git_operations", "file_operations", "code_review"}, Provider: "ollama", Model: "glm-5.2:cloud", Availability: "online"},
-			{Name: "mango", Role: "implementation-review", Capabilities: []string{"write_code", "data_structuring", "complex_computation", "code_review", "test_writing"}, Provider: "openclaw-subagent", Model: "deepseek-v4-pro:cloud", Availability: "online"},
-			{Name: "lumi", Role: "architect-reviewer", Capabilities: []string{"architecture_design", "code_review", "creative_direction", "plan_approval", "agent_orchestration"}, Provider: "openclaw", Model: "deepseek-v4-pro:cloud", Availability: "online"},
-		},
-		FastPath: &FastPathConfig{Enabled: false}, // all tasks go through full 3-phase
+		Agents:   []AgentConfig{},
+		FastPath: &FastPathConfig{Enabled: false},
 	}
 }

@@ -1,0 +1,129 @@
+# Gated Loop Workflow — the default gated dev loop.
+#
+#   PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT
+#
+# Point prism.workflow_config at this file to override the built-in DefaultConfig().
+# Edit phases, allowed tools, gate types and thresholds, approvers and reviewers.
+# FEEDBACK_PRE pauses for a human ("ema") before any code is written.
+# FEEDBACK_POST pauses for review; requesting changes loops back to EXECUTION.
+
+name: gated-loop
+version: 2
+description: "7-phase gated loop with human-blocking pre/post feedback and iterate-on-changes"
+
+global:
+  max_total_iterations: 60
+  max_total_time: "60m"
+  state_persistence_dir: "runs/gated-loop"
+  event_emission: true
+
+# Confidence domains tracked during RESEARCH; the confidence gate is weakest-link.
+confidence_domains:
+  - codebase_understanding
+  - requirements_clarity
+  - approach_viability
+  - tool_capability
+  - dependency_health
+  - test_coverage
+  - edge_case_awareness
+
+# Low-risk tasks may skip the slow front phases.
+fast_path:
+  enabled: false
+  risk_levels: ["low"]
+  skip_phases: ["PROBE", "RESEARCH"]
+
+# Agents are resolved dynamically from the running config; leave empty to inherit.
+agents: []
+
+phases:
+  - name: PROBE
+    type: probe
+    description: "Reduce assumptions by asking questions and searching"
+    max_iterations: 4
+    allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log, git_branch_list, web_search, memory_search]
+    gate:
+      type: assumption_threshold
+      threshold: 2.0
+      weights: {blocker: 4.0, high: 2.0, medium: 1.0, low: 0.5}
+    fallback:
+      on_max_iterations: proceed_with_open_assumptions
+      blocks: false
+
+  - name: RESEARCH
+    type: research
+    description: "Increase confidence using the web, memory, and the codebase"
+    max_iterations: 6
+    allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log, web_search, memory_search]
+    gate:
+      type: confidence_threshold
+      threshold: 0.7
+    fallback:
+      on_max_iterations: proceed_with_partial_confidence
+      blocks: false
+
+  - name: PLAN
+    type: plan
+    description: "Create a structured plan with tasks and resource assignments"
+    max_iterations: 5
+    allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log, git_branch_list, git_checkout, memory_search]
+    gate:
+      type: plan_completeness
+      threshold: 0.5
+      weights: {tasks_identified: 0.5, resources_assigned: 0.5}
+    fallback:
+      on_max_iterations: proceed_with_partial_plan
+      blocks: false
+
+  - name: FEEDBACK_PRE
+    type: feedback_pre
+    description: "Pause for plan approval before execution"
+    max_iterations: 1
+    allowed_tools: []
+    gate:
+      type: approval
+      approvers: [ema]
+      mode: require_any
+    fallback:
+      on_max_iterations: wait
+      blocks: true
+
+  - name: EXECUTION
+    type: execution
+    description: "Write code with branch protection, read budget, and commit/push enforcement"
+    max_iterations: 25
+    allowed_tools: [read_file, write_file, list_dir, search_files, git_status, git_log, git_diff, git_add, git_commit, git_push, git_branch_list, git_checkout, project_overview]
+    gate:
+      type: task_completion
+      mode: partial_allowed
+    fallback:
+      on_max_iterations: proceed_with_partial_completion
+      blocks: false
+
+  - name: FEEDBACK_POST
+    type: feedback_post
+    description: "Pause for review; loops back to EXECUTION when changes are requested"
+    max_iterations: 1
+    allowed_tools: []
+    gate:
+      type: review_pass
+      # Human-blocking by default. To let the Claude Code sub-agent reviewer
+      # auto-review (requires claude_code.enabled), add "claude":
+      #   required_reviewers: [ema, claude]   # human + sub-agent
+      #   required_reviewers: [claude]        # fully automated review
+      required_reviewers: [ema]
+      max_warn: 2
+    fallback:
+      on_max_iterations: wait
+      blocks: true
+
+  - name: REPORT
+    type: report
+    description: "Produce a final report with proof of work"
+    max_iterations: 3
+    allowed_tools: [read_file, git_log, git_status]
+    gate:
+      type: report_completeness
+    fallback:
+      on_max_iterations: auto_generate
+      blocks: false

@@ -111,10 +111,13 @@ func NewEngine(config *WorkflowConfig, emitter EventEmitter, delegation *Delegat
 		externalEvent: make(chan ExternalEvent, 100),
 	}
 
-	// Register phases from config
+	// Register phases AND their gates from config. Previously gates were never
+	// registered, so every gate check in Run()/Drive() fell through to the
+	// no-gate path and gates never fired.
 	for _, phaseCfg := range config.Phases {
 		phase := NewPhaseFromConfig(phaseCfg)
 		e.RegisterPhase(phase)
+		e.RegisterGate(phase.Name(), NewGateFromConfig(phaseCfg.Gate))
 	}
 
 	return e

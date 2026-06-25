@@ -466,14 +466,17 @@ func main() {
 		executeDashboard(*dashPort, *dashRunDir, *dashPolicyDir)
 	case "workflow":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (list, show, run, or status)")
-			fmt.Fprintln(os.Stderr, "Usage: prism workflow list")
+			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (start, list, show, run, or status)")
+			fmt.Fprintln(os.Stderr, "Usage: prism workflow start --project <id> --prompt \"...\"")
+			fmt.Fprintln(os.Stderr, "       prism workflow list")
 			fmt.Fprintln(os.Stderr, "       prism workflow show <workflow_name>")
 			fmt.Fprintln(os.Stderr, "       prism workflow run <workflow_name> --input <file.json>")
 			fmt.Fprintln(os.Stderr, "       prism workflow status <run_id>")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
+		case "start":
+			executeWorkflowStart(os.Args[3:])
 		case "list":
 			executeWorkflowList()
 		case "show":

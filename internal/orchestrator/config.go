@@ -37,6 +37,10 @@ type Config struct {
 	// Codex configures subscription-backed Codex CLI task delegation.
 	Codex CodexConfig `yaml:"codex"`
 
+	// ClaudeCode configures the Claude Code CLI sub-agent reviewer that can
+	// fulfill gated-loop FEEDBACK_PRE/FEEDBACK_POST gates automatically.
+	ClaudeCode ClaudeCodeConfig `yaml:"claude_code"`
+
 	// Autopatch configures diagnose-and-propose patch tasks.
 	Autopatch AutopatchConfig `yaml:"autopatch"`
 
@@ -46,6 +50,10 @@ type Config struct {
 	// Agents defines the agents Prism should register.
 	// Each agent gets its own event namespace based on its ID.
 	Agents []AgentConfig `yaml:"agents"`
+
+	// Projects defines the assignable projects the gated loop can work on.
+	// Replaces hardcoded repo paths so projects are dynamic/assignable.
+	Projects []ProjectConfig `yaml:"projects"`
 
 	// Channels defines messaging channels (Discord, Telegram, etc.).
 	Channels []ChannelConfig `yaml:"channels"`
@@ -124,6 +132,11 @@ type PrismConfig struct {
 	// Scheduler configures cron-style scheduled tasks that fire NATS events.
 	// V32: Event-driven wake replaces heartbeat babysitting.
 	Scheduler SchedulerConfig `yaml:"scheduler"`
+
+	// WorkflowConfig is the path to a gated-loop workflow definition (YAML or JSON).
+	// When set and loadable, it overrides the built-in 7-phase DefaultConfig.
+	// See examples/workflows/gated-loop.yaml.
+	WorkflowConfig string `yaml:"workflow_config"`
 }
 
 // APIServerConfig configures HTTP API authentication and CORS.
@@ -239,6 +252,20 @@ type CodexConfig struct {
 	ExtraArgs      []string `yaml:"extra_args"`
 }
 
+// ClaudeCodeConfig configures the Claude Code CLI sub-agent reviewer. When
+// enabled, a reviewer service watches for paused gated-loop feedback gates and,
+// if the gate requires the configured reviewer name, runs `claude -p` to produce
+// an approve / changes_requested verdict automatically.
+type ClaudeCodeConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	Executable     string   `yaml:"executable"`     // CLI binary (default: claude / claude.cmd)
+	Model          string   `yaml:"model"`          // optional --model override
+	ReviewerName   string   `yaml:"reviewer_name"`  // gate approver/reviewer name this fulfills (default: claude)
+	TimeoutMinutes int      `yaml:"timeout_minutes"` // per-review timeout (default: 10)
+	AllowedTools   string   `yaml:"allowed_tools"`  // --allowedTools whitelist (read-only review tools)
+	ExtraArgs      []string `yaml:"extra_args"`     // additional CLI args
+}
+
 // AutopatchConfig configures the bug diagnosis and patch proposal loop.
 type AutopatchConfig struct {
 	Enabled              bool     `yaml:"enabled"`
@@ -323,6 +350,57 @@ type AgentConfig struct {
 	// The "inject" field is appended to the system prompt after conversation_postfix
 	// but before tool instructions.
 	StateActions map[string]StateAction `yaml:"state_actions"`
+}
+
+// ProjectConfig describes an assignable project the gated loop can work on.
+// It replaces hardcoded repo paths and channel IDs so projects are dynamic.
+type ProjectConfig struct {
+	// ID is the project's unique identifier (e.g. "bassbook").
+	ID string `yaml:"id"`
+
+	// RepoPath is the absolute path to the project's git repository.
+	RepoPath string `yaml:"repo_path"`
+
+	// StateFile is an optional project state file the agent reads for task
+	// assignment (e.g. "PROJECT_STATE.md"). Relative to RepoPath if not absolute.
+	StateFile string `yaml:"state_file"`
+
+	// DefaultBranch is the protected branch agents must not write to directly.
+	// Defaults to "main" when empty.
+	DefaultBranch string `yaml:"default_branch"`
+
+	// Channel is the messaging channel ID where results/feedback are posted.
+	Channel string `yaml:"channel"`
+
+	// WorkflowConfig optionally overrides the global workflow definition for
+	// this project (path to a gated-loop YAML/JSON file).
+	WorkflowConfig string `yaml:"workflow_config"`
+
+	// Default marks this project as the one used when no project is specified.
+	Default bool `yaml:"default"`
+}
+
+// FindProject returns the project with the given ID, or nil if not found.
+func (c *Config) FindProject(id string) *ProjectConfig {
+	for i := range c.Projects {
+		if c.Projects[i].ID == id {
+			return &c.Projects[i]
+		}
+	}
+	return nil
+}
+
+// DefaultProject returns the project marked default, or the first project, or nil.
+func (c *Config) DefaultProject() *ProjectConfig {
+	for i := range c.Projects {
+		if c.Projects[i].Default {
+			return &c.Projects[i]
+		}
+	}
+	if len(c.Projects) > 0 {
+		return &c.Projects[0]
+	}
+	return nil
 }
 
 // StateAction defines behavior modifiers for a specific context state.

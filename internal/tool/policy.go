@@ -143,6 +143,10 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "echo":
 		return PolicyResult{Decision: PolicyApproved, Reason: "echo is always approved"}
 
+	// RESEARCH-phase read-only tools — no filesystem mutation, always approved.
+	case "web_search", "memory_search":
+		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is read-only research, always approved", toolName)}
+
 	case "write_file_dry_run":
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 

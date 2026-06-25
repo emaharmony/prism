@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +50,7 @@ import (
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/workflow"
+	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 	"github.com/nats-io/nats.go"
 )
 
@@ -75,6 +77,9 @@ type Server struct {
 	allowedOrigins []string
 	// configDir jails editor config writes (POST /editor/save).
 	configDir string
+	// workflowConfigPath is the gated-loop workflow definition file the
+	// dashboard workflow editor reads and writes. Empty → read-only default.
+	workflowConfigPath string
 }
 
 // Config holds API server configuration.
@@ -95,6 +100,8 @@ type Config struct {
 	AllowedOrigins []string
 	// ConfigDir jails editor config writes to this directory.
 	ConfigDir string
+	// WorkflowConfigPath is the gated-loop workflow definition file path.
+	WorkflowConfigPath string
 }
 
 // AutoPatchStarter is the API surface needed from the autopatch service.
@@ -116,9 +123,10 @@ func NewServer(cfg Config) *Server {
 		autopatch:      cfg.AutoPatch,
 		nc:             cfg.NATS,
 		authToken:      cfg.AuthToken,
-		allowedOrigins: cfg.AllowedOrigins,
-		configDir:      cfg.ConfigDir,
-		mux:            http.NewServeMux(),
+		allowedOrigins:     cfg.AllowedOrigins,
+		configDir:          cfg.ConfigDir,
+		workflowConfigPath: cfg.WorkflowConfigPath,
+		mux:                http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -138,7 +146,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/approvals/", s.handleApprovalAction)
 	s.mux.HandleFunc("/api/v1/events/stream", s.handleEventStream)
 	s.mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
+	s.mux.HandleFunc("/api/v1/workflows/start", s.handleWorkflowStart)
+	s.mux.HandleFunc("/api/v1/workflows/feedback", s.handleWorkflowFeedback)
 	s.mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowSVG)
+	s.mux.HandleFunc("/api/v1/workflow-config", s.handleWorkflowConfig)
 	s.mux.HandleFunc("/api/v1/editor", s.handleEditorState)
 	s.mux.HandleFunc("/api/v1/editor/nodes", s.handleEditorNodes)
 	s.mux.HandleFunc("/api/v1/editor/nodes/", s.handleEditorNodeCRUD)
@@ -449,6 +460,136 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Autopatch ---
+
+// handleWorkflowStart triggers the gated loop for {project, prompt} by
+// publishing to prism.workflow.start, which the serve-mode WakeHandler consumes.
+func (s *Server) handleWorkflowStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.nc == nil {
+		writeJSONError(w, "NATS not connected — cannot start workflow", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Project string `json:"project"`
+		Prompt  string `json:"prompt"`
+		Channel string `json:"channel"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		writeJSONError(w, "prompt is required", http.StatusBadRequest)
+		return
+	}
+	payload, _ := json.Marshal(req)
+	if err := s.nc.Publish("prism.workflow.start", payload); err != nil {
+		writeJSONError(w, "failed to publish start request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, map[string]any{"status": "started", "project": req.Project})
+}
+
+// loadWorkflowConfig returns the configured gated-loop workflow, or the built-in default.
+func (s *Server) loadWorkflowConfig() *v2.WorkflowConfig {
+	if s.workflowConfigPath != "" {
+		if c, err := v2.LoadConfig(s.workflowConfigPath); err == nil {
+			return c
+		}
+	}
+	return v2.DefaultConfig()
+}
+
+// handleWorkflowConfig serves and persists the gated-loop workflow definition
+// (phases + gates) for the dashboard workflow editor.
+func (s *Server) handleWorkflowConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, s.loadWorkflowConfig())
+	case http.MethodPut:
+		if s.workflowConfigPath == "" {
+			writeJSONError(w, "no workflow_config path configured — set prism.workflow_config to enable editing", http.StatusBadRequest)
+			return
+		}
+		var cfg v2.WorkflowConfig
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&cfg); err != nil {
+			writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errs := v2.ValidateConfig(&cfg); len(errs) > 0 {
+			writeJSONError(w, "validation failed: "+strings.Join(errs, "; "), http.StatusBadRequest)
+			return
+		}
+		yamlBytes, err := v2.MarshalConfigYAML(&cfg)
+		if err != nil {
+			writeJSONError(w, "could not serialize config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Atomic write to the server-configured path (not user-supplied).
+		tmp := s.workflowConfigPath + ".tmp"
+		if err := os.WriteFile(tmp, yamlBytes, 0644); err != nil {
+			writeJSONError(w, "write failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := os.Rename(tmp, s.workflowConfigPath); err != nil {
+			os.Remove(tmp)
+			writeJSONError(w, "rename failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"status": "saved", "path": s.workflowConfigPath, "phases": len(cfg.Phases)})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleWorkflowFeedback releases a paused feedback gate (approve / request
+// changes / reject) by publishing the decision the engine waits on.
+func (s *Server) handleWorkflowFeedback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.nc == nil {
+		writeJSONError(w, "NATS not connected", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Decision   string         `json:"decision"`
+		Reviewer   string         `json:"reviewer"`
+		Notes      string         `json:"notes"`
+		WorkflowID string         `json:"workflow_id"`
+		Dimensions map[string]any `json:"dimensions"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Decision == "" {
+		writeJSONError(w, "decision is required (approved | changes_requested | rejected)", http.StatusBadRequest)
+		return
+	}
+	msgType := "feedback_response"
+	if req.Reviewer != "" {
+		msgType = "review_response"
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"type":        msgType,
+		"decision":    req.Decision,
+		"reviewer":    req.Reviewer,
+		"notes":       req.Notes,
+		"workflow_id": req.WorkflowID,
+		"dimensions":  req.Dimensions,
+	})
+	if err := s.nc.Publish("prism.workflow.feedback.response", payload); err != nil {
+		writeJSONError(w, "publish failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "sent", "decision": req.Decision})
+}
 
 func (s *Server) handleAutoPatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
