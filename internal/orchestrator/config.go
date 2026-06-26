@@ -376,6 +376,12 @@ type ProjectConfig struct {
 	// this project (path to a gated-loop YAML/JSON file).
 	WorkflowConfig string `yaml:"workflow_config"`
 
+	// Orchestrator optionally names the agent ID whose model drives this
+	// project's gated loop. Empty falls back to the primary agent. Use this to
+	// point a project at a Claude Code (subscription) brain, e.g. an agent with
+	// provider "claude_code", without changing the global default.
+	Orchestrator string `yaml:"orchestrator"`
+
 	// Default marks this project as the one used when no project is specified.
 	Default bool `yaml:"default"`
 }

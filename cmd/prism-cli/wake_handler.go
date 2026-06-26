@@ -307,7 +307,7 @@ func (wh *WakeHandler) handleWorkflowStart(projectID, prompt, channel string) {
 		project = wh.cfg.DefaultProject()
 	}
 
-	agentCfg := wh.primaryAgent()
+	agentCfg := wh.orchestratorAgentFor(project)
 	if agentCfg == nil {
 		log.Printf("[WAKE] workflow.start: no agent configured")
 		return
@@ -355,6 +355,22 @@ func (wh *WakeHandler) primaryAgent() *orchestrator.AgentConfig {
 		return &wh.cfg.Agents[0]
 	}
 	return nil
+}
+
+// orchestratorAgentFor returns the agent that should drive a project's gated
+// loop: the agent named by project.Orchestrator if set and found, otherwise the
+// primary agent. This is the seam that lets a project opt into a Claude Code
+// (subscription) brain without changing the global default.
+func (wh *WakeHandler) orchestratorAgentFor(project *orchestrator.ProjectConfig) *orchestrator.AgentConfig {
+	if project != nil && project.Orchestrator != "" {
+		for i := range wh.cfg.Agents {
+			if wh.cfg.Agents[i].ID == project.Orchestrator {
+				return &wh.cfg.Agents[i]
+			}
+		}
+		log.Printf("[WAKE] project %q orchestrator %q not found in agents; using primary", project.ID, project.Orchestrator)
+	}
+	return wh.primaryAgent()
 }
 
 // handleScheduledEvent processes a scheduler event.
@@ -1578,6 +1594,14 @@ func (wh *WakeHandler) loadWorkflowConfig(project *orchestrator.ProjectConfig) *
 // project, seed a task from its state file (or the prompt), then run the loop.
 func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
 	project := wh.cfg.DefaultProject()
+	// Honor a per-project orchestrator brain (e.g. claude_code) over the
+	// primary agent the scheduler selected before the project was known.
+	if a := wh.orchestratorAgentFor(project); a != nil {
+		agentCfg = a
+		if a.Model != "" {
+			model = a.Model
+		}
+	}
 	task := wh.parseProjectStateTaskFrom(wh.projectStatePath(project))
 	if task == "" {
 		task = userPrompt
