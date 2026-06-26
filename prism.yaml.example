@@ -160,6 +160,14 @@ codex:
 # To use it, add the reviewer name to a gate in your workflow config, e.g.
 #   FEEDBACK_POST gate: { type: review_pass, required_reviewers: [claude] }
 # or keep a human too: required_reviewers: [ema, claude].
+# Claude Code CLI integration. Used in two ways:
+#   1. Reviewer at FEEDBACK gates (reviewer_name / allowed_tools below).
+#   2. Orchestrator BRAIN for the gated loop — define an agent with
+#      provider: claude_code (see agents:) and point a project at it with
+#      project.orchestrator. The provider shells out to `claude -p` with tools
+#      disabled, so Prism still owns tool execution, gates, and policy.
+# Auth comes from the installed `claude` subscription session — no API key.
+# executable / timeout_minutes here are reused by the orchestrator provider.
 claude_code:
   enabled: false
   executable: ""          # empty = claude.cmd on Windows, claude elsewhere
@@ -180,6 +188,8 @@ projects:
     default_branch: "main"                 # protected branch (writes blocked here)
     channel: ""                            # messaging channel for results/feedback
     workflow_config: ""                    # optional per-project workflow override
+    orchestrator: ""                       # optional agent ID to drive this project's
+                                           # gated loop (e.g. "claude_code"); empty = primary agent
     default: true                          # used when no --project is given
 
 agents:
@@ -222,6 +232,21 @@ agents:
     # V22: Subscribe to delegated tasks
     # subscriptions:
     #   - "mango.task.created"  # Receive tasks from Lumi
+
+  # Optional Claude Code subscription brain. Drives the gated loop via the local
+  # `claude` CLI (no API key — uses your subscription). Requires claude_code.enabled
+  # above and a logged-in `claude`. Select it per project with project.orchestrator:
+  # claude_code. The model below is BOTH the registry selector and the --model passed
+  # to the CLI, so set a real Claude model id (not empty).
+  # - id: claude_code
+  #   role: orchestrator
+  #   provider: claude_code
+  #   model: "claude-opus-4-8"
+  #   capabilities:
+  #     - plan
+  #     - route
+  #     - review
+  #     - report
 
   # Optional API-backed model. Requires OPENAI_API_KEY and API billing.
   # ChatGPT web subscriptions and API billing are separate.

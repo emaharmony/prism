@@ -58,6 +58,7 @@ import (
 	"github.com/emaharmony/prism/internal/plan"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/anthropic"
+	"github.com/emaharmony/prism/internal/provider/claudecode"
 	"github.com/emaharmony/prism/internal/provider/gemini"
 	"github.com/emaharmony/prism/internal/provider/ollama"
 	"github.com/emaharmony/prism/internal/provider/openai"
@@ -1523,7 +1524,7 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 	//
 	// V21 will add provider chains, fallbacks, and cost tiers.
 	for _, agentCfg := range cfg.Agents {
-		p, info, err := createProvider(agentCfg)
+		p, info, err := createProvider(agentCfg, cfg.ClaudeCode)
 		if err != nil {
 			return fmt.Errorf("agent %s: %w", agentCfg.ID, err)
 		}
@@ -1535,7 +1536,7 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 // createProvider creates a provider instance for an agent config.
 // V20 supports: ollama, openai, anthropic, gemini.
 // V34 adds openai_responses as an additive OpenAI Responses API option.
-func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provider.ModelInfo, error) {
+func createProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.ClaudeCodeConfig) (provider.Provider, provider.ModelInfo, error) {
 	info := provider.ModelInfo{
 		ID:           agentCfg.Model,
 		ProviderName: agentCfg.Provider,
@@ -1579,9 +1580,31 @@ func createProvider(agentCfg orchestrator.AgentConfig) (provider.Provider, provi
 		}
 		return p, info, nil
 
+	case "claude_code":
+		// Claude Code subscription brain: shells out to the `claude` CLI.
+		// Reuses the top-level claude_code: block for executable/timeout.
+		return createClaudeCodeProvider(agentCfg, ccCfg), info, nil
+
 	default:
-		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini)", agentCfg.Provider)
+		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini, claude_code)", agentCfg.Provider)
 	}
+}
+
+// createClaudeCodeProvider builds a Claude Code CLI provider. Auth comes from the
+// installed `claude` binary's subscription session — no API key required. The
+// executable and timeout are taken from the top-level claude_code: config block;
+// the model from the agent config (falling back to the block's model).
+func createClaudeCodeProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.ClaudeCodeConfig) provider.Provider {
+	model := agentCfg.Model
+	if model == "" {
+		model = ccCfg.Model
+	}
+	return claudecode.New(claudecode.Config{
+		Executable:     ccCfg.Executable,
+		Model:          model,
+		TimeoutMinutes: ccCfg.TimeoutMinutes,
+		ExtraArgs:      ccCfg.ExtraArgs,
+	})
 }
 
 func factoryConfigFromBridge(cfg orchestrator.FactoryBridgeConfig) factory.Config {
