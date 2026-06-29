@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 )
@@ -199,5 +200,28 @@ func TestRunStateToJSON(t *testing.T) {
 	dels, _ := got["delegations"].([]any)
 	if len(dels) != 1 {
 		t.Fatalf("expected one delegation, got %v", got["delegations"])
+	}
+}
+
+func TestLatestRunID(t *testing.T) {
+	base := t.TempDir()
+	// Two runs; bump the second's report mtime so it is newest.
+	writeRun(t, base, "gl-old", "completed", true)
+	writeRun(t, base, "gl-new", "completed", true)
+	newReport := filepath.Join(base, "gl-new", "REPORT.md")
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(newReport, future, future); err != nil {
+		t.Fatal(err)
+	}
+	id, err := latestRunID(base)
+	if err != nil {
+		t.Fatalf("latestRunID: %v", err)
+	}
+	if id != "gl-new" {
+		t.Fatalf("expected newest run gl-new, got %q", id)
+	}
+	// Empty dir → error.
+	if _, err := latestRunID(t.TempDir()); err == nil {
+		t.Fatal("expected error for empty dir")
 	}
 }
