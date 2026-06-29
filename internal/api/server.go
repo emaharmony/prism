@@ -38,6 +38,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +53,7 @@ import (
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/workflow"
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
+	"github.com/emaharmony/prism/internal/workstart"
 	"github.com/nats-io/nats.go"
 )
 
@@ -113,16 +116,16 @@ type AutoPatchStarter interface {
 // NewServer creates a new API server.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		addr:           cfg.Addr,
-		orch:           cfg.Orch,
-		store:          cfg.Store,
-		sessions:       cfg.Sessions,
-		engine:         cfg.Engine,
-		approval:       cfg.Approval,
-		tracker:        cfg.Tracker,
-		autopatch:      cfg.AutoPatch,
-		nc:             cfg.NATS,
-		authToken:      cfg.AuthToken,
+		addr:               cfg.Addr,
+		orch:               cfg.Orch,
+		store:              cfg.Store,
+		sessions:           cfg.Sessions,
+		engine:             cfg.Engine,
+		approval:           cfg.Approval,
+		tracker:            cfg.Tracker,
+		autopatch:          cfg.AutoPatch,
+		nc:                 cfg.NATS,
+		authToken:          cfg.AuthToken,
 		allowedOrigins:     cfg.AllowedOrigins,
 		configDir:          cfg.ConfigDir,
 		workflowConfigPath: cfg.WorkflowConfigPath,
@@ -148,6 +151,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("/api/v1/workflows/start", s.handleWorkflowStart)
 	s.mux.HandleFunc("/api/v1/workflows/feedback", s.handleWorkflowFeedback)
+	s.mux.HandleFunc("/api/v1/workflows/runs", s.handleWorkflowRuns)
+	s.mux.HandleFunc("/api/v1/workflows/runs/", s.handleWorkflowRunDetail)
 	s.mux.HandleFunc("/api/v1/workflows/", s.handleWorkflowSVG)
 	s.mux.HandleFunc("/api/v1/workflow-config", s.handleWorkflowConfig)
 	s.mux.HandleFunc("/api/v1/editor", s.handleEditorState)
@@ -472,11 +477,7 @@ func (s *Server) handleWorkflowStart(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "NATS not connected — cannot start workflow", http.StatusServiceUnavailable)
 		return
 	}
-	var req struct {
-		Project string `json:"project"`
-		Prompt  string `json:"prompt"`
-		Channel string `json:"channel"`
-	}
+	var req workstart.Request
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
@@ -485,13 +486,143 @@ func (s *Server) handleWorkflowStart(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, "prompt is required", http.StatusBadRequest)
 		return
 	}
+	cfg := (*orchestrator.Config)(nil)
+	if s.orch != nil {
+		cfg = s.orch.Config
+	}
+	resolved, err := workstart.Resolve(cfg, req)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if resolved.NeedsLocation {
+		w.WriteHeader(http.StatusConflict)
+		writeJSON(w, map[string]any{
+			"error":          "location_required",
+			"reason":         resolved.Reason,
+			"recommendation": resolved.Recommendation,
+			"question":       resolved.Question,
+		})
+		return
+	}
+	req.Project = resolved.ProjectID
+	req.RepoPath = resolved.RepoPath
+	req.Channel = resolved.Channel
+	req.Bootstrap = req.Bootstrap || resolved.Project == nil
+	if req.Source == "" {
+		req.Source = "api"
+	}
 	payload, _ := json.Marshal(req)
 	if err := s.nc.Publish("prism.workflow.start", payload); err != nil {
 		writeJSONError(w, "failed to publish start request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, map[string]any{"status": "started", "project": req.Project})
+	writeJSON(w, map[string]any{"status": "started", "project": req.Project, "repo_path": req.RepoPath})
+}
+
+type workflowRunSummary struct {
+	RunID        string            `json:"run_id"`
+	WorkflowName string            `json:"workflow_name"`
+	Status       v2.WorkflowStatus `json:"status"`
+	ProjectID    string            `json:"project_id,omitempty"`
+	RepoPath     string            `json:"repo_path,omitempty"`
+	Channel      string            `json:"channel,omitempty"`
+	CurrentPhase string            `json:"current_phase,omitempty"`
+	StartedAt    string            `json:"started_at,omitempty"`
+	UpdatedAt    string            `json:"updated_at,omitempty"`
+	CompletedAt  string            `json:"completed_at,omitempty"`
+}
+
+func (s *Server) handleWorkflowRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	dir := s.workflowStateDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, map[string]any{"runs": []workflowRunSummary{}})
+			return
+		}
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	seen := map[string]bool{}
+	runs := make([]workflowRunSummary, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "workflow-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		state, err := v2.LoadWorkflowState(filepath.Join(dir, name))
+		if err != nil || state.RunID == "" || seen[state.RunID] {
+			continue
+		}
+		seen[state.RunID] = true
+		runs = append(runs, summarizeWorkflowRun(state))
+	}
+	if current, err := v2.LoadCurrentWorkflowState(dir); err == nil && current.RunID != "" && !seen[current.RunID] {
+		runs = append(runs, summarizeWorkflowRun(current))
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[i].UpdatedAt > runs[j].UpdatedAt
+	})
+	writeJSON(w, map[string]any{"runs": runs})
+}
+
+func (s *Server) handleWorkflowRunDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runID := strings.TrimPrefix(r.URL.Path, "/api/v1/workflows/runs/")
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		writeJSONError(w, "run id required", http.StatusBadRequest)
+		return
+	}
+	dir := s.workflowStateDir()
+	if runID == "current" {
+		state, err := v2.LoadCurrentWorkflowState(dir)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeJSON(w, state)
+		return
+	}
+	state, err := v2.LoadWorkflowState(filepath.Join(dir, "workflow-"+runID+".json"))
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, state)
+}
+
+func (s *Server) workflowStateDir() string {
+	cfg := s.loadWorkflowConfig()
+	if cfg != nil && cfg.Global.StatePersistenceDir != "" {
+		return cfg.Global.StatePersistenceDir
+	}
+	return "runs/gated-loop"
+}
+
+func summarizeWorkflowRun(state *v2.WorkflowState) workflowRunSummary {
+	return workflowRunSummary{
+		RunID:        state.RunID,
+		WorkflowName: state.WorkflowName,
+		Status:       state.Status,
+		ProjectID:    state.ProjectID,
+		RepoPath:     state.RepoPath,
+		Channel:      state.Channel,
+		CurrentPhase: state.CurrentPhase(),
+		StartedAt:    state.StartedAt,
+		UpdatedAt:    state.UpdatedAt,
+		CompletedAt:  state.CompletedAt,
+	}
 }
 
 // loadWorkflowConfig returns the configured gated-loop workflow, or the built-in default.

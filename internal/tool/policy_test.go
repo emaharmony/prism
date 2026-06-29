@@ -202,6 +202,49 @@ func TestPolicyV4_WriteFileProposalOversizedContent(t *testing.T) {
 
 // ── Symlink Traversal Policy Tests ────────────────────────────────────
 
+func TestPolicyV4_CreateDirectoryDeniedDirectly(t *testing.T) {
+	cfg := DefaultPolicyConfig()
+	result := EvaluatePolicy(cfg, "create_directory", map[string]any{"path": "new-dir"})
+	if result.Decision != PolicyDenied {
+		t.Errorf("direct create_directory should be denied, got %s", result.Decision)
+	}
+}
+
+func TestPolicyV4_CreateDirectoryDirectAutoApproved(t *testing.T) {
+	cfg := DefaultPolicyConfig()
+	cfg.AutoApproveMutations = true
+	result := EvaluatePolicy(cfg, "create_directory", map[string]any{"path": "new-dir"})
+	if result.Decision != PolicyApproved {
+		t.Errorf("auto-approved create_directory should be approved, got %s", result.Decision)
+	}
+}
+
+func TestPolicyV4_CreateDirectoryProposalRequiresApproval(t *testing.T) {
+	cfg := DefaultPolicyConfig()
+	result := EvaluatePolicy(cfg, "create_directory_proposal", map[string]any{"path": "new-dir"})
+	if result.Decision != PolicyRequiresApproval {
+		t.Errorf("create_directory_proposal should require approval, got %s", result.Decision)
+	}
+}
+
+func TestPolicyV4_CreateDirectoryProposalPathTraversal(t *testing.T) {
+	cfg := DefaultPolicyConfig()
+	result := EvaluatePolicy(cfg, "create_directory_proposal", map[string]any{"path": "../outside"})
+	if result.Decision != PolicyDenied {
+		t.Errorf("create_directory_proposal with '..' should be denied, got %s", result.Decision)
+	}
+}
+
+func TestPolicyV4_CreateDirectoryProposalOutsideWriteRoots(t *testing.T) {
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	cfg := PolicyConfig{WorkspaceRoot: workspace}
+	result := EvaluatePolicy(cfg, "create_directory_proposal", map[string]any{"path": outside})
+	if result.Decision != PolicyDenied {
+		t.Errorf("create_directory_proposal outside write roots should be denied, got %s", result.Decision)
+	}
+}
+
 func TestIsWithinRoot_BlocksSymlinkEscape(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -323,6 +366,13 @@ func TestPolicyWriteRootsAreSeparateFromReadRoots(t *testing.T) {
 	if childWrite.Decision != PolicyRequiresApproval {
 		t.Fatalf("write under write-root child should require approval, got %s: %s", childWrite.Decision, childWrite.Reason)
 	}
+
+	childDir := EvaluatePolicy(cfg, "create_directory_proposal", map[string]any{
+		"path": filepath.Join(writeRoot, "child-dir"),
+	})
+	if childDir.Decision != PolicyRequiresApproval {
+		t.Fatalf("directory under write-root child should require approval, got %s: %s", childDir.Decision, childDir.Reason)
+	}
 }
 
 func TestPolicyWriteProposalRestrictedToOrchestrator(t *testing.T) {
@@ -346,5 +396,19 @@ func TestPolicyWriteProposalRestrictedToOrchestrator(t *testing.T) {
 	})
 	if allowed.Decision != PolicyRequiresApproval {
 		t.Fatalf("orchestrator write proposal should require approval, got %s", allowed.Decision)
+	}
+
+	dirDenied := EvaluatePolicyForAgent(cfg, "create_directory_proposal", "forge", map[string]any{
+		"path": "new-dir",
+	})
+	if dirDenied.Decision != PolicyDenied {
+		t.Fatalf("subagent directory proposal should be denied, got %s", dirDenied.Decision)
+	}
+
+	dirAllowed := EvaluatePolicyForAgent(cfg, "create_directory_proposal", "lumi", map[string]any{
+		"path": "new-dir",
+	})
+	if dirAllowed.Decision != PolicyRequiresApproval {
+		t.Fatalf("orchestrator directory proposal should require approval, got %s", dirAllowed.Decision)
 	}
 }

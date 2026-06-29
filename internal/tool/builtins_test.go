@@ -217,6 +217,102 @@ func TestWriteFileDryRunMissingParams(t *testing.T) {
 	}
 }
 
+func TestCreateDirectoryDirectCreatesUnderWriteRoot(t *testing.T) {
+	workspace := t.TempDir()
+	writeRoot := t.TempDir()
+	target := filepath.Join(writeRoot, "new", "empty")
+
+	tool := &CreateDirectoryDirect{WorkspaceRoot: workspace, AllowedPaths: []string{writeRoot}}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": target})
+	if err != nil {
+		t.Fatalf("create_directory should not return Go error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("create_directory should succeed, got: %s", result.Error)
+	}
+	if result.Output["created"] != true {
+		t.Fatalf("create_directory should report created=true, got %v", result.Output["created"])
+	}
+	info, statErr := os.Stat(target)
+	if statErr != nil {
+		t.Fatalf("created directory missing: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("target should be a directory")
+	}
+}
+
+func TestCreateDirectoryDirectExistingDirectoryNoop(t *testing.T) {
+	workspace := t.TempDir()
+	target := filepath.Join(workspace, "already")
+	if err := os.MkdirAll(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &CreateDirectoryDirect{WorkspaceRoot: workspace}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "already"})
+	if err != nil {
+		t.Fatalf("create_directory should not return Go error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("existing directory should succeed, got: %s", result.Error)
+	}
+	if result.Output["created"] != false {
+		t.Fatalf("existing directory should report created=false, got %v", result.Output["created"])
+	}
+}
+
+func TestCreateDirectoryDirectRejectsExistingFile(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &CreateDirectoryDirect{WorkspaceRoot: workspace}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": "file.txt"})
+	if err != nil {
+		t.Fatalf("create_directory should not return Go error: %v", err)
+	}
+	if result.Success {
+		t.Fatalf("create_directory should reject existing file")
+	}
+}
+
+func TestCreateDirectoryDirectRejectsOutsideWriteRoots(t *testing.T) {
+	workspace := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+
+	tool := &CreateDirectoryDirect{WorkspaceRoot: workspace}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": outside})
+	if err != nil {
+		t.Fatalf("create_directory should not return Go error: %v", err)
+	}
+	if result.Success {
+		t.Fatalf("create_directory should reject outside write roots")
+	}
+}
+
+func TestCreateDirectoryProposalDoesNotCreateDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	writeRoot := t.TempDir()
+	target := filepath.Join(writeRoot, "pending")
+
+	tool := &CreateDirectoryProposal{WorkspaceRoot: workspace, AllowedPaths: []string{writeRoot}}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": target})
+	if err != nil {
+		t.Fatalf("create_directory_proposal should not return Go error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("create_directory_proposal should succeed, got: %s", result.Error)
+	}
+	if result.Output["mutation_type"] != "create_directory" {
+		t.Fatalf("mutation_type = %v, want create_directory", result.Output["mutation_type"])
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("proposal should not create directory, stat error = %v", statErr)
+	}
+}
+
 func TestRegisterBuiltins(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg, ".", 1024*1024)
@@ -237,6 +333,15 @@ func TestRegisterBuiltins(t *testing.T) {
 	}
 	if len(names) != len(expectedTools) {
 		t.Errorf("expected %d builtins, got %d: %v", len(expectedTools), len(names), names)
+	}
+}
+
+func TestRegisterBuiltinsV4IncludesCreateDirectoryProposal(t *testing.T) {
+	reg := NewRegistry()
+	RegisterBuiltinsV4(reg, ".", 1024*1024)
+
+	if _, err := reg.Resolve("create_directory_proposal"); err != nil {
+		t.Fatalf("expected create_directory_proposal in V4 registry: %v", err)
 	}
 }
 

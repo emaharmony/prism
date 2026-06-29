@@ -274,6 +274,9 @@ func (e *Executor) persistApproval(toolName, agent, project, correlationID, runI
 	}
 
 	preview := content
+	if preview == "" {
+		preview, _ = result.Output["preview"].(string)
+	}
 	if len(preview) > 500 {
 		preview = preview[:500] + "..."
 	}

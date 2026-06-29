@@ -143,3 +143,21 @@ func TestDriveIterateOnChangesRequested(t *testing.T) {
 		t.Fatalf("unexpected final status %s", state.Status)
 	}
 }
+
+func TestEnforceCommitPushSkipsPushWhenNoRemote(t *testing.T) {
+	engine := NewEngine(testConfig(), nil, nil)
+
+	reject := engine.enforceCommitPush("EXECUTION", true, true, false, true)
+	if reject != "" {
+		t.Fatalf("expected no rejection when push requirement is skipped, got %q", reject)
+	}
+}
+
+func TestEnforceCommitPushRequiresPushByDefault(t *testing.T) {
+	engine := NewEngine(testConfig(), nil, nil)
+
+	reject := engine.enforceCommitPush("EXECUTION", true, true, false, false)
+	if !strings.Contains(reject, "PUSH REQUIRED") {
+		t.Fatalf("expected push rejection, got %q", reject)
+	}
+}

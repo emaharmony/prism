@@ -222,6 +222,53 @@ func TestExecutorWriteFileProposalPersistsEmptyContentApproval(t *testing.T) {
 	}
 }
 
+func TestExecutorCreateDirectoryProposalPersistsApproval(t *testing.T) {
+	workspace := t.TempDir()
+	allowedRoot := t.TempDir()
+	runsDir := t.TempDir()
+	targetPath := filepath.Join(allowedRoot, "new-dir")
+
+	reg := NewRegistry()
+	RegisterBuiltinsV4(reg, workspace, 1024*1024, allowedRoot)
+	cfg := PolicyConfig{
+		WorkspaceRoot: workspace,
+		AllowedPaths:  []string{allowedRoot},
+		MaxFileSize:   1024 * 1024,
+	}
+	store := approval.NewStore(runsDir)
+	exec := NewExecutor(reg, cfg)
+	exec.SetApprovalStore(store)
+
+	result, err := exec.ExecuteWithPolicy(context.Background(), "create_directory_proposal", "astraea", "prism", "corr_test", map[string]any{
+		"_run_id": "run_test",
+		"path":    targetPath,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("create_directory_proposal should succeed, got error: %s", result.Error)
+	}
+	approvalID, _ := result.Output["approval_id"].(string)
+	if approvalID == "" {
+		t.Fatal("expected approval_id in tool result")
+	}
+
+	a, err := store.Load("run_test", approvalID)
+	if err != nil {
+		t.Fatalf("expected persisted approval: %v", err)
+	}
+	if a.MutationType != approval.MutationCreateDirectory {
+		t.Fatalf("mutation type = %q, want %q", a.MutationType, approval.MutationCreateDirectory)
+	}
+	if a.TargetPath != targetPath {
+		t.Fatalf("target path = %q, want %q", a.TargetPath, targetPath)
+	}
+	if a.Preview == "" {
+		t.Fatalf("expected directory proposal preview")
+	}
+}
+
 func TestExecutorToolFailedEvent(t *testing.T) {
 	reg := NewRegistry()
 	// Don't register builtins — resolve will fail for unknown tools

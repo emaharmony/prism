@@ -35,10 +35,11 @@ type BotAdapter struct {
 	session  *discordgo.Session
 	handlers []MessageHandler
 
-	mu     sync.RWMutex
-	ready  bool
-	ctx    context.Context
-	cancel context.CancelFunc
+	mu             sync.RWMutex
+	ready          bool
+	ctx            context.Context
+	cancel         context.CancelFunc
+	buttonHandlers []ButtonHandler
 }
 
 // MessageHandler processes an incoming Discord message.
@@ -59,11 +60,25 @@ type InboundMessage struct {
 
 // OutboundMessage represents a message going from Prism to Discord.
 type OutboundMessage struct {
-	ChannelID string // Discord channel to send to
-	Content   string // Message content
-	IsReply   bool   // True if this should be a reply
-	ReplyTo   string // Message ID to reply to (if IsReply)
+	ChannelID string          // Discord channel to send to
+	Content   string          // Message content
+	IsReply   bool            // True if this should be a reply
+	ReplyTo   string          // Message ID to reply to (if IsReply)
+	Buttons   []MessageButton // Optional interactive buttons (rendered as one action row)
 }
+
+// MessageButton is a discordgo-free description of an interactive button, so
+// callers can request buttons without importing discordgo. Style mirrors Discord's
+// button styles: 1 primary, 2 secondary, 3 success, 4 danger.
+type MessageButton struct {
+	Label    string
+	Style    int
+	CustomID string
+}
+
+// ButtonHandler is called when a user clicks an interactive button, with the
+// button's custom ID and the clicking user's id/name.
+type ButtonHandler func(customID, userID, userName string)
 
 // NewBotAdapter creates a new Discord bot adapter with the given bot token.
 func NewBotAdapter(token string) *BotAdapter {
@@ -91,6 +106,7 @@ func (b *BotAdapter) Start(ctx context.Context) error {
 	// Register Discord event handlers
 	dg.AddHandler(b.onReady)
 	dg.AddHandler(b.onMessageCreate)
+	dg.AddHandler(b.onInteractionCreate)
 
 	// We need message content intent for reading messages
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages
@@ -126,6 +142,38 @@ func (b *BotAdapter) OnMessage(handler MessageHandler) {
 	b.handlers = append(b.handlers, handler)
 }
 
+// OnButton registers a handler for interactive button clicks.
+func (b *BotAdapter) OnButton(handler ButtonHandler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buttonHandlers = append(b.buttonHandlers, handler)
+}
+
+// onInteractionCreate routes message-component (button) interactions to the
+// registered button handlers and acknowledges the interaction so the Discord
+// client doesn't show "interaction failed".
+func (b *BotAdapter) onInteractionCreate(s *discordgo.Session, ic *discordgo.InteractionCreate) {
+	if ic.Type != discordgo.InteractionMessageComponent {
+		return
+	}
+	customID := ic.MessageComponentData().CustomID
+	userID, userName := "", ""
+	if ic.Member != nil && ic.Member.User != nil {
+		userID, userName = ic.Member.User.ID, ic.Member.User.Username
+	} else if ic.User != nil {
+		userID, userName = ic.User.ID, ic.User.Username
+	}
+	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
+	})
+	b.mu.RLock()
+	hs := append([]ButtonHandler(nil), b.buttonHandlers...)
+	b.mu.RUnlock()
+	for _, h := range hs {
+		h(customID, userID, userName)
+	}
+}
+
 // Send sends a message to a Discord channel.
 func (b *BotAdapter) Send(msg *OutboundMessage) error {
 	if b.session == nil {
@@ -137,21 +185,27 @@ func (b *BotAdapter) Send(msg *OutboundMessage) error {
 	// Discord message length limit is 2000 characters
 	// Split long messages into multiple sends
 	if len(content) <= MessageLimit {
-		return b.sendMessage(msg.ChannelID, content, msg)
+		return b.sendMessage(msg.ChannelID, content, msg, true)
 	}
 
-	// Split at the last newline before the chunk limit.
+	// Split at the last newline before the chunk limit. Buttons (if any) attach
+	// only to the final chunk so the action row appears under the full message.
 	chunks := splitMessage(content, MessageChunkLimit)
 	for i, chunk := range chunks {
-		if err := b.sendMessage(msg.ChannelID, chunk, msg); err != nil {
+		last := i == len(chunks)-1
+		if err := b.sendMessage(msg.ChannelID, chunk, msg, last); err != nil {
 			return fmt.Errorf("discord-bot: send chunk %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-// sendMessage sends a single message to a Discord channel.
-func (b *BotAdapter) sendMessage(channelID, content string, msg *OutboundMessage) error {
+// sendMessage sends a single message to a Discord channel. withButtons controls
+// whether msg.Buttons are rendered on this send (true only for the last chunk).
+func (b *BotAdapter) sendMessage(channelID, content string, msg *OutboundMessage, withButtons bool) error {
+	if withButtons && len(msg.Buttons) > 0 {
+		return b.sendWithButtons(channelID, content, msg)
+	}
 	if msg.IsReply && msg.ReplyTo != "" {
 		ref := &discordgo.MessageReference{
 			MessageID: msg.ReplyTo,
@@ -161,6 +215,27 @@ func (b *BotAdapter) sendMessage(channelID, content string, msg *OutboundMessage
 		return err
 	}
 	_, err := b.session.ChannelMessageSend(channelID, content)
+	return err
+}
+
+// sendWithButtons sends a message with a single action row of buttons.
+func (b *BotAdapter) sendWithButtons(channelID, content string, msg *OutboundMessage) error {
+	row := discordgo.ActionsRow{}
+	for _, btn := range msg.Buttons {
+		row.Components = append(row.Components, discordgo.Button{
+			Label:    btn.Label,
+			Style:    discordgo.ButtonStyle(btn.Style),
+			CustomID: btn.CustomID,
+		})
+	}
+	send := &discordgo.MessageSend{
+		Content:    content,
+		Components: []discordgo.MessageComponent{row},
+	}
+	if msg.IsReply && msg.ReplyTo != "" {
+		send.Reference = &discordgo.MessageReference{MessageID: msg.ReplyTo, ChannelID: channelID}
+	}
+	_, err := b.session.ChannelMessageSendComplex(channelID, send)
 	return err
 }
 
@@ -263,9 +338,9 @@ func (b *BotAdapter) IsReady() bool {
 // RecentMessage holds a minimal Discord message snapshot for context injection.
 type RecentMessage struct {
 	AuthorName string
-	AuthorID    string
-	Content     string
-	Timestamp   string
+	AuthorID   string
+	Content    string
+	Timestamp  string
 }
 
 // GetRecentMessages fetches up to limit messages from a Discord channel, oldest-first.

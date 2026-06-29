@@ -130,6 +130,10 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 		return provider.GenerateResponse{}, fmt.Errorf("claude_code returned error (%s): %s", parsed.Subtype, truncate(parsed.Result, 500))
 	}
 
+	// PromptTokens is the total input-side count (fresh + cache read + cache
+	// creation) — correct for token-budget accounting. The per-category breakdown
+	// is preserved in Raw so cost/observability tooling can price cache reads and
+	// creations at their own rates rather than re-deriving them.
 	promptTokens := parsed.Usage.InputTokens + parsed.Usage.CacheReadInputTokens + parsed.Usage.CacheCreationInputTokens
 	return provider.GenerateResponse{
 		Text:         parsed.Result,
@@ -138,6 +142,12 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 		LatencyMS:    latency,
 		PromptTokens: promptTokens,
 		OutputTokens: parsed.Usage.OutputTokens,
+		Raw: map[string]any{
+			"input_tokens":                parsed.Usage.InputTokens,
+			"cache_read_input_tokens":     parsed.Usage.CacheReadInputTokens,
+			"cache_creation_input_tokens": parsed.Usage.CacheCreationInputTokens,
+			"output_tokens":               parsed.Usage.OutputTokens,
+		},
 	}, nil
 }
 

@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
-	"github.com/emaharmony/prism/internal/workflow/v2"
 	"github.com/emaharmony/prism/internal/agent"
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/factorymonitor"
@@ -35,6 +34,9 @@ import (
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prism/internal/validation"
+	"github.com/emaharmony/prism/internal/workflow/v2"
+	"github.com/emaharmony/prism/internal/workstart"
 	"github.com/nats-io/nats.go"
 )
 
@@ -52,12 +54,12 @@ type WakeHandler struct {
 	improveMgr *improve.Manager
 	factoryMon *factorymonitor.Monitor
 	remClient  *remembrance.Client
-	toolExec   *tool.Executor   // V35: Tool executor for project_work action
-	toolReg    *tool.Registry    // V35: Tool registry for listing tools in prompt
+	toolExec   *tool.Executor // V35: Tool executor for project_work action
+	toolReg    *tool.Registry // V35: Tool registry for listing tools in prompt
 
 	// agentMessages stores recent inter-agent messages received via NATS.
 	// Accessed under agentMu for concurrent safety.
-	agentMu      sync.Mutex
+	agentMu       sync.Mutex
 	agentMessages []agentMessage
 }
 
@@ -252,16 +254,12 @@ func (wh *WakeHandler) Start() error {
 	// Interactive gated-loop trigger: any client (CLI, API, Discord) can start a
 	// gated loop for {project, prompt} by publishing here.
 	_, err = wh.natsConn.Subscribe("prism.workflow.start", func(msg *nats.Msg) {
-		var req struct {
-			Project string `json:"project"`
-			Prompt  string `json:"prompt"`
-			Channel string `json:"channel"`
-		}
+		var req workstart.Request
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			log.Printf("[WAKE] failed to parse workflow.start: %v", err)
 			return
 		}
-		go wh.handleWorkflowStart(req.Project, req.Prompt, req.Channel)
+		go wh.handleWorkflowStart(req)
 	})
 	if err != nil {
 		return fmt.Errorf("subscribe to prism.workflow.start: %w", err)
@@ -290,21 +288,48 @@ func (wh *WakeHandler) newAutoExec() *tool.Executor {
 // handleWorkflowStart runs the gated loop for an interactively-triggered
 // {project, prompt}. The project is resolved from config by ID (falling back to
 // the default project); results post to the given channel or the project channel.
-func (wh *WakeHandler) handleWorkflowStart(projectID, prompt, channel string) {
+func (wh *WakeHandler) handleWorkflowStart(req workstart.Request) {
 	if wh.toolExec == nil || wh.toolReg == nil {
 		log.Printf("[WAKE] workflow.start ignored: tool executor not configured")
 		return
 	}
 
-	var project *orchestrator.ProjectConfig
-	if projectID != "" {
-		project = wh.cfg.FindProject(projectID)
-		if project == nil {
-			log.Printf("[WAKE] workflow.start: unknown project %q, using default", projectID)
-		}
+	resolved, err := workstart.Resolve(wh.cfg, req)
+	if err != nil {
+		log.Printf("[WAKE] workflow.start rejected: %v", err)
+		wh.postWorkflowStartFailure(req.Channel, fmt.Sprintf("Workflow start rejected: %v", err))
+		return
 	}
+	if resolved.NeedsLocation {
+		log.Printf("[WAKE] workflow.start needs location: %s", resolved.Reason)
+		msg := "Workflow start needs a confirmed project folder."
+		if resolved.Recommendation != "" {
+			msg = fmt.Sprintf("%s Recommended path: `%s`.", msg, resolved.Recommendation)
+		}
+		wh.postWorkflowStartFailure(req.Channel, msg)
+		return
+	}
+
+	project := resolved.Project
 	if project == nil {
-		project = wh.cfg.DefaultProject()
+		project = &orchestrator.ProjectConfig{
+			ID:       resolved.ProjectID,
+			RepoPath: resolved.RepoPath,
+			Channel:  resolved.Channel,
+		}
+	} else {
+		cp := *project
+		cp.RepoPath = resolved.RepoPath
+		if cp.Channel == "" {
+			cp.Channel = resolved.Channel
+		}
+		project = &cp
+	}
+
+	if err := wh.bootstrapProjectRepo(resolved.RepoPath, req.Bootstrap || resolved.Project == nil); err != nil {
+		log.Printf("[WAKE] workflow.start bootstrap failed: %v", err)
+		wh.postWorkflowStartFailure(resolved.Channel, fmt.Sprintf("Workflow start failed before execution: %v", err))
+		return
 	}
 
 	agentCfg := wh.orchestratorAgentFor(project)
@@ -317,19 +342,17 @@ func (wh *WakeHandler) handleWorkflowStart(projectID, prompt, channel string) {
 		model = "glm-5.1:cloud"
 	}
 
-	// Resolve the result channel: explicit → project → manager-room fallback.
+	// Resolve the result channel from the request or project config.
+	channel := resolved.Channel
 	if channel == "" && project != nil {
 		channel = project.Channel
-	}
-	if channel == "" {
-		channel = "1491622581348864162"
 	}
 
 	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), 60*time.Minute)
 	defer cancel()
 
-	log.Printf("[WAKE] workflow.start: project=%v prompt=%q", project, truncate(prompt, 80))
-	content, pt, ct := wh.RunGatedLoop(ctx, project, prompt, model, agentCfg, wh.newAutoExec())
+	log.Printf("[WAKE] workflow.start: project=%s repo=%s prompt=%q", resolved.ProjectID, resolved.RepoPath, truncate(req.Prompt, 80))
+	content, pt, ct := wh.RunGatedLoop(ctx, project, req.Prompt, model, agentCfg, wh.newAutoExec(), channel)
 
 	if wh.bot != nil && channel != "" {
 		wh.bot.Send(&discordbot.OutboundMessage{
@@ -342,6 +365,106 @@ func (wh *WakeHandler) handleWorkflowStart(projectID, prompt, channel string) {
 		pid = project.ID
 	}
 	wh.writeRunSummary("gated_loop:"+pid, agentCfg.ID, content, pt, ct)
+}
+
+func (wh *WakeHandler) postWorkflowStartFailure(channelID, content string) {
+	if wh.bot == nil || channelID == "" {
+		return
+	}
+	if err := wh.bot.Send(&discordbot.OutboundMessage{ChannelID: channelID, Content: content}); err != nil {
+		log.Printf("[WAKE] failed to post workflow start failure: %v", err)
+	}
+}
+
+func (wh *WakeHandler) bootstrapProjectRepo(repoPath string, allowCreate bool) error {
+	resolved, err := workstart.ResolveRepoPath(wh.cfg, repoPath)
+	if err != nil {
+		return err
+	}
+
+	info, statErr := os.Stat(resolved)
+	if statErr != nil {
+		if !os.IsNotExist(statErr) {
+			return fmt.Errorf("stat repo path: %w", statErr)
+		}
+		if !allowCreate {
+			return fmt.Errorf("repo path %q does not exist; confirm a path before creating it", resolved)
+		}
+		if err := os.MkdirAll(resolved, 0755); err != nil {
+			return fmt.Errorf("create repo path: %w", err)
+		}
+	} else if !info.IsDir() {
+		return fmt.Errorf("repo path %q is not a directory", resolved)
+	}
+
+	if _, err := os.Stat(filepath.Join(resolved, ".git")); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat .git: %w", err)
+	}
+	if !allowCreate {
+		return fmt.Errorf("repo path %q is not a git repository; confirm bootstrap before starting work", resolved)
+	}
+	cmd := exec.Command("git", "-C", resolved, "init")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git init failed: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func repoHasRemote(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "remote")
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+// workflowHasVerification reports whether any phase declares a verification
+// profile, so we only stand up the validation executor when it will be used.
+func workflowHasVerification(config *v2.WorkflowConfig) bool {
+	if config == nil {
+		return false
+	}
+	for _, p := range config.Phases {
+		if p.Verification != nil && strings.TrimSpace(p.Verification.Profile) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// verificationSummary builds a short, model-readable digest of a failed
+// validation run by tailing the captured stdout/stderr artifacts (where `go test`
+// and build errors land). Bounded so it never floods the transcript.
+func verificationSummary(res *validation.Result) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "status=%s exit=%d", res.Status, res.ExitCode)
+	if res.Error != "" {
+		fmt.Fprintf(&b, "\nerror: %s", res.Error)
+	}
+	for label, path := range map[string]string{"stdout": res.StdoutPath, "stderr": res.StderrPath} {
+		if path == "" {
+			continue
+		}
+		if data, err := os.ReadFile(path); err == nil {
+			if tail := tailBytes(strings.TrimSpace(string(data)), 1500); tail != "" {
+				fmt.Fprintf(&b, "\n--- %s ---\n%s", label, tail)
+			}
+		}
+	}
+	return b.String()
+}
+
+// tailBytes returns the last max bytes of s, on a rune-safe boundary.
+func tailBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	t := s[len(s)-max:]
+	if i := strings.IndexByte(t, '\n'); i >= 0 && i < len(t)-1 {
+		t = t[i+1:]
+	}
+	return "…\n" + t
 }
 
 // primaryAgent returns the primary agent config, or the first agent.
@@ -594,64 +717,64 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 		}
 		responseContent, promptTokens, completionTokens = wh.runToolLoopWake(ctx, systemPrompt, userPrompt, model, agentCfg, autoExec)
 	} else {
-	chatProv, chatErr := wh.providers.GetChatProvider(model)
-	if chatErr == nil {
-		// Use ChatProvider (preferred path — same as Discord serve)
-		resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
-			RunID: fmt.Sprintf("wake-%s-%d", action, time.Now().Unix()),
-			Agent: agentCfg.ID,
-			Model: model,
-			Messages: []provider.ChatMessage{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: userPrompt},
-			},
-			Temperature: 0.7,
-			MaxTokens:   actionDef.MaxTokens,
-		})
-		if err != nil {
-			log.Printf("[WAKE] ERROR chat LLM call failed for action %q: %v", action, err)
-			if wh.bot != nil {
-				wh.bot.Send(&discordbot.OutboundMessage{
-					ChannelID: actionDef.ChannelID,
-					Content:   fmt.Sprintf("⚠️ Scheduled task **%s** failed: %v", formatActionName(action), err),
-				})
+		chatProv, chatErr := wh.providers.GetChatProvider(model)
+		if chatErr == nil {
+			// Use ChatProvider (preferred path — same as Discord serve)
+			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
+				RunID: fmt.Sprintf("wake-%s-%d", action, time.Now().Unix()),
+				Agent: agentCfg.ID,
+				Model: model,
+				Messages: []provider.ChatMessage{
+					{Role: "system", Content: systemPrompt},
+					{Role: "user", Content: userPrompt},
+				},
+				Temperature: 0.7,
+				MaxTokens:   actionDef.MaxTokens,
+			})
+			if err != nil {
+				log.Printf("[WAKE] ERROR chat LLM call failed for action %q: %v", action, err)
+				if wh.bot != nil {
+					wh.bot.Send(&discordbot.OutboundMessage{
+						ChannelID: actionDef.ChannelID,
+						Content:   fmt.Sprintf("⚠️ Scheduled task **%s** failed: %v", formatActionName(action), err),
+					})
+				}
+				return
 			}
-			return
-		}
-		responseContent = resp.Content
-		promptTokens = resp.PromptTokens
-		completionTokens = resp.OutputTokens
-	} else {
-		// Fall back to text provider
-		log.Printf("[WAKE] WARN no chat provider for %q: %v, falling back to text provider", model, chatErr)
-		prov, err := wh.providers.Get(model)
-		if err != nil {
-			log.Printf("[WAKE] ERROR no provider for model %q: %v", model, err)
-			return
-		}
+			responseContent = resp.Content
+			promptTokens = resp.PromptTokens
+			completionTokens = resp.OutputTokens
+		} else {
+			// Fall back to text provider
+			log.Printf("[WAKE] WARN no chat provider for %q: %v, falling back to text provider", model, chatErr)
+			prov, err := wh.providers.Get(model)
+			if err != nil {
+				log.Printf("[WAKE] ERROR no provider for model %q: %v", model, err)
+				return
+			}
 
-		resp, err := prov.Generate(ctx, provider.GenerateRequest{
-			RunID:       fmt.Sprintf("wake-%s-%d", action, time.Now().Unix()),
-			Agent:       agentCfg.ID,
-			Model:       model,
-			Prompt:      systemPrompt + "\n\n" + userPrompt,
-			Temperature: 0.7,
-			MaxTokens:   actionDef.MaxTokens,
-		})
-		if err != nil {
-			log.Printf("[WAKE] ERROR text LLM call failed for action %q: %v", action, err)
-			if wh.bot != nil {
-				wh.bot.Send(&discordbot.OutboundMessage{
-					ChannelID: actionDef.ChannelID,
-					Content:   fmt.Sprintf("⚠️ Scheduled task **%s** failed: %v", formatActionName(action), err),
-				})
+			resp, err := prov.Generate(ctx, provider.GenerateRequest{
+				RunID:       fmt.Sprintf("wake-%s-%d", action, time.Now().Unix()),
+				Agent:       agentCfg.ID,
+				Model:       model,
+				Prompt:      systemPrompt + "\n\n" + userPrompt,
+				Temperature: 0.7,
+				MaxTokens:   actionDef.MaxTokens,
+			})
+			if err != nil {
+				log.Printf("[WAKE] ERROR text LLM call failed for action %q: %v", action, err)
+				if wh.bot != nil {
+					wh.bot.Send(&discordbot.OutboundMessage{
+						ChannelID: actionDef.ChannelID,
+						Content:   fmt.Sprintf("⚠️ Scheduled task **%s** failed: %v", formatActionName(action), err),
+					})
+				}
+				return
 			}
-			return
+			responseContent = resp.Text
+			promptTokens = resp.PromptTokens
+			completionTokens = resp.OutputTokens
 		}
-		responseContent = resp.Text
-		promptTokens = resp.PromptTokens
-		completionTokens = resp.OutputTokens
-	}
 	} // end else (non-project_work path)
 
 	// Save to session
@@ -660,7 +783,7 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 
 	// Send result to Discord
 	if wh.bot != nil && actionDef.ChannelID != "" {
-	// Send result to Discord (the bot adapter handles splitting long messages)
+		// Send result to Discord (the bot adapter handles splitting long messages)
 		content := fmt.Sprintf("🔔 **%s**\n\n%s", formatActionName(action), responseContent)
 		wh.bot.Send(&discordbot.OutboundMessage{
 			ChannelID: actionDef.ChannelID,
@@ -940,7 +1063,7 @@ func (wh *WakeHandler) postToDiscord(message string) {
 	channelID := "1491622581348864162" // manager-room
 	wh.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
-		Content:  message,
+		Content:   message,
 	})
 }
 
@@ -968,16 +1091,16 @@ func (wh *WakeHandler) writeRunSummary(action, agent, content string, promptToke
 
 	// Write summary.json
 	summary := map[string]any{
-		"run_id":      runID,
-		"status":      "completed",
-		"agent":       agent,
-		"project":     "bassbook",
-		"task":        fmt.Sprintf("Scheduled action: %s", action),
-		"started_at":  now,
-		"completed_at": now,
-		"event_count": 1,
-		"output":      content,
-		"prompt_tokens": promptTokens,
+		"run_id":            runID,
+		"status":            "completed",
+		"agent":             agent,
+		"project":           "bassbook",
+		"task":              fmt.Sprintf("Scheduled action: %s", action),
+		"started_at":        now,
+		"completed_at":      now,
+		"event_count":       1,
+		"output":            content,
+		"prompt_tokens":     promptTokens,
 		"completion_tokens": completionTokens,
 	}
 	summaryData, _ := json.MarshalIndent(summary, "", "  ")
@@ -1061,15 +1184,15 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	// V36: Run state tracking
 	type RunState struct {
 		filesWritten   bool
-		filesStaged     bool
-		committed       bool
-		pushed          bool
-		readsInPhase    int
-		proseCount      int
-		branchName      string
+		filesStaged    bool
+		committed      bool
+		pushed         bool
+		readsInPhase   int
+		proseCount     int
+		branchName     string
 		assignedTask   string
-		lastToolHashes  []string
-		lastRespHashes  []string
+		lastToolHashes []string
+		lastRespHashes []string
 	}
 	state := RunState{}
 
@@ -1082,7 +1205,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	// V36: Inject task assignment into messages if found
 	if state.assignedTask != "" {
 		messages = append(messages, provider.ChatMessage{
-			Role: "system",
+			Role:    "system",
 			Content: fmt.Sprintf("## SYSTEM-ASSIGNED TASK (do not deviate)\n%s\n\nThis is the ONLY task you should work on this cycle. Do not pick any other task.", state.assignedTask),
 		})
 	}
@@ -1091,7 +1214,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	prevState := wh.readPreviousWorkState()
 	if prevState != "" {
 		messages = append(messages, provider.ChatMessage{
-			Role: "system",
+			Role:    "system",
 			Content: fmt.Sprintf("## PREVIOUS CYCLE\n%s", prevState),
 		})
 	}
@@ -1106,8 +1229,8 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	phases := []Phase{
 		{Name: "ORIENT", MaxIterations: 3, AllowedTools: map[string]bool{"read_file": true, "git_status": true, "git_log": true, "git_branch_list": true, "project_overview": true, "list_dir": true}, Description: "Read PROJECT_STATE.md and check git state. The system has already assigned your task — confirm it."},
 		{Name: "BRANCH", MaxIterations: 2, AllowedTools: map[string]bool{"git_branch_list": true, "git_status": true, "read_file": true}, Description: "If on main/master, you MUST create a feature branch (feature/bb-{task-slug}). The system blocks all writes on main. If already on a feature branch, proceed."},
-		{Name: "IMPLEMENT", MaxIterations: 8, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "list_dir": true, "search_files": true, "git_status": true, "git_diff": true}, Description: "Write code for your assigned task. After 3 read_file calls, the system forces you to write. You MUST produce at least one write_file."},
-		{Name: "SELF_REVIEW", MaxIterations: 2, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "git_diff": true, "git_status": true}, Description: "Review your changes via git_diff. Fix obvious errors. Respond REVIEW_PASSED when clean."},
+		{Name: "IMPLEMENT", MaxIterations: 8, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "create_directory": true, "list_dir": true, "search_files": true, "git_status": true, "git_diff": true}, Description: "Write code for your assigned task. After 3 read_file calls, the system forces you to mutate files or directories. You MUST produce at least one write_file or create_directory."},
+		{Name: "SELF_REVIEW", MaxIterations: 2, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "create_directory": true, "git_diff": true, "git_status": true}, Description: "Review your changes via git_diff. Fix obvious errors. Respond REVIEW_PASSED when clean."},
 		{Name: "COMMIT_PUSH", MaxIterations: 3, AllowedTools: map[string]bool{"git_add": true, "git_commit": true, "git_push": true, "git_status": true}, Description: "Stage, commit, and push your changes. All three must complete."},
 		{Name: "UPDATE_STATE", MaxIterations: 2, AllowedTools: map[string]bool{"write_file": true, "read_file": true}, Description: "Update PROJECT_STATE.md to mark your task complete with [x]."},
 		{Name: "REPORT", MaxIterations: 1, AllowedTools: map[string]bool{}, Description: "Emit final summary. No tools allowed."},
@@ -1131,7 +1254,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			state.readsInPhase = 0
 			nextPhase := phases[phaseIdx]
 			messages = append(messages, provider.ChatMessage{
-				Role: "system",
+				Role:    "system",
 				Content: fmt.Sprintf("PHASE %s COMPLETE. Moving to %s phase. You MUST now: %s", phase.Name, nextPhase.Name, nextPhase.Description),
 			})
 			log.Printf("[WAKE-TOOL] phase transition: %s → %s", phase.Name, nextPhase.Name)
@@ -1141,8 +1264,8 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		// V36: Phase-specific nudges
 		if phase.Name == "IMPLEMENT" && state.readsInPhase >= 3 && !state.filesWritten {
 			messages = append(messages, provider.ChatMessage{
-				Role: "system",
-				Content: "You have read enough files in IMPLEMENT phase. You MUST use write_file now. Further read_file calls will be denied.",
+				Role:    "system",
+				Content: "You have read enough files in IMPLEMENT phase. You MUST use write_file or create_directory now. Further read_file calls will be denied.",
 			})
 		}
 
@@ -1151,7 +1274,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			diffOutput := wh.getGitDiff()
 			if diffOutput != "" {
 				messages = append(messages, provider.ChatMessage{
-					Role: "system",
+					Role:    "system",
 					Content: fmt.Sprintf("## Your Changes (git diff)\n```diff\n%s\n```\n\nReview these changes for:\n1. Syntax errors or typos\n2. Missing imports or references\n3. Incomplete logic\n4. Does this complete the assigned task?\n\nIf issues found, fix with write_file. If clean, respond with REVIEW_PASSED.", diffOutput),
 				})
 			} else {
@@ -1165,7 +1288,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		// V36: Report phase — no tools allowed
 		if phase.Name == "REPORT" {
 			messages = append(messages, provider.ChatMessage{
-				Role: "system",
+				Role:    "system",
 				Content: "You are in REPORT phase. Emit your final summary now as {\"type\":\"final\",\"content\":\"...\"}. No tool calls.",
 			})
 		}
@@ -1225,7 +1348,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			log.Printf("[WAKE-TOOL] prose-before-JSON detected (count: %d)", state.proseCount)
 			if state.proseCount >= 3 {
 				messages = append(messages, provider.ChatMessage{
-					Role: "system",
+					Role:    "system",
 					Content: "STOP writing prose before JSON. Your last 3 responses wasted iterations on text that was discarded. PURE JSON only: start with { and end with }.",
 				})
 			}
@@ -1239,7 +1362,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				state.lastRespHashes[len(state.lastRespHashes)-1] == state.lastRespHashes[len(state.lastRespHashes)-3] {
 				log.Printf("[WAKE-TOOL] STUCK: 3 identical responses detected")
 				messages = append(messages, provider.ChatMessage{
-					Role: "system",
+					Role:    "system",
 					Content: "YOU ARE STUCK. You have produced the same response 3 times. Try a completely different approach or move to the next phase.",
 				})
 				state.lastRespHashes = nil // reset
@@ -1254,7 +1377,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			if state.filesWritten && !state.committed {
 				log.Printf("[WAKE-TOOL] FINAL REJECTED: files written but not committed")
 				messages = append(messages, provider.ChatMessage{
-					Role: "system",
+					Role:    "system",
 					Content: "COMMIT REQUIRED: You wrote files but have not committed. You MUST use git_add then git_commit before finishing. Your final response is rejected.",
 				})
 				continue
@@ -1262,7 +1385,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			if state.committed && !state.pushed {
 				log.Printf("[WAKE-TOOL] FINAL REJECTED: committed but not pushed")
 				messages = append(messages, provider.ChatMessage{
-					Role: "system",
+					Role:    "system",
 					Content: "PUSH REQUIRED: You committed but have not pushed. You MUST use git_push before finishing. Your final response is rejected.",
 				})
 				continue
@@ -1284,7 +1407,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				log.Printf("[WAKE-TOOL] tool %s denied in phase %s", parsed.ToolName, phase.Name)
 				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 				messages = append(messages, provider.ChatMessage{
-					Role: "user",
+					Role:    "user",
 					Content: fmt.Sprintf("Tool %q is not allowed in the %s phase. You should be: %s", parsed.ToolName, phase.Name, phase.Description),
 				})
 				continue
@@ -1297,22 +1420,22 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 					log.Printf("[WAKE-TOOL] read budget exceeded in IMPLEMENT, denying %s", parsed.ToolName)
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 					messages = append(messages, provider.ChatMessage{
-						Role: "user",
-						Content: "READ BUDGET EXCEEDED. You have read enough. Use write_file to make your changes now.",
+						Role:    "user",
+						Content: "READ BUDGET EXCEEDED. You have read enough. Use write_file or create_directory to make your changes now.",
 					})
 					continue
 				}
 			}
 
 			// V36: Branch Protection Gate
-			writeTools := map[string]bool{"write_file": true, "git_add": true, "git_commit": true, "git_push": true}
+			writeTools := map[string]bool{"write_file": true, "create_directory": true, "git_add": true, "git_commit": true, "git_push": true}
 			if writeTools[parsed.ToolName] {
 				branch := wh.getCurrentBranch()
 				if branch == "main" || branch == "master" {
 					log.Printf("[WAKE-TOOL] BRANCH PROTECTION: %s denied on %s", parsed.ToolName, branch)
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 					messages = append(messages, provider.ChatMessage{
-						Role: "user",
+						Role:    "user",
 						Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Mutations are blocked. Create a feature branch first. The system cannot proceed until you are on a feature branch.", branch),
 					})
 					continue
@@ -1330,14 +1453,14 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 					log.Printf("[WAKE-TOOL] git_commit 'nothing to commit' — treating as committed")
 					messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 					messages = append(messages, provider.ChatMessage{
-						Role: "user",
+						Role:    "user",
 						Content: "Commit succeeded (nothing to commit — changes were already staged). Proceed to git_push.",
 					})
 					continue
 				}
 				messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 				messages = append(messages, provider.ChatMessage{
-					Role: "user",
+					Role:    "user",
 					Content: fmt.Sprintf("Tool %q failed: %v. Try a different approach.", parsed.ToolName, err),
 				})
 				continue
@@ -1352,7 +1475,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 			// V36: Update run state
 			switch parsed.ToolName {
-			case "write_file":
+			case "write_file", "create_directory":
 				state.filesWritten = true
 			case "git_add":
 				state.filesStaged = true
@@ -1380,7 +1503,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 					state.lastToolHashes[len(state.lastToolHashes)-1] == state.lastToolHashes[len(state.lastToolHashes)-3] {
 					log.Printf("[WAKE-TOOL] STUCK: 3 identical tool calls detected")
 					messages = append(messages, provider.ChatMessage{
-						Role: "system",
+						Role:    "system",
 						Content: fmt.Sprintf("YOU ARE STUCK. You have called %s with the same input 3 times. Try a different approach.", parsed.ToolName),
 					})
 					state.lastToolHashes = nil
@@ -1389,7 +1512,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: responseText})
 			messages = append(messages, provider.ChatMessage{
-				Role: "user",
+				Role:    "user",
 				Content: resultStr,
 			})
 			iterInPhase++
@@ -1567,7 +1690,6 @@ func simpleHash(s string) string {
 	return fmt.Sprintf("%d", h)
 }
 
-
 // loadWorkflowConfig resolves the gated-loop workflow definition: a project
 // override takes precedence, then the global prism.workflow_config, then the
 // built-in 7-phase DefaultConfig.
@@ -1606,13 +1728,17 @@ func (wh *WakeHandler) runNaturalGatesWorkflow(ctx stdcontext.Context, systemPro
 	if task == "" {
 		task = userPrompt
 	}
-	return wh.RunGatedLoop(ctx, project, task, model, agentCfg, exec)
+	channel := ""
+	if project != nil {
+		channel = project.Channel
+	}
+	return wh.RunGatedLoop(ctx, project, task, model, agentCfg, exec, channel)
 }
 
 // RunGatedLoop runs the full 7-phase gated loop for {project, prompt}. It is the
 // single implementation shared by the scheduled wake action and the interactive
 // trigger (CLI/API), driving the real v2.Engine via Engine.Drive.
-func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrator.ProjectConfig, taskPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
+func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrator.ProjectConfig, taskPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor, channel string) (string, int, int) {
 	config := wh.loadWorkflowConfig(project)
 
 	repoPath := "."
@@ -1623,6 +1749,9 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		}
 		if project.ID != "" {
 			projectID = project.ID
+		}
+		if channel == "" {
+			channel = project.Channel
 		}
 	} else if wh.cfg.Prism.Workspace != "" {
 		repoPath = wh.cfg.Prism.Workspace
@@ -1641,8 +1770,53 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		emitter = v2.NewNATSEmitter(v2.NewNATSPublisherFromConn(wh.natsConn), "prism.workflow")
 	}
 	delegation := v2.NewDelegationManager("prism.agent.openclaw", "prism.workflow.task.complete")
+	delegation.ApplyTimeoutConfig(config.Global.DelegationTimeouts)
 	engine := v2.NewEngine(config, emitter, delegation)
 	engine.GetState().RunID = runID
+	engine.GetState().ProjectID = projectID
+	engine.GetState().RepoPath = repoPath
+	engine.GetState().Channel = channel
+	requirePush := repoHasRemote(repoPath)
+	engine.GetState().RequirePush = requirePush
+
+	// Objective verification: bind phases that declare a verification profile to
+	// the V5 validation executor (allowlisted commands only — the model never
+	// controls what runs). This makes EXECUTION prove the code builds and its
+	// tests pass before the phase can complete, instead of committing unverified code.
+	if workflowHasVerification(config) {
+		vexec := validation.NewExecutor(validation.NewRegistry(), repoPath, filepath.Join(stateDir, runID))
+		vexec.SetEmitter(func(eventType, source string, payload map[string]any) {
+			emitter.Emit(eventType, payload)
+		})
+		engine.SetVerificationRunner(func(vctx stdcontext.Context, profile string) v2.VerificationOutcome {
+			res, err := vexec.Run(vctx, profile, runID)
+			if res == nil || res.Status == "error" {
+				if err != nil {
+					log.Printf("[wake] verification profile %q unavailable: %v", profile, err)
+				}
+				return v2.VerificationOutcome{Ran: false}
+			}
+			passed := res.Status == "passed"
+			summary := res.Status
+			if !passed {
+				summary = verificationSummary(res)
+			}
+			return v2.VerificationOutcome{Ran: true, Passed: passed, ExitCode: res.ExitCode, Summary: summary}
+		})
+	}
+
+	// Delegation transport: publish delegated task packets onto the agent subject so
+	// other agents/Prisms can pick them up. Without NATS, delegations are still
+	// recorded in state but not dispatched.
+	if wh.natsConn != nil {
+		engine.SetTaskPublisher(func(packet v2.TaskPacket) error {
+			data, err := json.Marshal(packet)
+			if err != nil {
+				return err
+			}
+			return wh.natsConn.Publish(delegation.Subject(), data)
+		})
+	}
 
 	// Feedback resume: forward approval/review responses from NATS into the engine
 	// so FEEDBACK_PRE/FEEDBACK_POST pauses can be released from Discord/dashboard/API.
@@ -1651,6 +1825,10 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		sub, subErr := wh.natsConn.Subscribe("prism.workflow.feedback.response", func(msg *nats.Msg) {
 			var payload map[string]any
 			if err := json.Unmarshal(msg.Data, &payload); err != nil {
+				return
+			}
+			workflowID, _ := payload["workflow_id"].(string)
+			if workflowID != "" && workflowID != runID {
 				return
 			}
 			decision, _ := payload["decision"].(string)
@@ -1678,10 +1856,39 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		if subErr == nil {
 			defer sub.Unsubscribe()
 		}
+
+		// Delegated task completions: forward into the engine so the delegation
+		// manager closes out the record and the task_completion gate sees it.
+		csub, csubErr := wh.natsConn.Subscribe(delegation.Subject()+".complete", func(msg *nats.Msg) {
+			var payload map[string]any
+			if err := json.Unmarshal(msg.Data, &payload); err != nil {
+				return
+			}
+			if wfID, _ := payload["workflow_id"].(string); wfID != "" && wfID != runID {
+				return
+			}
+			evt := v2.ExternalEvent{
+				Type:          "task_complete",
+				CorrelationID: runID,
+				Source:        "nats",
+				Data: map[string]any{
+					"task_id":        payload["task_id"],
+					"status":         payload["status"],
+					"output_summary": payload["output_summary"],
+				},
+			}
+			select {
+			case eventCh <- evt:
+			default:
+			}
+		})
+		if csubErr == nil {
+			defer csub.Unsubscribe()
+		}
 	}
 
 	// System prompt (project-aware, no hardcoded paths) + tool schemas.
-	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, repoPath)
+	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, repoPath, requirePush)
 	if wh.toolReg != nil {
 		toolInfos := wh.toolReg.ListWithDescriptions()
 		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, repoPath, repoPath)
@@ -1753,14 +1960,24 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 
 	log.Printf("[GATED-LOOP] starting %q project=%s repo=%s (%d phases)", config.Name, projectID, repoPath, len(config.Phases))
 	wfState, driveErr := engine.Drive(ctx, llm, toolFn, v2.DriveOptions{
-		SystemPrompt: systemPromptFull,
-		UserPrompt:   userPromptFull,
-		StateDir:     stateDir,
-		RepoPath:     repoPath,
-		GetBranch:    getBranch,
+		SystemPrompt:        systemPromptFull,
+		UserPrompt:          userPromptFull,
+		StateDir:            stateDir,
+		RepoPath:            repoPath,
+		ProjectID:           projectID,
+		Channel:             channel,
+		GetBranch:           getBranch,
+		SkipPushRequirement: !requirePush,
 	})
 	if driveErr != nil {
 		log.Printf("[GATED-LOOP] ended: %v", driveErr)
+	}
+
+	// Persist a durable proof-of-work report artifact (non-fatal on failure).
+	if path, werr := v2.WriteReportArtifact(wfState, stateDir); werr != nil {
+		log.Printf("[GATED-LOOP] report artifact not written: %v", werr)
+	} else {
+		log.Printf("[GATED-LOOP] report written: %s", path)
 	}
 
 	pt := wfState.GetTotalPromptTokens()
@@ -1777,7 +1994,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 
 // buildGatedLoopSystemPrompt builds the project-aware system prompt for the loop.
 // No hardcoded repo paths or agent IDs — everything comes from the project config.
-func (wh *WakeHandler) buildGatedLoopSystemPrompt(project *orchestrator.ProjectConfig, taskPrompt, repoPath string) string {
+func (wh *WakeHandler) buildGatedLoopSystemPrompt(project *orchestrator.ProjectConfig, taskPrompt, repoPath string, requirePush bool) string {
 	var b strings.Builder
 	b.WriteString("You are an autonomous engineering agent running a gated dev loop. You build production-quality code.\n\n")
 	b.WriteString("## Task (assigned by the system — do not deviate)\n")
@@ -1795,8 +2012,13 @@ The system tells you the current phase, the allowed tools, and the completion si
 - RESEARCH: raise confidence across domains using the web, memory, and the codebase.
 - PLAN: break the work into tasks with success criteria.
 - FEEDBACK_PRE: the loop PAUSES for human approval of your plan. Do NOT write code yet.
-- EXECUTION: create a feature branch (writes are blocked on the protected branch), write code, commit, and push. You cannot finish until you have committed AND pushed.
-- FEEDBACK_POST: the loop PAUSES for review. If changes are requested it loops back to EXECUTION.
+`)
+	if requirePush {
+		b.WriteString("- EXECUTION: create a feature branch (writes are blocked on the protected branch), write code, commit, and push. You cannot finish until you have committed AND pushed.\n")
+	} else {
+		b.WriteString("- EXECUTION: create a feature branch (writes are blocked on the protected branch), write code, and commit. This repo has no configured git remote, so do not push unless a remote is added.\n")
+	}
+	b.WriteString(`- FEEDBACK_POST: the loop PAUSES for review. If changes are requested it loops back to EXECUTION.
 - REPORT: summarize with proof of work (files, branch, commit hashes).
 
 ## Response format
