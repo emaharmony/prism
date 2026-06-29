@@ -299,6 +299,19 @@ func runStateToJSON(st *v2.WorkflowState) ([]byte, error) {
 	return json.MarshalIndent(d, "", "  ")
 }
 
+// latestRunID returns the newest run's ID in baseDir (by mtime), or an error when
+// there are none. Lets `prism runs latest` work without knowing the gl-<ts> id.
+func latestRunID(baseDir string) (string, error) {
+	entries, err := listRunsFromDir(baseDir)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no runs found in %s", baseDir)
+	}
+	return entries[0].RunID, nil // listRunsFromDir sorts newest-first
+}
+
 // showRunDetail prints a run's REPORT.md if present, otherwise a state summary.
 func showRunDetail(baseDir, runID string) (string, error) {
 	if content, err := readRunReport(baseDir, runID); err == nil {
@@ -326,6 +339,15 @@ func executeRuns(args []string) {
 	fs.Parse(rest)
 
 	if runID != "" {
+		// "latest" resolves to the most recent run so operators don't need the id.
+		if runID == "latest" {
+			resolved, err := latestRunID(*dir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+				os.Exit(1)
+			}
+			runID = resolved
+		}
 		if *asJSON {
 			st, err := v2.LoadWorkflowState(filepath.Join(*dir, "workflow-"+runID+".json"))
 			if err != nil {

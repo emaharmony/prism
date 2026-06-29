@@ -1164,11 +1164,35 @@ func (s *Server) handleEditorEdgeCRUD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method == http.MethodDelete {
+	switch r.Method {
+	case http.MethodDelete:
 		s.deleteEdge(w, r, id)
+	case http.MethodPut:
+		s.updateEdge(w, r, id)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// updateEdge applies a partial update (label/type/style/action) to an edge,
+// letting the visual editor assign an action to a flow line.
+func (s *Server) updateEdge(w http.ResponseWriter, r *http.Request, id string) {
+	var upd editor.EdgeUpdate
+	if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
+		writeJSONError(w, "invalid edge update body", http.StatusBadRequest)
 		return
 	}
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	s.editorMu.Lock()
+	defer s.editorMu.Unlock()
+	if s.editorWS == nil {
+		writeJSONError(w, "editor state not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.editorWS.UpdateEdge(id, upd); err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "updated", "id": id})
 }
 
 func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request, id string) {

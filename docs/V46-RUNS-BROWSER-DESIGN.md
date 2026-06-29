@@ -51,6 +51,10 @@ the report if present, otherwise a parsed **state summary** from
 yields useful output regardless of where the run is in its lifecycle.
 `formatRunStateSummary` is pure and unit-tested.
 
+`prism runs latest` resolves to the most recent run (newest by mtime, via
+`latestRunID`) so an operator doesn't need to remember the `gl-<timestamp>` id — it
+composes with the report/state detail and `--json`.
+
 ## Status
 
 Completes the observability arc started by V38 (`watch`, live) and V40 (durable

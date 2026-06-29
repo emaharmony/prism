@@ -594,7 +594,7 @@ func printUsage() {
 	fmt.Println("  prism watch [--config prism.yaml]             Live view of a running gated-loop workflow")
 	fmt.Println("  prism doctor [--config prism.yaml] [--json]   Preflight check of run dependencies")
 	fmt.Println("  prism preview [--workflow <file>]             Static preview of the gated-loop workflow")
-	fmt.Println("  prism runs [<run-id>] [--dir <path>] [--json] List runs / show a run's report (or state JSON)")
+	fmt.Println("  prism runs [<run-id>|latest] [--json]         List runs / show a run's report (or state JSON)")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println("  prism search --query <text> [options]         Search vector store")
 	fmt.Println()

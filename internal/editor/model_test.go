@@ -551,3 +551,61 @@ func TestValidateWritePath(t *testing.T) {
 		})
 	}
 }
+
+func sp(s string) *string { return &s }
+
+func TestEditorEdgeActionRoundTrip(t *testing.T) {
+	state := &EditorState{
+		Nodes: []EditorNode{
+			{ID: "lead", Type: "agent"},
+			{ID: "coder", Type: "agent"},
+		},
+	}
+	if err := state.AddEdge(EditorEdge{ID: "e1", From: "lead", To: "coder", Type: "delegation", Action: "code_implementation"}); err != nil {
+		t.Fatalf("AddEdge: %v", err)
+	}
+	if state.Edges[0].Action != "code_implementation" {
+		t.Fatalf("action not stored on add: %+v", state.Edges[0])
+	}
+}
+
+func TestUpdateEdge(t *testing.T) {
+	state := &EditorState{
+		Nodes: []EditorNode{{ID: "a", Type: "agent"}, {ID: "b", Type: "agent"}},
+	}
+	state.AddEdge(EditorEdge{ID: "e1", From: "a", To: "b", Type: "delegation"})
+
+	// Set an action (trimmed).
+	if err := state.UpdateEdge("e1", EdgeUpdate{Action: sp("  review_changes  ")}); err != nil {
+		t.Fatalf("UpdateEdge action: %v", err)
+	}
+	if state.Edges[0].Action != "review_changes" {
+		t.Fatalf("action not trimmed/set: %q", state.Edges[0].Action)
+	}
+
+	// Change type (valid) + label.
+	if err := state.UpdateEdge("e1", EdgeUpdate{Type: sp("review"), Label: sp("PR review")}); err != nil {
+		t.Fatalf("UpdateEdge type/label: %v", err)
+	}
+	if state.Edges[0].Type != "review" || state.Edges[0].Label != "PR review" {
+		t.Fatalf("type/label not updated: %+v", state.Edges[0])
+	}
+	// Action preserved across the partial update.
+	if state.Edges[0].Action != "review_changes" {
+		t.Fatalf("partial update clobbered action: %+v", state.Edges[0])
+	}
+
+	// Invalid type rejected.
+	if err := state.UpdateEdge("e1", EdgeUpdate{Type: sp("bogus")}); err == nil {
+		t.Fatal("expected invalid edge type to be rejected")
+	}
+	// Clear action.
+	state.UpdateEdge("e1", EdgeUpdate{Action: sp("")})
+	if state.Edges[0].Action != "" {
+		t.Fatalf("action not cleared: %q", state.Edges[0].Action)
+	}
+	// Unknown edge.
+	if err := state.UpdateEdge("nope", EdgeUpdate{Action: sp("x")}); err == nil {
+		t.Fatal("expected error for unknown edge")
+	}
+}

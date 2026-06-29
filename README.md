@@ -475,6 +475,8 @@ Current routes include:
 | V45 | De-hardcoded gate personas (config-driven roster) | [V45](./docs/V45-DYNAMIC-ROSTER-DESIGN.md) |
 | V46 | `prism runs` browse past runs & reports | [V46](./docs/V46-RUNS-BROWSER-DESIGN.md) |
 | V47 | `--json` inspection output (doctor, runs) | [V47](./docs/V47-JSON-OUTPUT-DESIGN.md) |
+| V48 | Actions on flows in the visual workflow editor | [V48](./docs/V48-EDGE-ACTIONS-DESIGN.md) |
+| V49 | MCP client foundation (consume external MCP tool servers) | [V49](./docs/V49-MCP-CLIENT-DESIGN.md) |
 
 ---
 

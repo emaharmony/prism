@@ -40,6 +40,8 @@
 | V45 | Source-current | De-hardcoded gate personas — review/approval messages name config-driven reviewers/approvers; agent glyphs overridable; config-driven per-agent delegation timeouts (no baked-in Lumi/Mango) |
 | V46 | Source-current | `prism runs` — list past gated-loop runs and read their persisted REPORT.md from the terminal |
 | V47 | Source-current | `--json` output for `prism doctor` and `prism runs` (CI/dashboard-consumable inspection) |
+| V48 | Source-current | Actions on flows — visual workflow editor edges carry an assignable action (clickable lines, ⚡ badge, PUT /editor/edges/{id}) |
+| V49 | Source-current | MCP client foundation — adapt external MCP tool servers into the policy-gated tool.Registry (transport + serve wiring are follow-ups) |
 
 ---
 
