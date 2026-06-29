@@ -181,6 +181,10 @@ agents:
 
 Serve and chat modes register read, project, git, state, and plan tools. Read-only tools can run directly inside allowed paths; mutation tools such as `git_add`, `git_commit`, and `git_push` are policy-gated.
 
+### Verified Gated Loop
+
+The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT`) enforces objective build/test verification in EXECUTION: after the model commits, Prism runs an allowlisted V5 validation profile (e.g. `go_test_all` → `go test ./...`). With `blocking: true` the phase cannot complete until it passes — the failing output is fed back so the model fixes the real problem and re-commits. The model can also call the `run_validation` tool to self-check before committing. The loop is bounded by run budgets (`max_total_time`, `max_total_tokens`) and stuck-loop detection (`max_repeated_tool_calls`), each emitting an event and stopping gracefully. Configure it per phase under `verification` (see [docs/V35-VERIFICATION-GATE-DESIGN.md](./docs/V35-VERIFICATION-GATE-DESIGN.md)).
+
 ### Cross-Prism and Factory Handoff
 
 The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/CROSS-PRISM-FACTORY-SETUP.md](./docs/CROSS-PRISM-FACTORY-SETUP.md).
@@ -459,6 +463,18 @@ Current routes include:
 | V32 | Operating environment: state, plans, guard, wake | [V32](./docs/V32-LUMI-OPERATING-ENVIRONMENT.md) |
 | V33 | Conversation awareness and channel context | [V33](./docs/V33-CONVERSATION-AWARENESS.md) |
 | V34 | OpenAI Responses provider | [V34](./docs/V34-OPENAI-RESPONSES-DESIGN.md) |
+| V35 | Objective verification gate in the gated loop | [V35](./docs/V35-VERIFICATION-GATE-DESIGN.md) |
+| V37 | Multi-agent delegation wired into the gated loop | [V37](./docs/V37-MULTI-AGENT-DELEGATION-DESIGN.md) |
+| V38 | `prism watch` live run visibility (SSE) | [V38](./docs/V38-LIVE-WATCH-DESIGN.md) |
+| V39 | `prism doctor` preflight health check | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
+| V40 | Durable `REPORT.md` proof-of-work artifact | [V40](./docs/V40-REPORT-ARTIFACT-DESIGN.md) |
+| V41 | Diff preview at the feedback gate | [V41](./docs/V41-DIFF-PREVIEW-DESIGN.md) |
+| V42 | Gate-needs-you @-mention notifications | [V42](./docs/V42-GATE-NOTIFICATIONS-DESIGN.md) |
+| V43 | `prism preview` static gated-loop preview | [V43](./docs/V43-WORKFLOW-PREVIEW-DESIGN.md) |
+| V44 | Rich Discord approval cards (buttons) | [V44](./docs/V44-APPROVAL-CARDS-DESIGN.md) |
+| V45 | De-hardcoded gate personas (config-driven roster) | [V45](./docs/V45-DYNAMIC-ROSTER-DESIGN.md) |
+| V46 | `prism runs` browse past runs & reports | [V46](./docs/V46-RUNS-BROWSER-DESIGN.md) |
+| V47 | `--json` inspection output (doctor, runs) | [V47](./docs/V47-JSON-OUTPUT-DESIGN.md) |
 
 ---
 

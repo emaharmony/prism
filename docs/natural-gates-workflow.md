@@ -17,7 +17,7 @@ The Natural Gates Workflow System replaces hardcoded iteration-based loops with 
 | **RESEARCH** | All confidence domains ≥ 0.7 | Search web, memory, codebase, consult agents |
 | **PLAN** | Plan completeness ≥ 0.9 | Break work into tasks, assign to agents, define success criteria |
 | **FEEDBACK_PRE** | Lumi/Ema approval | Plan posted to Discord, workflow pauses until approved |
-| **EXECUTION** | All tasks complete | Execute plan with V36 enforcement (branch protection, commit-push gate) |
+| **EXECUTION** | All tasks complete + verification passes | Execute plan with V36 enforcement (branch protection, commit-push gate) and V35 objective build/test verification (e.g. `go test ./...`) before the phase can complete |
 | **FEEDBACK_POST** | Lumi + Mango review | Post-execution review, Mango ALWAYS required |
 | **REPORT** | All 5 sections present | Final report with proof of work (commits, files, PRs) |
 

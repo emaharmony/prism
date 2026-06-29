@@ -33,8 +33,9 @@ const (
 
 // MutationType constants.
 const (
-	MutationWriteFile  = "write_file"
-	MutationApplyPatch = "apply_patch"
+	MutationWriteFile       = "write_file"
+	MutationCreateDirectory = "create_directory"
+	MutationApplyPatch      = "apply_patch"
 )
 
 // PolicyDecision constants.
@@ -46,23 +47,23 @@ const (
 
 // Approval represents a pending, approved, or denied file mutation.
 type Approval struct {
-	ApprovalID    string     `json:"approval_id"`
-	RunID         string     `json:"run_id"`
-	CorrelationID string     `json:"correlation_id"`
-	Status        string     `json:"status"` // pending, approved, denied, expired
-	RequestedBy   string     `json:"requested_by"`
-	Project       string     `json:"project"`
-	MutationType  string     `json:"mutation_type"` // write_file, apply_patch
-	TargetPath    string     `json:"target_path"`
-	Content       string     `json:"content,omitempty"`
-	Preview       string     `json:"preview,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	ApprovedBy    string     `json:"approved_by,omitempty"`
-	ApprovedAt    *time.Time `json:"approved_at,omitempty"`
-	DeniedBy      string     `json:"denied_by,omitempty"`
-	DeniedAt      *time.Time `json:"denied_at,omitempty"`
-	DenialReason  string     `json:"denial_reason,omitempty"`
+	ApprovalID    string         `json:"approval_id"`
+	RunID         string         `json:"run_id"`
+	CorrelationID string         `json:"correlation_id"`
+	Status        string         `json:"status"` // pending, approved, denied, expired
+	RequestedBy   string         `json:"requested_by"`
+	Project       string         `json:"project"`
+	MutationType  string         `json:"mutation_type"` // write_file, create_directory, apply_patch
+	TargetPath    string         `json:"target_path"`
+	Content       string         `json:"content,omitempty"`
+	Preview       string         `json:"preview,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	ExpiresAt     *time.Time     `json:"expires_at,omitempty"`
+	ApprovedBy    string         `json:"approved_by,omitempty"`
+	ApprovedAt    *time.Time     `json:"approved_at,omitempty"`
+	DeniedBy      string         `json:"denied_by,omitempty"`
+	DeniedAt      *time.Time     `json:"denied_at,omitempty"`
+	DenialReason  string         `json:"denial_reason,omitempty"`
 	Policy        PolicyDecision `json:"policy"`
 }
 

@@ -2,42 +2,44 @@
 // agent platform. Every interaction starts here.
 //
 // As of V12, the CLI is split into multiple files for maintainability:
-//   main.go          — This file: subcommand dispatch and flag definitions
-//   cmd_run.go       — prism run
-//   cmd_tool.go      — prism tool list/run
-//   cmd_approval.go  — prism approval list/show/approve/deny
-//   cmd_validation.go — prism validation list/run
-//   cmd_policy.go    — prism policy list/evaluate
-//   cmd_workflow.go  — prism workflow list/show/run/status
-//   cmd_adapter.go   — prism adapter list/show/health
-//   cmd_projection.go — prism projection list/rebuild/query
-//   cmd_dashboard.go — prism dashboard
-//   cmd_health.go    — prism health
+//
+//	main.go          — This file: subcommand dispatch and flag definitions
+//	cmd_run.go       — prism run
+//	cmd_tool.go      — prism tool list/run
+//	cmd_approval.go  — prism approval list/show/approve/deny
+//	cmd_validation.go — prism validation list/run
+//	cmd_policy.go    — prism policy list/evaluate
+//	cmd_workflow.go  — prism workflow list/show/run/status
+//	cmd_adapter.go   — prism adapter list/show/health
+//	cmd_projection.go — prism projection list/rebuild/query
+//	cmd_dashboard.go — prism dashboard
+//	cmd_health.go    — prism health
 //
 // Subcommands:
-//   prism run           — Execute a full V1→V5 run (task → LLM → tools → approval → validation → review)
-//   prism health        — Check if the NATS event bus is reachable
-//   prism tool list      — List available tools and their policies
-//   prism tool run       — Execute a single tool directly (for testing)
-//   prism approval list  — List pending/approved/denied approvals
-//   prism approval show  — Show details of a specific approval
-//   prism approval approve — Approve a pending mutation (writes file to disk)
-//   prism approval deny  — Deny a pending mutation (file is NOT written)
-//   prism validation list — List available validation profiles
-//   prism validation run — Run a validation profile (e.g., go_test_all)
-//   prism policy list    — List registered policy rules
-//   prism policy evaluate — Evaluate a policy request
-//   prism adapter list   — List registered adapters
-//   prism adapter show   — Show details of a specific adapter
-//   prism adapter health — Check health of a specific adapter
-//   prism agent list     — List registered agents
-//   prism agent show    — Show details of a specific agent
-//   prism projection list — List available projections
-//   prism projection rebuild — Rebuild projection snapshots from events
-//   prism projection query — Query a projection snapshot
-//   prism workflow list  — List registered workflows
-//   prism workflow run   — Run a named workflow
-//   prism workflow status — Show workflow run state
+//
+//	prism run           — Execute a full V1→V5 run (task → LLM → tools → approval → validation → review)
+//	prism health        — Check if the NATS event bus is reachable
+//	prism tool list      — List available tools and their policies
+//	prism tool run       — Execute a single tool directly (for testing)
+//	prism approval list  — List pending/approved/denied approvals
+//	prism approval show  — Show details of a specific approval
+//	prism approval approve — Approve a pending mutation (writes file to disk)
+//	prism approval deny  — Deny a pending mutation (file is NOT written)
+//	prism validation list — List available validation profiles
+//	prism validation run — Run a validation profile (e.g., go_test_all)
+//	prism policy list    — List registered policy rules
+//	prism policy evaluate — Evaluate a policy request
+//	prism adapter list   — List registered adapters
+//	prism adapter show   — Show details of a specific adapter
+//	prism adapter health — Check health of a specific adapter
+//	prism agent list     — List registered agents
+//	prism agent show    — Show details of a specific agent
+//	prism projection list — List available projections
+//	prism projection rebuild — Rebuild projection snapshots from events
+//	prism projection query — Query a projection snapshot
+//	prism workflow list  — List registered workflows
+//	prism workflow run   — Run a named workflow
+//	prism workflow status — Show workflow run state
 //
 // Why raw os.Args instead of a CLI framework (cobra, etc.)? Prism's CLI surface is
 // small and stable — 10 subcommands with simple flag sets. A framework would add
@@ -550,6 +552,14 @@ func main() {
 		executeServe(os.Args[2:])
 	case "status":
 		executeStatus(os.Args[2:])
+	case "watch":
+		executeWatch(os.Args[2:])
+	case "doctor":
+		executeDoctor(os.Args[2:])
+	case "preview":
+		executePreview(os.Args[2:])
+	case "runs":
+		executeRuns(os.Args[2:])
 	case "remembrance":
 		executeRemembrance(os.Args[2:])
 	case "version":
@@ -581,6 +591,10 @@ func printUsage() {
 	fmt.Println("  prism context show [--context soul,agents]   Show context that would be injected")
 	fmt.Println("  prism cost <run_id>                        Show token usage and cost report")
 	fmt.Println("  prism trace <run_id>                       Show event trace (causal DAG)")
+	fmt.Println("  prism watch [--config prism.yaml]             Live view of a running gated-loop workflow")
+	fmt.Println("  prism doctor [--config prism.yaml] [--json]   Preflight check of run dependencies")
+	fmt.Println("  prism preview [--workflow <file>]             Static preview of the gated-loop workflow")
+	fmt.Println("  prism runs [<run-id>] [--dir <path>] [--json] List runs / show a run's report (or state JSON)")
 	fmt.Println("  prism version                                 Print version")
 	fmt.Println("  prism search --query <text> [options]         Search vector store")
 	fmt.Println()

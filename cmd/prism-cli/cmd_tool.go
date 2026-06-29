@@ -10,6 +10,7 @@
 //   - read_file:    Reads a file's contents (read-only, always allowed)
 //   - write_file_dry_run:  Previews what a file write would look like (allowed)
 //   - write_file_proposal: Proposes a file write for human approval (requires_approval)
+//   - create_directory_proposal: Proposes directory creation for human approval
 //
 // Commands:
 //   prism tool list                    — Show all tools and their input schemas

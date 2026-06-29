@@ -15,10 +15,12 @@ type ProbePhase struct {
 	MaxIter          int
 }
 
-func (p *ProbePhase) Name() string         { return "PROBE" }
-func (p *ProbePhase) Description() string  { return "Reduce assumptions by asking questions and searching" }
+func (p *ProbePhase) Name() string { return "PROBE" }
+func (p *ProbePhase) Description() string {
+	return "Reduce assumptions by asking questions and searching"
+}
 func (p *ProbePhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *ProbePhase) MaxIterations() int    { return p.MaxIter }
+func (p *ProbePhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *ProbePhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("PROBE", PhaseStatusInProgress)
@@ -66,10 +68,12 @@ type ResearchPhase struct {
 	MaxIter          int
 }
 
-func (p *ResearchPhase) Name() string         { return "RESEARCH" }
-func (p *ResearchPhase) Description() string  { return "Increase confidence by actively searching multiple sources" }
+func (p *ResearchPhase) Name() string { return "RESEARCH" }
+func (p *ResearchPhase) Description() string {
+	return "Increase confidence by actively searching multiple sources"
+}
 func (p *ResearchPhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *ResearchPhase) MaxIterations() int    { return p.MaxIter }
+func (p *ResearchPhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *ResearchPhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("RESEARCH", PhaseStatusInProgress)
@@ -114,10 +118,10 @@ type PlanPhase struct {
 	MaxIter          int
 }
 
-func (p *PlanPhase) Name() string         { return "PLAN" }
-func (p *PlanPhase) Description() string  { return "Create structured plan with resource assignments" }
+func (p *PlanPhase) Name() string           { return "PLAN" }
+func (p *PlanPhase) Description() string    { return "Create structured plan with resource assignments" }
 func (p *PlanPhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *PlanPhase) MaxIterations() int    { return p.MaxIter }
+func (p *PlanPhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *PlanPhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("PLAN", PhaseStatusInProgress)
@@ -166,10 +170,10 @@ type FeedbackPrePhase struct {
 	Approvers        []string // who must approve (from gate config); empty → human "ema"
 }
 
-func (p *FeedbackPrePhase) Name() string         { return "FEEDBACK_PRE" }
-func (p *FeedbackPrePhase) Description() string  { return "Get plan approval before execution" }
+func (p *FeedbackPrePhase) Name() string           { return "FEEDBACK_PRE" }
+func (p *FeedbackPrePhase) Description() string    { return "Get plan approval before execution" }
 func (p *FeedbackPrePhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *FeedbackPrePhase) MaxIterations() int    { return p.MaxIter }
+func (p *FeedbackPrePhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *FeedbackPrePhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("FEEDBACK_PRE", PhaseStatusInProgress)
@@ -204,10 +208,12 @@ type ExecutionPhase struct {
 	MaxIter          int
 }
 
-func (p *ExecutionPhase) Name() string         { return "EXECUTION" }
-func (p *ExecutionPhase) Description() string  { return "Execute the approved plan with V36 enforcement" }
+func (p *ExecutionPhase) Name() string { return "EXECUTION" }
+func (p *ExecutionPhase) Description() string {
+	return "Execute the approved plan with V36 enforcement"
+}
 func (p *ExecutionPhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *ExecutionPhase) MaxIterations() int    { return p.MaxIter }
+func (p *ExecutionPhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *ExecutionPhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("EXECUTION", PhaseStatusInProgress)
@@ -250,10 +256,10 @@ type FeedbackPostPhase struct {
 	Reviewers        []string // required reviewers (from gate config); empty → human "ema"
 }
 
-func (p *FeedbackPostPhase) Name() string         { return "FEEDBACK_POST" }
-func (p *FeedbackPostPhase) Description() string  { return "Post-execution review by Lumi and Mango" }
+func (p *FeedbackPostPhase) Name() string           { return "FEEDBACK_POST" }
+func (p *FeedbackPostPhase) Description() string    { return "Post-execution review by Lumi and Mango" }
 func (p *FeedbackPostPhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *FeedbackPostPhase) MaxIterations() int    { return p.MaxIter }
+func (p *FeedbackPostPhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *FeedbackPostPhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("FEEDBACK_POST", PhaseStatusInProgress)
@@ -304,10 +310,10 @@ type ReportPhase struct {
 	MaxIter          int
 }
 
-func (p *ReportPhase) Name() string         { return "REPORT" }
-func (p *ReportPhase) Description() string  { return "Produce comprehensive report with proof of work" }
+func (p *ReportPhase) Name() string           { return "REPORT" }
+func (p *ReportPhase) Description() string    { return "Produce comprehensive report with proof of work" }
 func (p *ReportPhase) AllowedTools() []string { return p.AllowedToolsList }
-func (p *ReportPhase) MaxIterations() int    { return p.MaxIter }
+func (p *ReportPhase) MaxIterations() int     { return p.MaxIter }
 
 func (p *ReportPhase) Enter(_ context.Context, state *WorkflowState) error {
 	state.SetPhaseStatus("REPORT", PhaseStatusInProgress)

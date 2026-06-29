@@ -491,9 +491,148 @@ func (t *WriteFileDirect) Execute(ctx context.Context, input map[string]any) (To
 	return ToolResult{
 		Success: true,
 		Output: map[string]any{
-			"path":           absPath,
-			"bytes_written":  len(content),
-			"status":         "written",
+			"path":          absPath,
+			"bytes_written": len(content),
+			"status":        "written",
+		},
+	}, nil
+}
+
+// CreateDirectoryProposal proposes directory creation for approval. It does not
+// write to disk; approval application is handled by the mutation executor.
+type CreateDirectoryProposal struct {
+	WorkspaceRoot string
+	AllowedPaths  []string
+	Emit          func(eventType, source string, payload map[string]any)
+}
+
+func (t *CreateDirectoryProposal) Name() string { return "create_directory_proposal" }
+func (t *CreateDirectoryProposal) Description() string {
+	return "Proposes creating a directory for approval. Does not write to disk - returns an approval_id for the approval workflow."
+}
+func (t *CreateDirectoryProposal) Schema() ToolSchema {
+	return ToolSchema{
+		Input: map[string]ParamSpec{
+			"path": {Type: "string", Description: "Directory path to create. Use an absolute path under a configured write root, or a path relative to the workspace root", Required: true},
+		},
+		Output: ParamSpec{Type: "object", Description: "Approval ID and directory creation preview"},
+	}
+}
+func (t *CreateDirectoryProposal) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	pathVal, ok := input["path"].(string)
+	if !ok || strings.TrimSpace(pathVal) == "" {
+		return ToolResult{Success: false, Error: "required parameter 'path' must be a non-empty string"}, nil
+	}
+	if strings.Contains(pathVal, "..") {
+		return ToolResult{Success: false, Error: "path traversal blocked"}, nil
+	}
+	roots := append([]string{t.WorkspaceRoot}, t.AllowedPaths...)
+	absPath, err := safety.ResolveAndContainMulti(roots, pathVal)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
+	}
+
+	approvalID := fmt.Sprintf("appr_%d", time.Now().UnixNano())
+	preview := fmt.Sprintf("Create directory: %s", absPath)
+	if t.Emit != nil {
+		t.Emit("prism.mutation.proposed", "prism-tool-executor", map[string]any{
+			"approval_id":     approvalID,
+			"mutation_type":   "create_directory",
+			"target_path":     pathVal,
+			"policy_decision": "requires_approval",
+			"policy_reason":   "directory creation requires explicit approval",
+		})
+		t.Emit("prism.approval.requested", "prism-tool-executor", map[string]any{
+			"approval_id":     approvalID,
+			"mutation_type":   "create_directory",
+			"target_path":     pathVal,
+			"policy_decision": "requires_approval",
+			"policy_reason":   "directory creation requires explicit approval",
+		})
+	}
+
+	return ToolResult{
+		Success: true,
+		Output: map[string]any{
+			"approval_id":   approvalID,
+			"mutation_type": "create_directory",
+			"target_path":   pathVal,
+			"resolved_path": absPath,
+			"preview":       preview,
+			"status":        "pending_approval",
+			"instruction":   "Use 'prism approval approve <approval_id> --by <name>' or 'prism approval deny <approval_id> --by <name>' to proceed.",
+		},
+	}, nil
+}
+
+// CreateDirectoryDirect creates a directory immediately. It is intended for
+// auto-approved workflow execution after higher-level gates have passed.
+type CreateDirectoryDirect struct {
+	WorkspaceRoot string
+	AllowedPaths  []string
+	Emit          func(eventType, source string, payload map[string]any)
+}
+
+func (t *CreateDirectoryDirect) Name() string { return "create_directory" }
+func (t *CreateDirectoryDirect) Description() string {
+	return "Creates a directory and any missing parent directories under configured write roots."
+}
+func (t *CreateDirectoryDirect) Schema() ToolSchema {
+	return ToolSchema{
+		Input: map[string]ParamSpec{
+			"path": {Type: "string", Description: "Directory path to create. Use an absolute path under a configured write root, or a path relative to the workspace root", Required: true},
+		},
+		Output: ParamSpec{Type: "object", Description: "Directory creation result"},
+	}
+}
+func (t *CreateDirectoryDirect) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	pathVal, ok := input["path"].(string)
+	if !ok || strings.TrimSpace(pathVal) == "" {
+		return ToolResult{Success: false, Error: "required parameter 'path' must be a non-empty string"}, nil
+	}
+	if strings.Contains(pathVal, "..") {
+		return ToolResult{Success: false, Error: "path traversal blocked"}, nil
+	}
+	roots := append([]string{t.WorkspaceRoot}, t.AllowedPaths...)
+	absPath, err := safety.ResolveAndContainMulti(roots, pathVal)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
+	}
+
+	if info, statErr := os.Lstat(absPath); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return ToolResult{Success: false, Error: fmt.Sprintf("target path %q is a symlink, not a directory", pathVal)}, nil
+		}
+		if !info.IsDir() {
+			return ToolResult{Success: false, Error: fmt.Sprintf("target path %q exists and is not a directory", pathVal)}, nil
+		}
+		return ToolResult{
+			Success: true,
+			Output: map[string]any{
+				"path":    absPath,
+				"created": false,
+				"status":  "already_exists",
+			},
+		}, nil
+	} else if !os.IsNotExist(statErr) {
+		return ToolResult{Success: false, Error: fmt.Sprintf("failed to inspect directory: %v", statErr)}, nil
+	}
+
+	if err := os.MkdirAll(absPath, 0755); err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("failed to create directory: %v", err)}, nil
+	}
+	if t.Emit != nil {
+		t.Emit("prism.mutation.applied", "prism-tool-executor", map[string]any{
+			"mutation_type": "create_directory",
+			"target_path":   absPath,
+		})
+	}
+	return ToolResult{
+		Success: true,
+		Output: map[string]any{
+			"path":    absPath,
+			"created": true,
+			"status":  "created",
 		},
 	}, nil
 }
@@ -721,6 +860,7 @@ func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize in
 func RegisterBuiltinsV4WithRoots(registry *Registry, workspaceRoot string, maxFileSize int64, readRoots, writeRoots []string) *Registry {
 	RegisterBuiltinsWithRoots(registry, workspaceRoot, maxFileSize, readRoots, writeRoots)
 	registry.Register(&WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
+	registry.Register(&CreateDirectoryProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 
 	// V28: Git mutation tools (requires approval)
 	registry.Register(&GitAddTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})

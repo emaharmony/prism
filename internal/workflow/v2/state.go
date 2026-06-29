@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -21,48 +22,53 @@ const (
 type PhaseStatus string
 
 const (
-	PhaseStatusPending   PhaseStatus = "pending"
+	PhaseStatusPending    PhaseStatus = "pending"
 	PhaseStatusInProgress PhaseStatus = "in_progress"
-	PhaseStatusCompleted PhaseStatus = "completed"
-	PhaseStatusFallback  PhaseStatus = "fallback"
-	PhaseStatusFailed    PhaseStatus = "failed"
+	PhaseStatusCompleted  PhaseStatus = "completed"
+	PhaseStatusFallback   PhaseStatus = "fallback"
+	PhaseStatusFailed     PhaseStatus = "failed"
 )
 
 // WorkflowState is the complete state of a Natural Gates workflow run.
 // Persisted to disk for resumability. This is the single source of truth.
 type WorkflowState struct {
-	mu            sync.RWMutex
-	WorkflowName  string                   `json:"workflow_name"`
-	Version       int                      `json:"version"`
-	Status        WorkflowStatus           `json:"status"`
-	RunID         string                   `json:"run_id"`
-	CorrelationID string                   `json:"correlation_id"`
-	CurrentPhaseIdx int                    `json:"current_phase_idx"`
-	NextPhase     string                   `json:"next_phase,omitempty"`
-	PauseReason   string                   `json:"pause_reason,omitempty"`
-	PhaseStates    map[string]*PhaseState  `json:"phase_states"`
-	Assumptions   []Assumption             `json:"assumptions"`
-	ConfidenceMatrix map[string]*ConfidenceDomain `json:"confidence_matrix"`
-	Plan          *PlanGraph                `json:"plan,omitempty"`
-	Delegations   []DelegationState         `json:"delegations,omitempty"`
-	Feedback      *FeedbackState           `json:"feedback,omitempty"`
-	Report        *ReportState             `json:"report,omitempty"`
-	SystemMessages map[string][]string      `json:"system_messages,omitempty"` // messages to inject per phase
-	AgentRegistry map[string]*AgentInfo    `json:"agent_registry,omitempty"`
-	TotalPromptTokens     int                    `json:"total_prompt_tokens,omitempty"`
-	TotalCompletionTokens int                    `json:"total_completion_tokens,omitempty"`
-	StartedAt     string                   `json:"started_at"`
-	UpdatedAt     string                   `json:"updated_at"`
-	CompletedAt   string                   `json:"completed_at,omitempty"`
+	mu                    sync.RWMutex
+	WorkflowName          string                       `json:"workflow_name"`
+	Version               int                          `json:"version"`
+	Status                WorkflowStatus               `json:"status"`
+	RunID                 string                       `json:"run_id"`
+	CorrelationID         string                       `json:"correlation_id"`
+	ProjectID             string                       `json:"project_id,omitempty"`
+	RepoPath              string                       `json:"repo_path,omitempty"`
+	Channel               string                       `json:"channel,omitempty"`
+	RequirePush           bool                         `json:"require_push,omitempty"`
+	CurrentPhaseIdx       int                          `json:"current_phase_idx"`
+	NextPhase             string                       `json:"next_phase,omitempty"`
+	PauseReason           string                       `json:"pause_reason,omitempty"`
+	PhaseStates           map[string]*PhaseState       `json:"phase_states"`
+	Assumptions           []Assumption                 `json:"assumptions"`
+	ConfidenceMatrix      map[string]*ConfidenceDomain `json:"confidence_matrix"`
+	Plan                  *PlanGraph                   `json:"plan,omitempty"`
+	Delegations           []DelegationState            `json:"delegations,omitempty"`
+	Feedback              *FeedbackState               `json:"feedback,omitempty"`
+	Report                *ReportState                 `json:"report,omitempty"`
+	Verification          *VerificationRecord          `json:"verification,omitempty"`
+	SystemMessages        map[string][]string          `json:"system_messages,omitempty"` // messages to inject per phase
+	AgentRegistry         map[string]*AgentInfo        `json:"agent_registry,omitempty"`
+	TotalPromptTokens     int                          `json:"total_prompt_tokens,omitempty"`
+	TotalCompletionTokens int                          `json:"total_completion_tokens,omitempty"`
+	StartedAt             string                       `json:"started_at"`
+	UpdatedAt             string                       `json:"updated_at"`
+	CompletedAt           string                       `json:"completed_at,omitempty"`
 }
 
 // PhaseState tracks the state of a single phase.
 type PhaseState struct {
-	Status      PhaseStatus  `json:"status"`
-	Iterations  int          `json:"iterations"`
-	EnteredAt   string       `json:"entered_at"`
-	ExitedAt    string       `json:"exited_at,omitempty"`
-	GateResult  *GateResultData `json:"gate_result,omitempty"`
+	Status     PhaseStatus     `json:"status"`
+	Iterations int             `json:"iterations"`
+	EnteredAt  string          `json:"entered_at"`
+	ExitedAt   string          `json:"exited_at,omitempty"`
+	GateResult *GateResultData `json:"gate_result,omitempty"`
 }
 
 // GateResultData is the persisted gate result.
@@ -76,15 +82,15 @@ type GateResultData struct {
 
 // Assumption is a structured assumption tracked during PROBE phase.
 type Assumption struct {
-	ID           string  `json:"id"`
-	Statement    string  `json:"statement"`
-	Confidence   float64 `json:"confidence"`
-	Criticality  string  `json:"criticality"` // blocker|high|medium|low
-	Source       string  `json:"source"`
-	Status       string  `json:"status"` // open|addressed|contradicted|unresolved
-	Resolution   string  `json:"resolution,omitempty"`
-	CreatedAt    string  `json:"created_at"`
-	UpdatedAt    string  `json:"updated_at"`
+	ID          string  `json:"id"`
+	Statement   string  `json:"statement"`
+	Confidence  float64 `json:"confidence"`
+	Criticality string  `json:"criticality"` // blocker|high|medium|low
+	Source      string  `json:"source"`
+	Status      string  `json:"status"` // open|addressed|contradicted|unresolved
+	Resolution  string  `json:"resolution,omitempty"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 // ConfidenceDomain is one dimension of the confidence matrix.
@@ -97,31 +103,31 @@ type ConfidenceDomain struct {
 
 // PlanGraph is the structured plan from PLAN phase.
 type PlanGraph struct {
-	CompletenessScore float64     `json:"completeness_score"`
-	Tasks             []PlanTask  `json:"tasks"`
+	CompletenessScore float64          `json:"completeness_score"`
+	Tasks             []PlanTask       `json:"tasks"`
 	RiskMitigations   []RiskMitigation `json:"risk_mitigations,omitempty"`
 }
 
 // PlanTask is a single task in the plan.
 type PlanTask struct {
-	ID             string            `json:"id"`
-	Description    string            `json:"description"`
-	Agent          string            `json:"agent"`
-	DependsOn      []string          `json:"depends_on,omitempty"`
-	SuccessCriteria string           `json:"success_criteria"`
-	RiskLevel      string            `json:"risk_level"`
-	Status         string            `json:"status"` // pending|in_progress|completed|failed
-	StartedAt      string            `json:"started_at,omitempty"`
-	CompletedAt    string            `json:"completed_at,omitempty"`
-	Artifacts      *TaskArtifacts    `json:"artifacts,omitempty"`
+	ID              string         `json:"id"`
+	Description     string         `json:"description"`
+	Agent           string         `json:"agent"`
+	DependsOn       []string       `json:"depends_on,omitempty"`
+	SuccessCriteria string         `json:"success_criteria"`
+	RiskLevel       string         `json:"risk_level"`
+	Status          string         `json:"status"` // pending|in_progress|completed|failed
+	StartedAt       string         `json:"started_at,omitempty"`
+	CompletedAt     string         `json:"completed_at,omitempty"`
+	Artifacts       *TaskArtifacts `json:"artifacts,omitempty"`
 }
 
 // TaskArtifacts tracks the proof of work for a task.
 type TaskArtifacts struct {
-	FilePaths   []string `json:"file_paths,omitempty"`
-	CommitHash  string   `json:"commit_hash,omitempty"`
-	BranchName  string   `json:"branch_name,omitempty"`
-	PRURL       string   `json:"pr_url,omitempty"`
+	FilePaths  []string `json:"file_paths,omitempty"`
+	CommitHash string   `json:"commit_hash,omitempty"`
+	BranchName string   `json:"branch_name,omitempty"`
+	PRURL      string   `json:"pr_url,omitempty"`
 }
 
 // RiskMitigation links a low-confidence domain to a mitigation strategy.
@@ -133,14 +139,15 @@ type RiskMitigation struct {
 
 // DelegationState tracks a delegated task.
 type DelegationState struct {
-	DelegationID      string                 `json:"delegation_id"`
-	TaskID            string                 `json:"task_id"`
-	Agent             string                 `json:"agent"`
-	Status            string                 `json:"status"` // sent|acknowledged|in_progress|completed|failed|timed_out
-	SentAt            string                 `json:"sent_at"`
-	CompletedAt       string                 `json:"completed_at,omitempty"`
-	ResultSummary     string                 `json:"result_summary,omitempty"`
-	NATSCorrelationID string                 `json:"nats_correlation_id,omitempty"`
+	DelegationID      string `json:"delegation_id"`
+	TaskID            string `json:"task_id"`
+	Agent             string `json:"agent"`
+	Status            string `json:"status"` // sent|acknowledged|in_progress|completed|failed|timed_out
+	SentAt            string `json:"sent_at"`
+	CompletedAt       string `json:"completed_at,omitempty"`
+	ResultSummary     string `json:"result_summary,omitempty"`
+	NATSCorrelationID string `json:"nats_correlation_id,omitempty"`
+	RetryCount        int    `json:"retry_count,omitempty"`
 }
 
 // FeedbackState tracks both feedback gates.
@@ -150,11 +157,11 @@ type FeedbackState struct {
 }
 
 type PreExecutionFeedback struct {
-	Status         string `json:"status"` // pending|approved|changes_requested|rejected|timed_out
-	Approver       string `json:"approver,omitempty"`
-	ApprovedAt     string `json:"approved_at,omitempty"`
-	FeedbackNotes  string `json:"feedback_notes,omitempty"`
-	RevisionCount  int    `json:"revision_count"`
+	Status        string `json:"status"` // pending|approved|changes_requested|rejected|timed_out
+	Approver      string `json:"approver,omitempty"`
+	ApprovedAt    string `json:"approved_at,omitempty"`
+	FeedbackNotes string `json:"feedback_notes,omitempty"`
+	RevisionCount int    `json:"revision_count"`
 }
 
 type PostExecutionFeedback struct {
@@ -164,10 +171,24 @@ type PostExecutionFeedback struct {
 }
 
 type ReviewerState struct {
-	Status     string               `json:"status"` // pending|completed|timed_out
-	Dimensions map[string]string    `json:"dimensions,omitempty"` // dimension → pass|warn|fail
-	Notes      string               `json:"notes,omitempty"`
-	SubmittedAt string              `json:"submitted_at,omitempty"`
+	Status      string            `json:"status"`               // pending|completed|timed_out
+	Dimensions  map[string]string `json:"dimensions,omitempty"` // dimension → pass|warn|fail
+	Notes       string            `json:"notes,omitempty"`
+	SubmittedAt string            `json:"submitted_at,omitempty"`
+}
+
+// VerificationRecord captures the most recent objective build/test verification
+// run during the workflow (e.g. `go test ./...`). It is the proof that the code
+// the loop produced actually compiles and passes its tests — the signal the
+// verification check feeds back into EXECUTION so the model fixes real failures
+// instead of committing plausible-but-broken code.
+type VerificationRecord struct {
+	Profile  string `json:"profile"`
+	Passed   bool   `json:"passed"`
+	ExitCode int    `json:"exit_code"`
+	Summary  string `json:"summary,omitempty"`
+	Attempts int    `json:"attempts"`
+	RanAt    string `json:"ran_at"`
 }
 
 // ReportState tracks the report completeness.
@@ -189,14 +210,14 @@ type AgentInfo struct {
 // NewWorkflowState creates a fresh workflow state.
 func NewWorkflowState(config *WorkflowConfig) *WorkflowState {
 	state := &WorkflowState{
-		WorkflowName:  config.Name,
-		Version:       config.Version,
-		Status:        StatusStarted,
-		PhaseStates:   make(map[string]*PhaseState),
-		Assumptions:   make([]Assumption, 0),
+		WorkflowName:     config.Name,
+		Version:          config.Version,
+		Status:           StatusStarted,
+		PhaseStates:      make(map[string]*PhaseState),
+		Assumptions:      make([]Assumption, 0),
 		ConfidenceMatrix: make(map[string]*ConfidenceDomain),
-		SystemMessages: make(map[string][]string),
-		AgentRegistry: make(map[string]*AgentInfo),
+		SystemMessages:   make(map[string][]string),
+		AgentRegistry:    make(map[string]*AgentInfo),
 	}
 
 	// Initialize confidence domains
@@ -212,7 +233,7 @@ func NewWorkflowState(config *WorkflowConfig) *WorkflowState {
 	// Initialize phase states
 	for _, phase := range config.Phases {
 		state.PhaseStates[phase.Name] = &PhaseState{
-			Status:    PhaseStatusPending,
+			Status:     PhaseStatusPending,
 			Iterations: 0,
 			EnteredAt:  "",
 			ExitedAt:   "",
@@ -284,10 +305,10 @@ func (s *WorkflowState) SetPhaseGateResult(phaseName string, result GateResult) 
 	defer s.mu.Unlock()
 	if ps, ok := s.PhaseStates[phaseName]; ok {
 		ps.GateResult = &GateResultData{
-			Passed:    result.Passed,
-			Score:     result.Score,
-			Reason:    result.Reason,
-			Missing:   result.Missing,
+			Passed:  result.Passed,
+			Score:   result.Score,
+			Reason:  result.Reason,
+			Missing: result.Missing,
 		}
 	}
 }
@@ -449,6 +470,41 @@ func (s *WorkflowState) UpdateTaskStatus(taskID, status string, data map[string]
 	}
 }
 
+// FailDelegatedTask marks any open delegation for a task as timed_out and the
+// task itself as failed. Used when a delegation blows its deadline.
+func (s *WorkflowState) FailDelegatedTask(taskID string) {
+	s.mu.Lock()
+	for i := range s.Delegations {
+		if s.Delegations[i].TaskID == taskID && s.Delegations[i].Status != "completed" {
+			s.Delegations[i].Status = "timed_out"
+			s.Delegations[i].CompletedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+	}
+	s.mu.Unlock()
+	s.UpdateTaskStatus(taskID, "failed", nil)
+}
+
+// LookupAgent returns the registered agent info for a name, if present.
+func (s *WorkflowState) LookupAgent(name string) (*AgentInfo, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	info, ok := s.AgentRegistry[name]
+	return info, ok
+}
+
+// RegisteredAgents returns the names of all registered agents (empty when agents
+// are resolved dynamically from the running config rather than the workflow).
+func (s *WorkflowState) RegisteredAgents() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	names := make([]string, 0, len(s.AgentRegistry))
+	for name := range s.AgentRegistry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // UpdateAgentAvailability updates an agent's availability.
 func (s *WorkflowState) UpdateAgentAvailability(name, availability string) {
 	s.mu.Lock()
@@ -486,6 +542,33 @@ func (s *WorkflowState) GetTotalCompletionTokens() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.TotalCompletionTokens
+}
+
+// SetVerification records the outcome of a verification run, incrementing the
+// attempt counter so a stuck build/test loop is visible in the proof of work.
+func (s *WorkflowState) SetVerification(profile string, passed bool, exitCode int, summary string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	attempts := 1
+	if s.Verification != nil {
+		attempts = s.Verification.Attempts + 1
+	}
+	s.Verification = &VerificationRecord{
+		Profile:  profile,
+		Passed:   passed,
+		ExitCode: exitCode,
+		Summary:  summary,
+		Attempts: attempts,
+		RanAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+}
+
+// VerificationPassed reports whether the latest verification run passed.
+func (s *WorkflowState) VerificationPassed() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Verification != nil && s.Verification.Passed
 }
 
 // AddTokens adds to the token counters.

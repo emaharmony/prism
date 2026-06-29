@@ -6,6 +6,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/emaharmony/prism/internal/retry"
 )
 
 // driver.go wires the Natural Gates phase/gate abstractions to a live LLM and
@@ -28,18 +30,64 @@ type LLMFunc func(ctx context.Context, messages []Message) (text string, promptT
 // string to feed back to the model. A non-nil error means the tool failed.
 type ToolFunc func(ctx context.Context, phase string, req *ToolRequest) (result string, err error)
 
+// VerificationOutcome is the result of running a phase's verification profile.
+// Ran distinguishes "the profile actually executed" from "could not be run"
+// (unknown profile, executor error). A profile that could not run never blocks a
+// phase — the loop should not deadlock because verification is misconfigured.
+type VerificationOutcome struct {
+	Ran      bool
+	Passed   bool
+	ExitCode int
+	Summary  string // short, human-readable result (test failures, build errors)
+}
+
+// VerificationFunc runs a named validation profile and reports the outcome. The
+// caller (wake handler) binds this to the V5 validation executor, which only runs
+// allowlisted commands, so the model never controls what executes.
+type VerificationFunc func(ctx context.Context, profile string) VerificationOutcome
+
 // DriveOptions configure a single Drive run.
 type DriveOptions struct {
-	SystemPrompt string
-	UserPrompt   string
-	StateDir     string        // where to persist workflow state (autosave + pauses)
-	RepoPath     string        // repo path, surfaced to reviewers in feedback events
-	GetBranch    func() string // current git branch for EXECUTION branch protection; nil disables
+	SystemPrompt        string
+	UserPrompt          string
+	StateDir            string        // where to persist workflow state (autosave + pauses)
+	RepoPath            string        // repo path, surfaced to reviewers in feedback events
+	ProjectID           string        // project id, surfaced to reviewers/dashboard events
+	Channel             string        // notification channel for feedback events
+	GetBranch           func() string // current git branch for EXECUTION branch protection; nil disables
+	SkipPushRequirement bool          // true for local repos without a configured remote
 }
 
 // codeMutationTools are blocked while on a protected branch during EXECUTION.
 var codeMutationTools = map[string]bool{
-	"write_file": true, "git_add": true, "git_commit": true, "git_push": true,
+	"write_file": true, "create_directory": true, "git_add": true, "git_commit": true, "git_push": true,
+}
+
+// idempotentTools are read-only/side-effect-free, so a transient failure can be
+// safely retried without risk of duplicating an effect. Mutations are deliberately
+// excluded — retrying a git_commit could double-commit.
+var idempotentTools = map[string]bool{
+	"read_file": true, "list_dir": true, "search_files": true,
+	"git_status": true, "git_log": true, "git_diff": true, "git_branch_list": true,
+	"project_overview": true, "web_search": true, "memory_search": true,
+}
+
+// idempotentRetryConfig bounds transient-failure retries for read-only tools.
+var idempotentRetryConfig = retry.RetryConfig{MaxRetries: 2, BaseDelay: 300 * time.Millisecond, MaxDelay: 3 * time.Second}
+
+// executeTool runs a tool, retrying transient failures (timeout, connection reset,
+// 503, …) for idempotent read-only tools only. Mutations and unknown tools run
+// exactly once. The retry is transparent to the caller; each retry emits tool.retry.
+func (e *Engine) executeTool(ctx context.Context, phaseName string, req *ToolRequest, tool ToolFunc) (string, error) {
+	if !idempotentTools[req.Tool] {
+		return tool(ctx, phaseName, req)
+	}
+	return retry.RetryWithBackoff(ctx, idempotentRetryConfig, func(attempt int) (string, error) {
+		if attempt > 0 {
+			e.emitEvent("tool.retry", map[string]any{"phase": phaseName, "tool": req.Tool, "attempt": attempt})
+		}
+		return tool(ctx, phaseName, req)
+	})
 }
 
 // Drive runs the workflow end-to-end against a live LLM and tool executor.
@@ -63,11 +111,34 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 	}
 	totalIter := 0
 
+	// Wall-clock budget. An unparseable or empty MaxTotalTime means "no deadline".
+	var deadline time.Time
+	if e.config.Global.MaxTotalTime != "" {
+		if d, derr := time.ParseDuration(e.config.Global.MaxTotalTime); derr == nil && d > 0 {
+			deadline = time.Now().Add(d)
+		} else if derr != nil {
+			log.Printf("[V2] ignoring invalid max_total_time %q: %v", e.config.Global.MaxTotalTime, derr)
+		}
+	}
+
+	maxRepeat := e.config.Global.MaxRepeatedToolCalls
+	if maxRepeat <= 0 {
+		maxRepeat = 6
+	}
+
 	// EXECUTION enforcement state.
 	var hasWritten, hasCommitted, hasPushed bool
 	readsInPhase := 0
+	// repeats counts identical tool calls within the current phase to detect a
+	// stuck loop (the model retrying the same action with no progress).
+	repeats := map[string]int{}
 
 	for e.state.CurrentPhaseIdx >= 0 && e.state.CurrentPhaseIdx < len(e.phases) {
+		if reason := e.budgetExceeded(deadline); reason != "" {
+			e.emitEvent("workflow.budget_exhausted", map[string]any{"phase": e.phases[e.state.CurrentPhaseIdx].Name(), "reason": reason})
+			log.Printf("[V2] budget exhausted before phase: %s", reason)
+			break
+		}
 		phase := e.phases[e.state.CurrentPhaseIdx]
 		phaseName := phase.Name()
 
@@ -77,6 +148,9 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			return e.state, fmt.Errorf("phase %s enter: %w", phaseName, err)
 		}
 		readsInPhase = 0
+		for k := range repeats {
+			delete(repeats, k)
+		}
 		if phaseName == "EXECUTION" {
 			// Re-entry (after changes requested) must re-commit/re-push fresh work.
 			hasCommitted, hasPushed = false, false
@@ -89,28 +163,35 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				"reason":    e.state.PauseReason,
 				"run_id":    e.state.RunID,
 				"repo_path": opts.RepoPath,
+				"project":   opts.ProjectID,
+				"channel":   opts.Channel,
 			}
+			var approvers, reviewers []string
 			if cfg := e.config.GetPhase(phaseName); cfg != nil {
-				if len(cfg.Gate.Approvers) > 0 {
-					pausePayload["approvers"] = cfg.Gate.Approvers
+				approvers = cfg.Gate.Approvers
+				reviewers = cfg.Gate.RequiredReviewers
+				if len(approvers) > 0 {
+					pausePayload["approvers"] = approvers
 				}
-				if len(cfg.Gate.RequiredReviewers) > 0 {
-					pausePayload["required_reviewers"] = cfg.Gate.RequiredReviewers
+				if len(reviewers) > 0 {
+					pausePayload["required_reviewers"] = reviewers
 				}
 			}
 			// Include the formatted plan/review package so a sub-agent reviewer
-			// has the full context without re-deriving it.
+			// has the full context without re-deriving it. Approver/reviewer names
+			// come from config (not hardcoded) so the gate adapts to any roster.
 			switch phaseName {
 			case "FEEDBACK_PRE":
-				pausePayload["package"] = FormatPlanForApproval(e.state)
+				pausePayload["package"] = FormatPlanForApproval(e.state, approvers)
 			case "FEEDBACK_POST":
-				pausePayload["package"] = FormatReviewPackage(e.state, "")
+				pausePayload["package"] = FormatReviewPackage(e.state, "", reviewers)
 			}
 			e.emitEvent("workflow.paused", pausePayload)
 			// A separate feedback.requested event lets Discord/dashboard/sub-agent
 			// reviewers know to act and reply on prism.workflow.feedback.response.
 			e.emitEvent("feedback.requested", pausePayload)
 			if opts.StateDir != "" {
+				_ = SaveWorkflowState(e.state, opts.StateDir)
 				_ = SaveCurrentWorkflowState(e.state, opts.StateDir)
 			}
 			e.WaitForResume(ctx)
@@ -131,7 +212,13 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 		messages = append(messages, Message{Role: "system", Content: e.phaseGuidance(phase)})
 
 		completed := false
+	iterLoop:
 		for iter := 0; iter < phase.MaxIterations() && totalIter < maxTotal; iter++ {
+			if reason := e.budgetExceeded(deadline); reason != "" {
+				e.emitEvent("workflow.budget_exhausted", map[string]any{"phase": phaseName, "reason": reason})
+				log.Printf("[V2] budget exhausted in %s: %s", phaseName, reason)
+				break iterLoop
+			}
 			totalIter++
 			e.state.IncrementPhaseIteration(phaseName)
 
@@ -142,6 +229,33 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			default:
 			}
 
+			// Handle delegations that blew their deadline: re-dispatch while retries
+			// remain, otherwise mark failed so a dead sub-agent can't hold the gate.
+			if e.delegation != nil {
+				if timedOut := e.delegation.CheckTimeouts(e.state); len(timedOut) > 0 {
+					var retried, failed []string
+					for _, tid := range timedOut {
+						if pkt, ok := e.delegation.RetryDelegation(tid, e.state); ok {
+							if e.publishTask != nil {
+								_ = e.publishTask(pkt)
+							}
+							retried = append(retried, tid)
+						} else {
+							e.state.FailDelegatedTask(tid)
+							failed = append(failed, tid)
+						}
+					}
+					if len(retried) > 0 {
+						e.emitEvent("delegation.retry", map[string]any{"phase": phaseName, "tasks": retried})
+					}
+					if len(failed) > 0 {
+						e.emitEvent("delegation.timeout", map[string]any{"phase": phaseName, "tasks": failed})
+						messages = append(messages, Message{Role: "system", Content: fmt.Sprintf(
+							"DELEGATION TIMEOUT: task(s) %v exhausted their retries and are now marked failed. Handle them yourself or revise the plan.", failed)})
+					}
+				}
+			}
+
 			// Inject pending gate guidance.
 			for _, msg := range e.state.GetSystemMessages(phaseName) {
 				messages = append(messages, Message{Role: "system", Content: msg})
@@ -149,6 +263,15 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 
 			text, pt, ct, err := llm(ctx, messages)
 			e.state.AddTokens(pt, ct)
+			// Per-iteration token telemetry so live observers (e.g. `prism watch`)
+			// can render a budget burn-down. Purely observational.
+			e.emitEvent("phase.tokens", map[string]any{
+				"phase":      phaseName,
+				"prompt":     e.state.GetTotalPromptTokens(),
+				"completion": e.state.GetTotalCompletionTokens(),
+				"total":      e.state.GetTotalPromptTokens() + e.state.GetTotalCompletionTokens(),
+				"max":        e.config.Global.MaxTotalTokens,
+			})
 			if err != nil {
 				return e.state, fmt.Errorf("llm call in %s: %w", phaseName, err)
 			}
@@ -159,13 +282,42 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			switch action.Type {
 			case ActionToolCall:
 				req := action.ToolRequest
+				// Stuck-loop detection: the same tool+input repeated with no progress
+				// burns the budget. Nudge at the halfway mark, abort the phase at the cap.
+				sig := toolSignature(req)
+				repeats[sig]++
+				if repeats[sig] >= maxRepeat {
+					e.emitEvent("phase.stuck", map[string]any{"phase": phaseName, "tool": req.Tool, "repeats": repeats[sig]})
+					log.Printf("[V2] phase %s stuck: %q repeated %d times; aborting phase", phaseName, req.Tool, repeats[sig])
+					messages = append(messages, Message{Role: "system", Content: fmt.Sprintf(
+						"STUCK: the identical action %q has been attempted %d times with no progress. Aborting this phase.", req.Tool, repeats[sig])})
+					break iterLoop
+				}
+				if maxRepeat >= 4 && repeats[sig] == maxRepeat/2 {
+					messages = append(messages, Message{Role: "system", Content: fmt.Sprintf(
+						"NO PROGRESS: you have requested the identical action %q %d times. Change your approach — use a different tool or inputs, or finish.", req.Tool, repeats[sig])})
+				}
+				// run_validation lets the model self-check (build/test) on demand using
+				// the same allowlisted runner as the verification gate, so it can catch
+				// failures before committing instead of burning a commit→verify→fix cycle.
+				if req.Tool == "run_validation" {
+					messages = append(messages, Message{Role: "user", Content: e.handleRunValidation(ctx, phaseName, req)})
+					continue
+				}
+				// delegate hands a planned task to another agent via the delegation
+				// manager; the result is collected asynchronously as a task_complete
+				// external event and reflected in the task_completion gate.
+				if req.Tool == "delegate" {
+					messages = append(messages, Message{Role: "user", Content: e.handleDelegate(ctx, req)})
+					continue
+				}
 				if deny := e.enforceExecution(phaseName, req, opts, &hasWritten, &readsInPhase); deny != "" {
 					messages = append(messages, Message{Role: "user", Content: deny})
 					continue
 				}
-				result, terr := tool(ctx, phaseName, req)
+				result, terr := e.executeTool(ctx, phaseName, req, tool)
 				switch req.Tool {
-				case "write_file":
+				case "write_file", "create_directory":
 					if terr == nil {
 						hasWritten = true
 					}
@@ -185,9 +337,17 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				messages = append(messages, Message{Role: "user", Content: truncate(fmt.Sprintf("Tool %q result:\n%s", req.Tool, result), 3000)})
 
 			case ActionFinal, ActionPhaseComplete:
-				if reject := e.enforceCommitPush(phaseName, hasWritten, hasCommitted, hasPushed); reject != "" {
+				if reject := e.enforceCommitPush(phaseName, hasWritten, hasCommitted, hasPushed, opts.SkipPushRequirement); reject != "" {
 					messages = append(messages, Message{Role: "system", Content: reject})
 					iter-- // don't burn the budget on an enforcement bounce
+					continue
+				}
+				// Objective build/test verification gate. A blocking failure feeds
+				// the failure back to the model and forces a fresh commit/push of the
+				// fix, consuming budget so a perpetually-failing build can't loop
+				// forever (it falls through to the phase fallback instead).
+				if e.runVerification(ctx, phaseName, &messages) {
+					hasCommitted, hasPushed = false, false
 					continue
 				}
 				if e.gatePasses(phaseName) {
@@ -196,14 +356,14 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 					e.injectGateReason(phaseName, &messages)
 				}
 				if completed {
-					break
+					break iterLoop
 				}
 
 			case ActionContinue:
 				// Opportunistic gate check — PROBE/RESEARCH/PLAN parse state each turn.
 				if e.gatePasses(phaseName) {
 					completed = true
-					break
+					break iterLoop
 				}
 			}
 		}
@@ -240,6 +400,7 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 	e.state.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	e.emitEvent("workflow.completed", map[string]any{"workflow": e.config.Name})
 	if opts.StateDir != "" {
+		_ = SaveWorkflowState(e.state, opts.StateDir)
 		_ = SaveCurrentWorkflowState(e.state, opts.StateDir)
 	}
 	return e.state, nil
@@ -299,6 +460,174 @@ func (e *Engine) injectGateReason(phaseName string, messages *[]Message) {
 	}
 }
 
+// runVerification runs the phase's configured verification profile (if any) and
+// records the outcome on the state. It returns true only when verification ran,
+// failed, and the phase configured it as blocking — signalling the caller to keep
+// iterating (so the model fixes the failure) rather than complete the phase.
+//
+// It is a no-op (returns false) when the phase has no verification configured, no
+// runner is wired, or the profile could not be executed — verification never
+// deadlocks the loop on misconfiguration.
+func (e *Engine) runVerification(ctx context.Context, phaseName string, messages *[]Message) bool {
+	cfg := e.config.GetPhase(phaseName)
+	if cfg == nil || cfg.Verification == nil || strings.TrimSpace(cfg.Verification.Profile) == "" {
+		return false
+	}
+	if e.verify == nil {
+		return false
+	}
+	profile := cfg.Verification.Profile
+	outcome := e.verify(ctx, profile)
+	if !outcome.Ran {
+		log.Printf("[V2] verification profile %q could not run in %s; skipping", profile, phaseName)
+		return false
+	}
+	e.state.SetVerification(profile, outcome.Passed, outcome.ExitCode, outcome.Summary)
+	e.emitEvent("phase.verification", map[string]any{
+		"phase": phaseName, "profile": profile, "passed": outcome.Passed,
+		"exit_code": outcome.ExitCode,
+	})
+	if outcome.Passed {
+		return false
+	}
+	*messages = append(*messages, Message{Role: "system", Content: fmt.Sprintf(
+		"VERIFICATION FAILED: profile %q exited %d. The code you committed does not pass. Fix the failure below, then commit and push the fix.\n%s",
+		profile, outcome.ExitCode, truncate(outcome.Summary, 2000))})
+	return cfg.Verification.Blocking
+}
+
+// handleRunValidation services a model-issued run_validation tool call by running
+// a validation profile through the same injected runner the verification gate
+// uses, recording the result on the state, and returning a model-readable summary.
+// The profile comes from the call's "profile" input or falls back to the phase's
+// configured verification profile.
+func (e *Engine) handleRunValidation(ctx context.Context, phaseName string, req *ToolRequest) string {
+	if e.verify == nil {
+		return "run_validation is not available in this environment."
+	}
+	profile := ""
+	if req != nil {
+		if p, ok := req.Input["profile"].(string); ok {
+			profile = strings.TrimSpace(p)
+		}
+	}
+	if profile == "" {
+		if cfg := e.config.GetPhase(phaseName); cfg != nil && cfg.Verification != nil {
+			profile = cfg.Verification.Profile
+		}
+	}
+	if profile == "" {
+		return "run_validation: specify a \"profile\" (the phase has no default verification profile)."
+	}
+	outcome := e.verify(ctx, profile)
+	if !outcome.Ran {
+		return fmt.Sprintf("run_validation: profile %q could not be run here.", profile)
+	}
+	e.state.SetVerification(profile, outcome.Passed, outcome.ExitCode, outcome.Summary)
+	e.emitEvent("phase.verification", map[string]any{
+		"phase": phaseName, "profile": profile, "passed": outcome.Passed,
+		"exit_code": outcome.ExitCode, "source": "tool",
+	})
+	status := "PASSED"
+	if !outcome.Passed {
+		status = "FAILED"
+	}
+	return fmt.Sprintf("run_validation %q: %s (exit %d).\n%s", profile, status, outcome.ExitCode, truncate(outcome.Summary, 2000))
+}
+
+// handleDelegate services a model-issued delegate tool call: it resolves the named
+// plan task, records a delegation (marking the task in_progress), publishes the
+// task packet if a transport is wired, and returns a model-readable acknowledgement.
+// The delegated result arrives later as a task_complete external event.
+func (e *Engine) handleDelegate(ctx context.Context, req *ToolRequest) string {
+	if e.delegation == nil {
+		return "delegate is not available in this environment."
+	}
+	if e.state.Plan == nil {
+		return "delegate: no plan exists yet; create tasks before delegating."
+	}
+	taskID := ""
+	if req != nil {
+		if t, ok := req.Input["task_id"].(string); ok {
+			taskID = strings.TrimSpace(t)
+		}
+	}
+	if taskID == "" {
+		return "delegate: specify the \"task_id\" of a planned task to delegate."
+	}
+	var task *PlanTask
+	e.state.mu.RLock()
+	for i := range e.state.Plan.Tasks {
+		if e.state.Plan.Tasks[i].ID == taskID {
+			t := e.state.Plan.Tasks[i]
+			task = &t
+			break
+		}
+	}
+	e.state.mu.RUnlock()
+	if task == nil {
+		return fmt.Sprintf("delegate: no task %q in the plan.", taskID)
+	}
+	if task.Agent == "" {
+		return fmt.Sprintf("delegate: task %q has no agent assigned; set an agent in the plan first.", taskID)
+	}
+	// When the workflow knows its agent roster, validate the target up front so we
+	// don't delegate into the void. When the roster is empty (agents resolved
+	// dynamically from the running config), skip the check and proceed.
+	if known := e.state.RegisteredAgents(); len(known) > 0 {
+		info, ok := e.state.LookupAgent(task.Agent)
+		if !ok {
+			return fmt.Sprintf("delegate: agent %q is not registered. Known agents: %s.", task.Agent, strings.Join(known, ", "))
+		}
+		if info.Availability == "offline" {
+			return fmt.Sprintf("delegate: agent %q is offline. Assign an available agent or handle the task yourself.", task.Agent)
+		}
+	}
+	del, packet, err := e.delegation.DelegateTask(ctx, *task, e.state)
+	if err != nil {
+		return fmt.Sprintf("delegate: failed to delegate %q: %v", taskID, err)
+	}
+	published := "recorded (no transport configured)"
+	if e.publishTask != nil {
+		if perr := e.publishTask(packet); perr != nil {
+			return fmt.Sprintf("delegate: recorded delegation %s but publish failed: %v", del.DelegationID, perr)
+		}
+		published = "dispatched"
+	}
+	e.emitEvent("task.delegated", map[string]any{
+		"task_id": taskID, "agent": task.Agent, "delegation_id": del.DelegationID,
+	})
+	return fmt.Sprintf("delegate: task %q %s to agent %q (deadline %s). Continue with other work; its result will arrive as a completion.",
+		taskID, published, task.Agent, packet.Deadline)
+}
+
+// toolSignature is a stable key for a tool call. fmt's %v renders map keys in
+// sorted order, so identical (tool, input) pairs hash to the same string
+// regardless of input map ordering.
+func toolSignature(req *ToolRequest) string {
+	if req == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s|%v", req.Tool, req.Input)
+}
+
+// budgetExceeded reports a non-empty reason when the run has hit its wall-clock or
+// token ceiling. Both are soft stops: the loop finalizes gracefully (after emitting
+// workflow.budget_exhausted) rather than running unbounded — the safeguard an
+// autonomous loop needs so a stuck or expensive run can't burn time or tokens
+// without limit. A zero deadline or zero MaxTotalTokens disables that dimension.
+func (e *Engine) budgetExceeded(deadline time.Time) string {
+	if !deadline.IsZero() && time.Now().After(deadline) {
+		return fmt.Sprintf("max_total_time exceeded (%s)", e.config.Global.MaxTotalTime)
+	}
+	if max := e.config.Global.MaxTotalTokens; max > 0 {
+		if used := e.state.GetTotalPromptTokens() + e.state.GetTotalCompletionTokens(); used >= max {
+			return fmt.Sprintf("max_total_tokens exceeded (%d/%d)", used, max)
+		}
+	}
+	return ""
+}
+
 // enforceExecution applies EXECUTION-phase safety (branch protection + read budget).
 // Returns a non-empty denial message when the tool call must be blocked.
 func (e *Engine) enforceExecution(phaseName string, req *ToolRequest, opts DriveOptions, hasWritten *bool, readsInPhase *int) string {
@@ -314,7 +643,7 @@ func (e *Engine) enforceExecution(phaseName string, req *ToolRequest, opts Drive
 	if req.Tool == "read_file" || req.Tool == "list_dir" || req.Tool == "search_files" {
 		*readsInPhase++
 		if *readsInPhase > 3 && !*hasWritten {
-			return "READ BUDGET EXCEEDED: you have read enough. Use write_file to make changes now."
+			return "READ BUDGET EXCEEDED: you have read enough. Use write_file or create_directory to make changes now."
 		}
 	}
 	return ""
@@ -322,14 +651,14 @@ func (e *Engine) enforceExecution(phaseName string, req *ToolRequest, opts Drive
 
 // enforceCommitPush rejects a premature final/complete in EXECUTION when work
 // has been written but not committed and pushed.
-func (e *Engine) enforceCommitPush(phaseName string, hasWritten, hasCommitted, hasPushed bool) string {
+func (e *Engine) enforceCommitPush(phaseName string, hasWritten, hasCommitted, hasPushed bool, skipPushRequirement bool) string {
 	if phaseName != "EXECUTION" {
 		return ""
 	}
 	if hasWritten && !hasCommitted {
 		return "COMMIT REQUIRED: you wrote files but have not committed. Use git_add then git_commit before finishing."
 	}
-	if hasCommitted && !hasPushed {
+	if hasCommitted && !hasPushed && !skipPushRequirement {
 		return "PUSH REQUIRED: you committed but have not pushed. Use git_push before finishing."
 	}
 	return ""
@@ -361,6 +690,8 @@ func (e *Engine) phaseGuidance(phase Phase) string {
 		b.WriteString("Declare confidence as: CONFIDENCE: {domain} | {0.0-1.0} | reason: {why}\n")
 	case "PLAN":
 		b.WriteString("Declare tasks as: TASK: {id} | description: {what} | agent: {who} | success: {criteria}\n")
+	case "EXECUTION":
+		b.WriteString("Before declaring done, call run_validation to build/test your changes; fix any failures, then commit and push.\n")
 	case "REPORT":
 		b.WriteString("Include sections: ## Change Summary, ## Proof of Work, ## Impact, ## Next Steps, ## Learnings\n")
 	}

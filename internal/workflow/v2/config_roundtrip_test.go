@@ -48,6 +48,21 @@ func TestConfigYAMLRoundTrip(t *testing.T) {
 	if fp == nil || len(fp.Gate.Approvers) == 0 {
 		t.Fatalf("FEEDBACK_PRE approvers lost in round-trip: %+v", fp)
 	}
+
+	exec := loaded.GetPhase("EXECUTION")
+	if exec == nil {
+		t.Fatalf("EXECUTION phase missing")
+	}
+	hasCreateDirectory := false
+	for _, tool := range exec.AllowedTools {
+		if tool == "create_directory" {
+			hasCreateDirectory = true
+			break
+		}
+	}
+	if !hasCreateDirectory {
+		t.Fatalf("EXECUTION allowed tools should include create_directory: %v", exec.AllowedTools)
+	}
 }
 
 func TestValidateConfigCatchesErrors(t *testing.T) {

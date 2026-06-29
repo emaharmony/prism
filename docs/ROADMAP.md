@@ -28,6 +28,18 @@
 | V32 | Active/draft | State, plans, guard, scheduler, event-driven wake |
 | V33 | Active/draft | Channel/context-aware conversation behavior |
 | V34 | Source-current | OpenAI Responses provider |
+| V35 | Source-current | Gated-loop robustness: build/test verification gate + `run_validation` self-check, run budgets (time/token), stuck-loop detection, idempotent-tool retry (+ phase loop-exit fix) |
+| V37 | Source-current | Multi-agent delegation wired into the gated loop: `delegate` tool, async completion routing, timeout escalation |
+| V38 | Source-current | `prism watch` — live terminal view of a running gated loop (phase tree, budget meter, delegation status) via SSE |
+| V39 | Source-current | `prism doctor` — preflight health check (workspace, provider auth, validation profile, git remote, NATS, Remembrance) |
+| V40 | Source-current | Durable `runs/<id>/REPORT.md` proof-of-work artifact written at end of each gated-loop run |
+| V41 | Source-current | Diff preview (`git diff --stat`) attached to the FEEDBACK_POST review message so approvers see what changed |
+| V42 | Source-current | Gate-needs-you notifications — feedback pauses @-mention the named approvers/reviewers to ping them |
+| V43 | Source-current | `prism preview` — static gated-loop preview (phases, gates, budgets, verification) before launching |
+| V44 | Source-current | Rich Discord approval cards — interactive Approve/Changes/Reject buttons at feedback gates |
+| V45 | Source-current | De-hardcoded gate personas — review/approval messages name config-driven reviewers/approvers; agent glyphs overridable; config-driven per-agent delegation timeouts (no baked-in Lumi/Mango) |
+| V46 | Source-current | `prism runs` — list past gated-loop runs and read their persisted REPORT.md from the terminal |
+| V47 | Source-current | `--json` output for `prism doctor` and `prism runs` (CI/dashboard-consumable inspection) |
 
 ---
 

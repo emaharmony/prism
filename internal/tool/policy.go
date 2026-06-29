@@ -128,9 +128,9 @@ type PolicyResult struct {
 //   - list_dir → approved if path is within workspace root
 //   - read_file → approved if path is within workspace root and file size ≤ MaxFileSize
 //   - write_file_dry_run → always approved (no mutation)
-//   - write_file_proposal → requires_approval (mutation gate)
+//   - write_file_proposal/create_directory_proposal → requires_approval (mutation gate)
 //   - apply_patch_proposal → denied (V5 candidate, not implemented)
-//   - write_file (direct) → denied (must use write_file_proposal)
+//   - write_file/create_directory (direct) → denied unless AutoApproveMutations is set
 //   - anything else → denied
 //   - Path traversal with ".." or absolute paths outside workspace → denied
 func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
@@ -159,6 +159,15 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		}
 		return evaluateV4ProposalPolicy(cfg, toolName, input)
 
+	case "create_directory_proposal":
+		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose directory mutations; route write requests through the orchestrator", agentID)}
+		}
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: directory creation proposal approved for autonomous wake action"}
+		}
+		return evaluateDirectoryProposalPolicy(cfg, toolName, input)
+
 	case "apply_patch_proposal":
 		return PolicyResult{Decision: PolicyDenied, Reason: "apply_patch_proposal is not implemented (V5 candidate)"}
 
@@ -167,6 +176,12 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct write approved for autonomous wake action"}
 		}
 		return PolicyResult{Decision: PolicyDenied, Reason: "direct write_file is denied — use write_file_proposal for approval-gated mutations"}
+
+	case "create_directory":
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct directory creation approved for autonomous wake action"}
+		}
+		return PolicyResult{Decision: PolicyDenied, Reason: "direct create_directory is denied — use create_directory_proposal for approval-gated mutations"}
 
 	case "list_dir":
 		return evaluatePathPolicy(cfg, toolName, input)
@@ -210,6 +225,29 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	default:
 		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("tool %q is not in the approved list", toolName)}
 	}
+}
+
+// evaluateDirectoryProposalPolicy validates a create_directory_proposal.
+func evaluateDirectoryProposalPolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
+	pathVal, ok := input["path"]
+	if !ok {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s requires a 'path' parameter", toolName)}
+	}
+
+	pathStr, ok := pathVal.(string)
+	if !ok || strings.TrimSpace(pathStr) == "" {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s 'path' must be a non-empty string", toolName)}
+	}
+
+	if strings.Contains(pathStr, "..") {
+		return PolicyResult{Decision: PolicyDenied, Reason: "path traversal with '..' is blocked"}
+	}
+
+	if _, err := safety.ResolveAndContainMulti(cfg.WriteRootsAll(), pathStr); err != nil {
+		return PolicyResult{Decision: PolicyDenied, Reason: err.Error()}
+	}
+
+	return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s requires explicit approval to apply the mutation", toolName)}
 }
 
 // evaluateV4ProposalPolicy validates a write_file_proposal or similar V4 mutation proposal.
