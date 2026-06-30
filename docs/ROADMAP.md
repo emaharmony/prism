@@ -31,7 +31,9 @@
 | V35 | Source-current | Gated-loop robustness: build/test verification gate + `run_validation` self-check, run budgets (time/token), stuck-loop detection, idempotent-tool retry (+ phase loop-exit fix) |
 | V37 | Source-current | Multi-agent delegation wired into the gated loop: `delegate` tool, async completion routing, timeout escalation |
 | V38 | Source-current | `prism watch` — live terminal view of a running gated loop (phase tree, budget meter, delegation status) via SSE |
-| V39 | Source-current | `prism doctor` — preflight health check (workspace, provider auth, validation profile, git remote, NATS, Remembrance) |
+| V39 | Source-current | `prism doctor` — preflight health check (workspace, provider auth, validation profile, git remote, NATS, Remembrance, autopatch-pr/`gh`, mcp servers, workflow config) |
+| V52 | Source-current | `prism config` — validate prism.yaml and summarize what Prism understood (agents, channels, MCP, autopatch mode, workflow) |
+| V53 | Source-current | Grouped CLI help — `prism` usage organized into Run/Inspect/Observe/Self-patching/MCP/Approvals/Advanced sections (discoverability for 25+ commands) |
 | V40 | Source-current | Durable `runs/<id>/REPORT.md` proof-of-work artifact written at end of each gated-loop run |
 | V41 | Source-current | Diff preview (`git diff --stat`) attached to the FEEDBACK_POST review message so approvers see what changed |
 | V42 | Source-current | Gate-needs-you notifications — feedback pauses @-mention the named approvers/reviewers to ping them |
@@ -41,7 +43,9 @@
 | V46 | Source-current | `prism runs` — list past gated-loop runs and read their persisted REPORT.md from the terminal |
 | V47 | Source-current | `--json` output for `prism doctor` and `prism runs` (CI/dashboard-consumable inspection) |
 | V48 | Source-current | Actions on flows — visual workflow editor edges carry an assignable action (clickable lines, ⚡ badge, PUT /editor/edges/{id}) |
-| V49 | Source-current | MCP client foundation — adapt external MCP tool servers into the policy-gated tool.Registry (transport + serve wiring are follow-ups) |
+| V49 | Source-current | MCP client — adapt external MCP tool servers into the policy-gated tool.Registry; stdio JSON-RPC transport; `mcp_servers:` config wired into `prism serve`; MCP tools approval-required by default (separate AutoApproveMCP opt-in); `prism mcp` inspection + `prism mcp probe <name>` live tool listing |
+| V50 | Source-current | Self-patching `pr` mode — validated autopatch fix → branch/commit/push/PR via injectable PROpener (gh default); PR-failure preserves the patch |
+| V51 | Source-current | Issue-discovery scanner — autopatch proactively finds issues (CRLF-aware vet/todo/format detectors), ranks them, starts a fix→PR for the top one; `prism scan` surfaces findings with `--severity` filter and `--start` to fix the top issue |
 
 ---
 

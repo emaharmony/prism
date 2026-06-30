@@ -50,15 +50,57 @@ required, nil); **end-to-end** register-into-a-real-`tool.Registry` then
 first-class Prism tool); MCP-`isError` and transport-error → failed result; and
 `RegisterServer` guards (nil registry, list error).
 
+## Serve wiring (shipped)
+
+`mcp_servers:` in `prism.yaml` declares external servers
+(`{name, command, args, env, enabled}` → `orchestrator.MCPServerConfig`).
+`prism serve` maps them (`mcpServerSpecs`) and calls
+`mcp.RegisterServers(ctx, toolReg, specs, mcp.ProcessClientFactory)` after the
+built-in tools are registered, so each enabled server's tools join the live
+policy-gated registry as `mcp_<name>_<tool>`.
+
+`RegisterServers` is robust and unit-testable: the **client factory is injected**
+(production = `ProcessClientFactory` spawning a stdio subprocess; tests use a
+fake), it performs the `initialize` handshake per server, and **one server failing
+does not abort the others** — each `RegisterResult` carries its own error, logged
+at startup.
+
+## Policy default (shipped)
+
+MCP tools (`mcp_<server>_<tool>`) are **approval-required by default** in the tool
+policy engine: the `EvaluatePolicyForAgent` default branch matches the `mcp_`
+prefix and returns `RequiresApproval` — never silently `Denied` (which would make
+them unusable) and never auto-run. A dedicated `PolicyConfig.AutoApproveMCP` flag
+opts into unattended execution; it is **deliberately separate from
+`AutoApproveMutations`**, so the autonomous wake/gated loop (which sets
+`AutoApproveMutations`) still gates MCP tools behind approval — remote, untrusted,
+attacker-influenced schemas don't piggyback on the local-mutation opt-in.
+
+### Config plumbing (shipped)
+
+`mcp_auto_approve: true` in `prism.yaml` sets `PolicyConfig.AutoApproveMCP` in serve
+mode. Because the autonomous executor derives its policy by copying the base
+(`newAutoExec`), the flag flows into the gated loop automatically — and stays off
+by default, so unattended MCP execution is always an explicit operator choice. A
+config round-trip test covers `mcp_servers` + `mcp_auto_approve` parsing.
+
+## Inspection: `prism mcp`
+
+`prism mcp [--config prism.yaml] [--json]` lists the configured MCP servers (name,
+command+args, enabled state) and the global approval posture
+(approval-required vs `mcp_auto_approve`). It is read-only — it reports
+configuration, not live connections — so a user can verify their setup before
+`prism serve` connects them. `mcpServerViews` and `renderMCPServers` are pure and
+unit-tested.
+
+`prism mcp probe <name>` live-connects a configured server (spawns it via
+`ProcessClientFactory`), runs the handshake, and lists its actual tools **without
+registering them** — a connectivity check beyond config. `mcp.ProbeServer`
+(injectable factory) and `renderProbedTools` are pure/unit-tested; the subprocess
+path is the production wiring.
+
 ## Follow-ups (the rest of MCP client support)
 
-1. **Transport:** a concrete stdio JSON-RPC 2.0 client (spawn `npx <server>` etc.)
-   implementing `Client`, then a streamable-HTTP transport — modeled on the
-   existing `claudecode`/subprocess patterns.
-2. **Config:** an `mcp_servers:` block in `prism.yaml` (command/args/env or url),
-   wired in `prism serve` to call `RegisterServer` at startup.
-3. **Policy defaults:** MCP tools default to **approval-required** (untrusted remote
-   tool descriptions/schemas are attacker-controlled text reaching the model;
-   opt-in per server). Reuse the policy engine — no new safety primitive.
-4. **Reverse direction (optional):** expose Prism's `Registry` as an MCP **server**
+1. **Transport:** streamable-HTTP transport implementing `Client` (stdio is done).
+2. **Reverse direction (optional):** expose Prism's `Registry` as an MCP **server**
    for interop with Claude Desktop / other hosts.

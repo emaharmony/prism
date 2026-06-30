@@ -55,6 +55,13 @@ type PolicyConfig struct {
 	// (write_file_proposal, git_add, git_commit, git_push). Used by
 	// autonomous wake handler actions where no human is present to approve.
 	AutoApproveMutations bool
+
+	// AutoApproveMCP opts in to autonomous execution of external MCP tools
+	// (mcp_<server>_<tool>). It is deliberately SEPARATE from AutoApproveMutations:
+	// MCP tools are remote and their descriptions/schemas are attacker-influenced
+	// text reaching the model, so they default to approval-required and only run
+	// unattended when an operator explicitly turns this on.
+	AutoApproveMCP bool
 }
 
 // DefaultPolicyConfig returns a PolicyConfig with sensible defaults.
@@ -223,6 +230,16 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s is a git mutation, requires approval", toolName)}
 
 	default:
+		// V49: external MCP tools (mcp_<server>_<tool>). Remote and untrusted, so
+		// they are gated behind approval by default — never silently denied (which
+		// would make them unusable) nor auto-run. Operators opt into unattended MCP
+		// execution explicitly via AutoApproveMCP.
+		if strings.HasPrefix(toolName, "mcp_") {
+			if cfg.AutoApproveMCP {
+				return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("auto-approve: MCP tool %q approved (AutoApproveMCP)", toolName)}
+			}
+			return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("MCP tool %q is external; requires approval", toolName)}
+		}
 		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("tool %q is not in the approved list", toolName)}
 	}
 }

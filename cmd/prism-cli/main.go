@@ -41,10 +41,10 @@
 //	prism workflow run   — Run a named workflow
 //	prism workflow status — Show workflow run state
 //
-// Why raw os.Args instead of a CLI framework (cobra, etc.)? Prism's CLI surface is
-// small and stable — 10 subcommands with simple flag sets. A framework would add
-// a dependency for no real benefit. If the CLI grows significantly, cobra would be
-// worth adopting.
+// Why raw os.Args instead of a CLI framework (cobra, etc.)? Prism's CLI grew to
+// ~25 subcommands with simple flag sets; dispatch is a flat switch and help is
+// grouped by commandUsage(). A framework would add a dependency for modest benefit;
+// if argument parsing gets more complex, cobra would be worth adopting.
 //
 // Output formatting: Uses Unicode symbols (✅ ❌ 💎 ═══) for visual structure.
 // These are cosmetic — the actual data is always in JSON artifacts under runs/.
@@ -54,6 +54,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/emaharmony/prism/internal/config"
@@ -70,7 +71,7 @@ func main() {
 	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
 	taskFlag := runCmd.String("task", "", "Task description (required)")
 	projectFlag := runCmd.String("project", "prism", "Project name")
-	agentFlag := runCmd.String("agent", "lumi", "Agent name")
+	agentFlag := runCmd.String("agent", "prism", "Agent name (label for the run; defaults to the neutral instance name)")
 	busURL := runCmd.String("bus-url", "nats://localhost:4222", "NATS bus URL")
 	memoryEnabled := runCmd.Bool("memory-enabled", false, "Enable Remembrance context hook")
 	requireMemory := runCmd.Bool("require-memory", false, "Fail if Remembrance is unavailable")
@@ -558,6 +559,12 @@ func main() {
 		executeDoctor(os.Args[2:])
 	case "preview":
 		executePreview(os.Args[2:])
+	case "scan":
+		executeScan(os.Args[2:])
+	case "mcp":
+		executeMCP(os.Args[2:])
+	case "config":
+		executeConfig(os.Args[2:])
 	case "runs":
 		executeRuns(os.Args[2:])
 	case "remembrance":
@@ -570,54 +577,71 @@ func main() {
 	}
 }
 
+// commandUsage returns the grouped command listing. Pure (no I/O) so the grouping
+// and command coverage are unit-testable.
+func commandUsage() string {
+	groups := []struct {
+		title string
+		lines []string
+	}{
+		{"Run & interact", []string{
+			"prism run --task <description> [options]      Run a one-shot task lifecycle",
+			"prism chat [--config prism.yaml] [--agent <name>]  Interactive terminal chat",
+			"prism serve [--config prism.yaml]             Start the persistent daemon (API, dashboard, bot)",
+		}},
+		{"Inspect & validate", []string{
+			"prism config [--config prism.yaml] [--json]   Validate prism.yaml and summarize it",
+			"prism doctor [--config prism.yaml] [--json]   Preflight check of run dependencies",
+			"prism preview [--workflow <file>]             Static preview of the gated-loop workflow",
+			"prism agent list | show <name>                List / show registered agents",
+			"prism tool list | run <name> --input '{...}'  List / run built-in tools",
+			"prism validation list | run <name>            List / run validation profiles",
+			"prism context show [--context soul,agents]    Show context that would be injected",
+		}},
+		{"Observe runs", []string{
+			"prism watch [--config prism.yaml]             Live view of a running gated-loop workflow",
+			"prism runs [<run-id>|latest] [--json]         List runs / show a run's report (or state JSON)",
+			"prism cost <run_id>                           Show token usage and cost report",
+			"prism trace <run_id>                          Show event trace (causal DAG)",
+			"prism dashboard [--port 8080]                 Start the local read-only dashboard",
+		}},
+		{"Self-patching", []string{
+			"prism scan [--severity ...] [--json] [--start] Scan for issues (--start fixes the top one)",
+		}},
+		{"MCP tool servers", []string{
+			"prism mcp [--json] | mcp probe <name>         List MCP servers / live-probe one's tools",
+		}},
+		{"Approvals & mutations", []string{
+			"prism approval list | show <id> --run <run_id> List / show approvals",
+			"prism approval approve|deny <id> --by <name>  Approve or deny a mutation",
+		}},
+		{"Advanced", []string{
+			"prism health [options]                        Check bus health",
+			"prism search --query <text> [options]         Search the vector store",
+			"prism projection list|rebuild|query           Manage CQRS projection snapshots",
+			"prism adapter list|show|health [<name>]       Inspect adapters",
+			"prism remembrance health|status|serve         Manage the Remembrance memory service",
+			"prism version                                 Print version",
+		}},
+	}
+	var b strings.Builder
+	b.WriteString("Prism — Event-Native AI Agent Platform\n\nUsage: prism <command> [options]\n")
+	for _, g := range groups {
+		b.WriteString("\n" + g.title + ":\n")
+		for _, l := range g.lines {
+			b.WriteString("  " + l + "\n")
+		}
+	}
+	return b.String()
+}
+
 func printUsage() {
-	fmt.Println("Prism — Event-Native AI Agent Platform")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  prism run --task <description> [options]    Run a task lifecycle")
-	fmt.Println("  prism chat [--config prism.yaml] [--agent <name>]  Interactive terminal chat")
-	fmt.Println("  prism tool list                               List available tools")
-	fmt.Println("  prism tool run <name> --input '{...}'         Run a tool directly")
-	fmt.Println("  prism validation list                         List validation profiles")
-	fmt.Println("  prism validation run <name>                   Run a validation profile")
-	fmt.Println("  prism approval list                           List pending approvals")
-	fmt.Println("  prism approval show <id> --run <run_id>       Show approval details")
-	fmt.Println("  prism approval approve <id> --by <name>       Approve a mutation")
-	fmt.Println("  prism approval deny <id> --by <name>          Deny a mutation")
-	fmt.Println("  prism health [options]                        Check bus health")
-	fmt.Println("  prism dashboard [--port 8080]                 Start local dashboard")
-	fmt.Println("  prism agent list                              List registered agents")
-	fmt.Println("  prism agent show <name>                       Show agent details")
-	fmt.Println("  prism context show [--context soul,agents]   Show context that would be injected")
-	fmt.Println("  prism cost <run_id>                        Show token usage and cost report")
-	fmt.Println("  prism trace <run_id>                       Show event trace (causal DAG)")
-	fmt.Println("  prism watch [--config prism.yaml]             Live view of a running gated-loop workflow")
-	fmt.Println("  prism doctor [--config prism.yaml] [--json]   Preflight check of run dependencies")
-	fmt.Println("  prism preview [--workflow <file>]             Static preview of the gated-loop workflow")
-	fmt.Println("  prism runs [<run-id>|latest] [--json]         List runs / show a run's report (or state JSON)")
-	fmt.Println("  prism version                                 Print version")
-	fmt.Println("  prism search --query <text> [options]         Search vector store")
-	fmt.Println()
-	fmt.Println("Remembrance commands:")
-	fmt.Println("  prism remembrance health [--config prism.yaml]  Check Remembrance service health")
-	fmt.Println("  prism remembrance status [--config prism.yaml]  Show Remembrance health and stats")
-	fmt.Println("  prism remembrance serve  [--python <exe>] [--dir <path>]  Start the Remembrance service")
-	fmt.Println()
-	fmt.Println("Adapter commands:")
-	fmt.Println("  prism adapter list                            List registered adapters")
-	fmt.Println("  prism adapter show <name>                    Show adapter details")
-	fmt.Println("  prism adapter health <name>                  Check adapter health")
-	fmt.Println()
-	fmt.Println("Projection commands:")
-	fmt.Println("  prism projection list                         List available projections")
-	fmt.Println("  prism projection rebuild --run <id>           Rebuild projections for a run")
-	fmt.Println("  prism projection rebuild --all               Rebuild projections for all runs")
-	fmt.Println("  prism projection query <name> --run <id>     Query a projection snapshot")
+	fmt.Print(commandUsage())
 	fmt.Println()
 	fmt.Println("Run options:")
 	fmt.Println("  --task <string>        Task description (required)")
 	fmt.Println("  --project <string>     Project name (default: prism)")
-	fmt.Println("  --agent <string>       Agent name (default: lumi)")
+	fmt.Println("  --agent <string>       Agent name (default: prism)")
 	fmt.Println("  --bus-url <string>     NATS bus URL (default: nats://localhost:4222)")
 	fmt.Println("  --memory-enabled       Enable Remembrance context hook")
 	fmt.Println("  --require-memory       Fail if Remembrance is unavailable")

@@ -48,6 +48,7 @@ func buildAutoPatchService(cfg *orchestrator.Config, store *task.Store, provider
 		WorkerOrder:          append([]string(nil), cfg.Autopatch.WorkerOrder...),
 		LocalAgent:           cfg.Autopatch.LocalAgent,
 		Root:                 ".",
+		BaseBranch:           cfg.Autopatch.BaseBranch,
 		WorktreeRoot:         cfg.Autopatch.WorktreeRoot,
 		ArtifactRoot:         artifactRoot,
 		Store:                store,

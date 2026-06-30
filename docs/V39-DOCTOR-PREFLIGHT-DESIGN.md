@@ -31,6 +31,9 @@ prism doctor [--config prism.yaml]
 | git remote | — | no remote (loop runs with push disabled) |
 | nats | — | a configured `nats_url` is unreachable (empty = embedded, OK) |
 | remembrance | — | enabled but unreachable / no URL |
+| autopatch pr | `gh` CLI missing while autopatch is in `pr` mode | `gh` installed but not authenticated |
+| mcp servers | an *enabled* MCP server is missing its name/command | — |
+| workflow config | `workflow_config` file is missing/unparseable or fails v2 validation | — |
 
 The provider→key mapping is `openai→OPENAI_API_KEY`, `anthropic→ANTHROPIC_API_KEY`,
 `gemini→GEMINI_API_KEY`; local/subscription providers (ollama, mock, claude_code)
