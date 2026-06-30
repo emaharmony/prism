@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,3 +145,80 @@ func TestDoctorToJSON(t *testing.T) {
 		t.Fatalf("expected fail result, got %v", rep["result"])
 	}
 }
+
+func TestCheckAutopatchPR(t *testing.T) {
+	ghOK := func() (bool, bool, string) { return true, true, "" }
+	ghNoAuth := func() (bool, bool, string) { return true, false, "" }
+	ghMissing := func() (bool, bool, string) { return false, false, "" }
+
+	// Not in pr mode → OK regardless of gh.
+	if c := checkAutopatchPR(orchestrator.AutopatchConfig{Enabled: true, Mode: "propose"}, ghMissing); c.status != statusOK {
+		t.Fatalf("propose mode should be OK, got %s", c.status)
+	}
+	if c := checkAutopatchPR(orchestrator.AutopatchConfig{Enabled: false}, ghMissing); c.status != statusOK {
+		t.Fatalf("disabled should be OK, got %s", c.status)
+	}
+	// pr mode, gh present + authed → OK.
+	if c := checkAutopatchPR(orchestrator.AutopatchConfig{Enabled: true, Mode: "pr"}, ghOK); c.status != statusOK {
+		t.Fatalf("pr mode with gh authed should be OK, got %s: %s", c.status, c.detail)
+	}
+	// pr mode, gh present but not authed → WARN.
+	if c := checkAutopatchPR(orchestrator.AutopatchConfig{Enabled: true, Mode: "pr"}, ghNoAuth); c.status != statusWarn {
+		t.Fatalf("unauthed gh should WARN, got %s", c.status)
+	}
+	// pr mode, gh missing → FAIL.
+	c := checkAutopatchPR(orchestrator.AutopatchConfig{Enabled: true, Mode: "pr"}, ghMissing)
+	if c.status != statusFail || !strings.Contains(c.detail, "gh CLI") {
+		t.Fatalf("missing gh in pr mode should FAIL, got %s: %s", c.status, c.detail)
+	}
+}
+
+func TestCheckMCPServers(t *testing.T) {
+	// none configured → OK
+	if c := checkMCPServers(nil); c.status != statusOK {
+		t.Fatalf("no servers should be OK, got %s", c.status)
+	}
+	// all valid + enabled → OK with counts
+	ok := []orchestrator.MCPServerConfig{
+		{Name: "fs", Command: "npx", Enabled: true},
+		{Name: "off", Command: "x", Enabled: false},
+	}
+	c := checkMCPServers(ok)
+	if c.status != statusOK || !strings.Contains(c.detail, "1 enabled / 2 configured") {
+		t.Fatalf("expected counts, got %s: %s", c.status, c.detail)
+	}
+	// enabled but missing command → FAIL naming it
+	bad := []orchestrator.MCPServerConfig{{Name: "broken", Command: "", Enabled: true}}
+	if c := checkMCPServers(bad); c.status != statusFail || !strings.Contains(c.detail, "broken") {
+		t.Fatalf("missing command should FAIL naming server, got %s: %s", c.status, c.detail)
+	}
+	// disabled-but-invalid is ignored (not a startup risk)
+	if c := checkMCPServers([]orchestrator.MCPServerConfig{{Name: "", Command: "", Enabled: false}}); c.status != statusOK {
+		t.Fatalf("disabled invalid server should not fail, got %s", c.status)
+	}
+}
+
+func TestCheckWorkflowConfig(t *testing.T) {
+	okValidate := func(string) ([]string, error) { return nil, nil }
+	// no custom workflow → OK (built-in default)
+	if c := checkWorkflowConfig("", okValidate); c.status != statusOK || !strings.Contains(c.detail, "built-in") {
+		t.Fatalf("empty path should be OK/built-in, got %s: %s", c.status, c.detail)
+	}
+	// valid custom workflow → OK naming the path
+	if c := checkWorkflowConfig("wf.yaml", okValidate); c.status != statusOK || c.detail != "wf.yaml" {
+		t.Fatalf("valid workflow should be OK, got %s: %s", c.status, c.detail)
+	}
+	// load error (missing/unparseable file) → FAIL
+	loadErr := func(string) ([]string, error) { return nil, errInjectedDoctor }
+	if c := checkWorkflowConfig("missing.yaml", loadErr); c.status != statusFail {
+		t.Fatalf("load error should FAIL, got %s", c.status)
+	}
+	// structural validation errors → FAIL listing them
+	badValidate := func(string) ([]string, error) { return []string{"phase X: unknown gate"}, nil }
+	c := checkWorkflowConfig("bad.yaml", badValidate)
+	if c.status != statusFail || !strings.Contains(c.detail, "unknown gate") {
+		t.Fatalf("validation errors should FAIL with detail, got %s: %s", c.status, c.detail)
+	}
+}
+
+var errInjectedDoctor = errors.New("cannot load workflow")

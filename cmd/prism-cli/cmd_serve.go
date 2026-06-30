@@ -72,6 +72,7 @@ import (
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prism/internal/tool/mcp"
 
 	"github.com/nats-io/nats.go"
 )
@@ -486,6 +487,18 @@ func executeServe(args []string) {
 				toolReg.Register(tool.NewSendCrossMessageTool(crossSvc))
 			}
 
+			// V49: External MCP tool servers — register their tools into the
+			// policy-gated registry so agents can use them like any built-in.
+			if specs := mcpServerSpecs(cfg); len(specs) > 0 {
+				for _, res := range mcp.RegisterServers(ctx, toolReg, specs, mcp.ProcessClientFactory) {
+					if res.Err != nil {
+						fmt.Printf("  MCP %s: error: %v\n", res.Server, res.Err)
+						continue
+					}
+					fmt.Printf("  MCP %s: %d tool(s) registered\n", res.Server, len(res.Tools))
+				}
+			}
+
 			// V32: Self-Improvement Loop
 			improveMgr = improve.NewManager(workspaceRoot)
 			improveMgr.EnsureDir()
@@ -501,6 +514,7 @@ func executeServe(args []string) {
 			toolPolicy.ReadRoots = readRoots
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
+			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
 			toolExec = tool.NewExecutor(toolReg, toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore("runs"))
 
@@ -1952,4 +1966,23 @@ func filterChatToolsByAgentPolicy(tools []provider.ChatTool, policy tool.PolicyC
 		}
 	}
 	return filtered
+}
+
+// mcpServerSpecs maps configured MCP servers to transport-neutral specs for
+// mcp.RegisterServers.
+func mcpServerSpecs(cfg *orchestrator.Config) []mcp.ServerSpec {
+	if cfg == nil {
+		return nil
+	}
+	specs := make([]mcp.ServerSpec, 0, len(cfg.MCPServers))
+	for _, s := range cfg.MCPServers {
+		specs = append(specs, mcp.ServerSpec{
+			Name:    s.Name,
+			Command: s.Command,
+			Args:    s.Args,
+			Env:     s.Env,
+			Enabled: s.Enabled,
+		})
+	}
+	return specs
 }

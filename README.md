@@ -477,6 +477,9 @@ Current routes include:
 | V47 | `--json` inspection output (doctor, runs) | [V47](./docs/V47-JSON-OUTPUT-DESIGN.md) |
 | V48 | Actions on flows in the visual workflow editor | [V48](./docs/V48-EDGE-ACTIONS-DESIGN.md) |
 | V49 | MCP client foundation (consume external MCP tool servers) | [V49](./docs/V49-MCP-CLIENT-DESIGN.md) |
+| V50 | Self-patching PR mode (autopatch opens pull requests) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
+| V51 | Issue-discovery scanner + `prism scan` (self-directed autopatch) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
+| V52 | `prism config` validate + summarize prism.yaml | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
 
 ---
 

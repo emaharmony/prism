@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/validation"
+	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 	"github.com/nats-io/nats.go"
 )
 
@@ -173,6 +175,107 @@ func checkRemembrance(cfg orchestrator.RemembranceConfig, get func(string) (*htt
 	return c
 }
 
+// checkAutopatchPR verifies the `gh` CLI is installed and authenticated when
+// autopatch is configured to open PRs, so `prism scan --start` doesn't fail only
+// at push/PR time. ghStatus is injected for testability: it returns whether gh is
+// available and whether it is authenticated.
+func checkAutopatchPR(cfg orchestrator.AutopatchConfig, ghStatus func() (available, authed bool, detail string)) doctorCheck {
+	c := doctorCheck{name: "autopatch pr"}
+	if !cfg.Enabled || cfg.Mode != "pr" {
+		c.status, c.detail = statusOK, "not in pr mode"
+		return c
+	}
+	available, authed, detail := ghStatus()
+	if !available {
+		c.status, c.detail = statusFail, "pr mode needs the gh CLI, which is not installed"
+		return c
+	}
+	if !authed {
+		c.status, c.detail = statusWarn, "gh installed but not authenticated (run `gh auth login`)"
+		return c
+	}
+	if detail == "" {
+		detail = "gh installed and authenticated"
+	}
+	c.status, c.detail = statusOK, detail
+	return c
+}
+
+// checkMCPServers validates the configured MCP servers: an enabled server must
+// have both a name and a command, or it will silently fail to register at serve
+// startup. Reports the enabled/total counts on success.
+func checkMCPServers(servers []orchestrator.MCPServerConfig) doctorCheck {
+	c := doctorCheck{name: "mcp servers"}
+	if len(servers) == 0 {
+		c.status, c.detail = statusOK, "none configured"
+		return c
+	}
+	enabled := 0
+	var bad []string
+	for _, s := range servers {
+		if !s.Enabled {
+			continue
+		}
+		enabled++
+		if strings.TrimSpace(s.Name) == "" || strings.TrimSpace(s.Command) == "" {
+			label := s.Name
+			if label == "" {
+				label = "(unnamed)"
+			}
+			bad = append(bad, label)
+		}
+	}
+	if len(bad) > 0 {
+		c.status, c.detail = statusFail, fmt.Sprintf("enabled server(s) missing name/command: %s", strings.Join(bad, ", "))
+		return c
+	}
+	c.status, c.detail = statusOK, fmt.Sprintf("%d enabled / %d configured", enabled, len(servers))
+	return c
+}
+
+// checkWorkflowConfig validates a custom gated-loop workflow file when one is set
+// via prism.workflow_config, so a broken/missing workflow surfaces here rather
+// than at serve startup. The validate func is injected for testability.
+func checkWorkflowConfig(path string, validate func(string) (errs []string, loadErr error)) doctorCheck {
+	c := doctorCheck{name: "workflow config"}
+	if strings.TrimSpace(path) == "" {
+		c.status, c.detail = statusOK, "built-in default gated loop"
+		return c
+	}
+	errs, loadErr := validate(path)
+	if loadErr != nil {
+		c.status, c.detail = statusFail, fmt.Sprintf("%s: %v", path, loadErr)
+		return c
+	}
+	if len(errs) > 0 {
+		c.status, c.detail = statusFail, fmt.Sprintf("%s: %s", path, strings.Join(errs, "; "))
+		return c
+	}
+	c.status, c.detail = statusOK, path
+	return c
+}
+
+// validateWorkflowFile loads a v2 workflow file and returns its structural errors.
+func validateWorkflowFile(path string) ([]string, error) {
+	wf, err := v2.LoadConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return v2.ValidateConfig(wf), nil
+}
+
+// ghStatusReal reports gh availability/auth by shelling out to `gh auth status`.
+func ghStatusReal() (bool, bool, string) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return false, false, ""
+	}
+	out, err := exec.Command("gh", "auth", "status").CombinedOutput()
+	if err != nil {
+		return true, false, strings.TrimSpace(string(out))
+	}
+	return true, true, "gh installed and authenticated"
+}
+
 // worstStatus returns the most severe status across checks and whether any failed.
 func worstStatus(checks []doctorCheck) (checkStatus, bool) {
 	worst := statusOK
@@ -280,6 +383,9 @@ func executeDoctor(args []string) {
 			client := &http.Client{Timeout: 2 * time.Second}
 			return client.Get(u)
 		}),
+		checkAutopatchPR(cfg.Autopatch, ghStatusReal),
+		checkMCPServers(cfg.MCPServers),
+		checkWorkflowConfig(cfg.Prism.WorkflowConfig, validateWorkflowFile),
 	}
 
 	if *asJSON {

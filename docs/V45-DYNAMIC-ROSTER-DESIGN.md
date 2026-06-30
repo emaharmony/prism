@@ -59,6 +59,14 @@ So delegation deadlines are now controlled by config for a project's own roster,
 with no persona names in code. See `examples/workflows/gated-loop.yaml` for the
 (commented) shape.
 
+## CLI default (follow-up)
+
+`prism run --agent` previously defaulted to the hardcoded persona `lumi`, so a run
+without `--agent` referenced an agent that may not exist in the user's config. It
+now defaults to the neutral instance name `prism` (matching `--project`), and a
+usage test (`TestCommandUsageNoHardcodedPersona`) guards the grouped help against
+reintroducing persona names.
+
 ## Compatibility
 
 The gated-loop `DefaultConfig` / example YAML still set `approvers: [ema]` and
