@@ -154,6 +154,11 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "web_search", "memory_search":
 		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is read-only research, always approved", toolName)}
 
+	// use_skill only returns a skill's instructions (no mutation) — always approved.
+	// Scripts a skill bundles still run through the mutation tools' own gates.
+	case "use_skill":
+		return PolicyResult{Decision: PolicyApproved, Reason: "use_skill returns skill instructions, read-only"}
+
 	case "write_file_dry_run":
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 

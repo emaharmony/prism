@@ -480,6 +480,7 @@ Current routes include:
 | V50 | Self-patching PR mode (autopatch opens pull requests) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
 | V51 | Issue-discovery scanner + `prism scan` (self-directed autopatch) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
 | V52 | `prism config` validate + summarize prism.yaml | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
+| V54 | Skill-use capabilities (Claude Code / OpenClaw SKILL.md) | [V54](./docs/V54-SKILLS-DESIGN.md) |
 
 ---
 

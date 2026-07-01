@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/validation"
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 	"github.com/nats-io/nats.go"
@@ -255,6 +256,23 @@ func checkWorkflowConfig(path string, validate func(string) (errs []string, load
 	return c
 }
 
+// checkSkills reports how many SKILL.md skills were discovered under root. count
+// is injected for testability (production passes a workspace skill scan). It is
+// informational (always OK) — skills are optional.
+func checkSkills(count int, loadErr error) doctorCheck {
+	c := doctorCheck{name: "skills"}
+	if loadErr != nil {
+		c.status, c.detail = statusWarn, fmt.Sprintf("%d loaded, with issues: %v", count, loadErr)
+		return c
+	}
+	if count == 0 {
+		c.status, c.detail = statusOK, "none configured (add SKILL.md under .claude/skills, .openclaw/skills, or skills/)"
+		return c
+	}
+	c.status, c.detail = statusOK, fmt.Sprintf("%d skill(s) discovered", count)
+	return c
+}
+
 // validateWorkflowFile loads a v2 workflow file and returns its structural errors.
 func validateWorkflowFile(path string) ([]string, error) {
 	wf, err := v2.LoadConfig(path)
@@ -386,6 +404,11 @@ func executeDoctor(args []string) {
 		checkAutopatchPR(cfg.Autopatch, ghStatusReal),
 		checkMCPServers(cfg.MCPServers),
 		checkWorkflowConfig(cfg.Prism.WorkflowConfig, validateWorkflowFile),
+		func() doctorCheck {
+			reg := skill.NewRegistry()
+			n, lerr := reg.LoadDefault(repoPath)
+			return checkSkills(n, lerr)
+		}(),
 	}
 
 	if *asJSON {

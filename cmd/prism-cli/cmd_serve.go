@@ -68,6 +68,7 @@ import (
 	"github.com/emaharmony/prism/internal/safety"
 	"github.com/emaharmony/prism/internal/scheduler"
 	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/task"
@@ -390,6 +391,7 @@ func executeServe(args []string) {
 	var improveMgr *improve.Manager
 	// V35: Tool registry and executor — hoisted for wake handler access
 	var toolReg *tool.Registry
+	var skillReg *skill.Registry
 	var toolExec *tool.Executor
 
 	for _, ch := range cfg.Channels {
@@ -498,6 +500,18 @@ func executeServe(args []string) {
 					fmt.Printf("  MCP %s: %d tool(s) registered\n", res.Server, len(res.Tools))
 				}
 			}
+
+			// V54: Skills — discover SKILL.md skills (Claude Code / OpenClaw) under
+			// the workspace and expose them via the use_skill tool + prompt.
+			skillReg = skill.NewRegistry()
+			if n, serr := skillReg.LoadDefault(workspaceRoot); n > 0 || serr != nil {
+				if serr != nil {
+					fmt.Printf("  Skills: %d loaded (%v)\n", n, serr)
+				} else {
+					fmt.Printf("  Skills: %d loaded\n", n)
+				}
+			}
+			tool.RegisterSkillTool(toolReg, skillReg)
 
 			// V32: Self-Improvement Loop
 			improveMgr = improve.NewManager(workspaceRoot)
@@ -702,6 +716,7 @@ func executeServe(args []string) {
 			toolExec, // V35: Tool executor for project_work
 			toolReg,  // V35: Tool registry for project_work
 		)
+		wakeHandler.SetSkills(skillReg) // V54: advertise discovered skills in the loop prompt
 		if err := wakeHandler.Start(); err != nil {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
 		} else {
