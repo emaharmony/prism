@@ -563,6 +563,8 @@ func main() {
 		executeScan(os.Args[2:])
 	case "mcp":
 		executeMCP(os.Args[2:])
+	case "skills":
+		executeSkills(os.Args[2:])
 	case "config":
 		executeConfig(os.Args[2:])
 	case "runs":
@@ -610,6 +612,9 @@ func commandUsage() string {
 		}},
 		{"MCP tool servers", []string{
 			"prism mcp [--json] | mcp probe <name>         List MCP servers / live-probe one's tools",
+		}},
+		{"Skills", []string{
+			"prism skills [--json] | skills show <name>    List SKILL.md skills / show one's instructions",
 		}},
 		{"Approvals & mutations", []string{
 			"prism approval list | show <id> --run <run_id> List / show approvals",

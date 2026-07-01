@@ -32,6 +32,7 @@ import (
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/remembrance"
 	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/validation"
@@ -54,8 +55,9 @@ type WakeHandler struct {
 	improveMgr *improve.Manager
 	factoryMon *factorymonitor.Monitor
 	remClient  *remembrance.Client
-	toolExec   *tool.Executor // V35: Tool executor for project_work action
-	toolReg    *tool.Registry // V35: Tool registry for listing tools in prompt
+	toolExec   *tool.Executor  // V35: Tool executor for project_work action
+	toolReg    *tool.Registry  // V35: Tool registry for listing tools in prompt
+	skills     *skill.Registry // V54: skills advertised in the system prompt
 
 	// agentMessages stores recent inter-agent messages received via NATS.
 	// Accessed under agentMu for concurrent safety.
@@ -214,6 +216,10 @@ func NewWakeHandler(
 		toolReg:    toolReg,
 	}
 }
+
+// SetSkills wires the discovered skill registry so the gated-loop system prompt
+// advertises available skills (invokable via the use_skill tool).
+func (wh *WakeHandler) SetSkills(skills *skill.Registry) { wh.skills = skills }
 
 // Start subscribes to scheduler events and begins processing.
 func (wh *WakeHandler) Start() error {
@@ -1892,6 +1898,9 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	if wh.toolReg != nil {
 		toolInfos := wh.toolReg.ListWithDescriptions()
 		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, repoPath, repoPath)
+	}
+	if wh.skills != nil {
+		systemPromptFull += skill.PromptSuffix(wh.skills.List())
 	}
 	userPromptFull := fmt.Sprintf("Begin the gated loop. Task: %s", taskPrompt)
 

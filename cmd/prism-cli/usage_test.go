@@ -35,7 +35,7 @@ func TestCommandUsageCoversCommands(t *testing.T) {
 		"prism run", "prism chat", "prism serve",
 		"prism config", "prism doctor", "prism preview", "prism agent", "prism tool", "prism validation", "prism context",
 		"prism watch", "prism runs", "prism cost", "prism trace", "prism dashboard",
-		"prism scan", "prism mcp", "prism approval",
+		"prism scan", "prism mcp", "prism skills", "prism approval",
 		"prism health", "prism search", "prism projection", "prism adapter", "prism remembrance", "prism version",
 	} {
 		if !strings.Contains(out, cmd) {

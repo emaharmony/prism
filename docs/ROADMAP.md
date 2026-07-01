@@ -34,6 +34,7 @@
 | V39 | Source-current | `prism doctor` — preflight health check (workspace, provider auth, validation profile, git remote, NATS, Remembrance, autopatch-pr/`gh`, mcp servers, workflow config) |
 | V52 | Source-current | `prism config` — validate prism.yaml and summarize what Prism understood (agents, channels, MCP, autopatch mode, workflow) |
 | V53 | Source-current | Grouped CLI help — `prism` usage organized into Run/Inspect/Observe/Self-patching/MCP/Approvals/Advanced sections (discoverability for 25+ commands) |
+| V54 | Source-current | Skill-use capabilities (Claude Code + OpenClaw SKILL.md) — loader/registry, `use_skill` tool (policy-gated), prompt advertising, `prism serve` wiring, `prism skills` CLI + doctor check. Rated 0→8.75 |
 | V40 | Source-current | Durable `runs/<id>/REPORT.md` proof-of-work artifact written at end of each gated-loop run |
 | V41 | Source-current | Diff preview (`git diff --stat`) attached to the FEEDBACK_POST review message so approvers see what changed |
 | V42 | Source-current | Gate-needs-you notifications — feedback pauses @-mention the named approvers/reviewers to ping them |
