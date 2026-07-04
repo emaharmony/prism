@@ -35,6 +35,7 @@
 | V52 | Source-current | `prism config` — validate prism.yaml and summarize what Prism understood (agents, channels, MCP, autopatch mode, workflow) |
 | V53 | Source-current | Grouped CLI help — `prism` usage organized into Run/Inspect/Observe/Self-patching/MCP/Approvals/Advanced sections (discoverability for 25+ commands) |
 | V54 | Source-current | Skill-use capabilities (Claude Code + OpenClaw SKILL.md) — loader/registry, `use_skill` tool (policy-gated), prompt advertising, `prism serve` wiring, `prism skills` CLI + doctor check. Rated 0→8.75 |
+| V55 | Source-current | Config setup made simple — `prism config wizard` (interactive prism.yaml generation) and `prism config import <openclaw.json>` (OpenClaw JSON → prism.yaml, one agent per provider). Emits minimal YAML overlaid on defaults; every generated config is validated by round-tripping through the real loader before write |
 | V40 | Source-current | Durable `runs/<id>/REPORT.md` proof-of-work artifact written at end of each gated-loop run |
 | V41 | Source-current | Diff preview (`git diff --stat`) attached to the FEEDBACK_POST review message so approvers see what changed |
 | V42 | Source-current | Gate-needs-you notifications — feedback pauses @-mention the named approvers/reviewers to ping them |

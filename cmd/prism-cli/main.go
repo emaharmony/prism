@@ -591,6 +591,10 @@ func commandUsage() string {
 			"prism chat [--config prism.yaml] [--agent <name>]  Interactive terminal chat",
 			"prism serve [--config prism.yaml]             Start the persistent daemon (API, dashboard, bot)",
 		}},
+		{"Set up config", []string{
+			"prism config wizard [--out prism.yaml]        Interactive setup — generate a prism.yaml",
+			"prism config import <openclaw.json> [--out]   Convert an OpenClaw JSON to prism.yaml",
+		}},
 		{"Inspect & validate", []string{
 			"prism config [--config prism.yaml] [--json]   Validate prism.yaml and summarize it",
 			"prism doctor [--config prism.yaml] [--json]   Preflight check of run dependencies",

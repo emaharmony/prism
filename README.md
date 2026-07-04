@@ -481,6 +481,7 @@ Current routes include:
 | V51 | Issue-discovery scanner + `prism scan` (self-directed autopatch) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
 | V52 | `prism config` validate + summarize prism.yaml | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
 | V54 | Skill-use capabilities (Claude Code / OpenClaw SKILL.md) | [V54](./docs/V54-SKILLS-DESIGN.md) |
+| V55 | Config wizard + OpenClaw→prism.yaml import (`prism config wizard` / `import`) | [V55](./docs/V55-CONFIG-WIZARD-DESIGN.md) |
 
 ---
 
