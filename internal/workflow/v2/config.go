@@ -312,7 +312,7 @@ func DefaultConfig() *WorkflowConfig {
 		Version:     2,
 		Description: "7-phase gated loop: PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:  60,
+			MaxTotalIterations:  600,
 			MaxTotalTime:        "60m",
 			StatePersistenceDir: "runs/gated-loop",
 			EventEmission:       true,
@@ -324,21 +324,21 @@ func DefaultConfig() *WorkflowConfig {
 		Phases: []PhaseConfig{
 			{
 				Name: "PROBE", Type: "probe", Description: "Reduce assumptions by asking questions and searching",
-				MaxIterations: 4,
+				MaxIterations: 40,
 				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "web_search", "memory_search"},
 				Gate:          GateConfig{Type: "assumption_threshold", Threshold: 2.0},
 				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_open_assumptions", Blocks: false},
 			},
 			{
 				Name: "RESEARCH", Type: "research", Description: "Increase confidence by searching the web, memory, and the codebase",
-				MaxIterations: 6,
+				MaxIterations: 60,
 				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "web_search", "memory_search"},
 				Gate:          GateConfig{Type: "confidence_threshold", Threshold: 0.7},
 				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_partial_confidence", Blocks: false},
 			},
 			{
 				Name: "PLAN", Type: "plan", Description: "Create a structured plan with tasks and resource assignments",
-				MaxIterations: 5,
+				MaxIterations: 50,
 				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "git_checkout", "memory_search"},
 				Gate: GateConfig{Type: "plan_completeness", Threshold: 0.5,
 					Weights: map[string]float64{"tasks_identified": 0.5, "resources_assigned": 0.5}},
@@ -353,7 +353,7 @@ func DefaultConfig() *WorkflowConfig {
 			},
 			{
 				Name: "EXECUTION", Type: "execution", Description: "Write code with branch protection, read budget, and commit/push enforcement",
-				MaxIterations: 25,
+				MaxIterations: 250,
 				AllowedTools:  []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "git_checkout", "project_overview"},
 				Gate:          GateConfig{Type: "task_completion", Mode: "partial_allowed"},
 				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false},
@@ -367,7 +367,7 @@ func DefaultConfig() *WorkflowConfig {
 			},
 			{
 				Name: "REPORT", Type: "report", Description: "Produce a final report with proof of work",
-				MaxIterations: 3,
+				MaxIterations: 30,
 				AllowedTools:  []string{"read_file", "git_log", "git_status"},
 				Gate:          GateConfig{Type: "report_completeness"},
 				Fallback:      FallbackConfig{OnMaxIterations: "auto_generate", Blocks: false},
