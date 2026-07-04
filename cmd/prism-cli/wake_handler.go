@@ -1036,7 +1036,7 @@ func (wh *WakeHandler) writeRunSummary(action, agent, content string, promptToke
 // commit-push enforcement, task assignment, and self-review.
 
 func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, userPrompt, model string, agentCfg *orchestrator.AgentConfig, exec *tool.Executor) (string, int, int) {
-	const maxTotalIterations = 20
+	const maxTotalIterations = 200
 
 	// Build tool prompt suffix
 	toolInfos := wh.toolReg.ListWithDescriptions()
@@ -1104,13 +1104,13 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		Description   string
 	}
 	phases := []Phase{
-		{Name: "ORIENT", MaxIterations: 3, AllowedTools: map[string]bool{"read_file": true, "git_status": true, "git_log": true, "git_branch_list": true, "project_overview": true, "list_dir": true}, Description: "Read PROJECT_STATE.md and check git state. The system has already assigned your task — confirm it."},
-		{Name: "BRANCH", MaxIterations: 2, AllowedTools: map[string]bool{"git_branch_list": true, "git_status": true, "read_file": true, "git_checkout": true}, Description: "If on main/master, you MUST create a feature branch (feature/bb-{task-slug}). The system blocks all writes on main. If already on a feature branch, proceed."},
-		{Name: "IMPLEMENT", MaxIterations: 8, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "list_dir": true, "search_files": true, "git_status": true, "git_diff": true}, Description: "Write code for your assigned task. After 3 read_file calls, the system forces you to write. You MUST produce at least one write_file."},
-		{Name: "SELF_REVIEW", MaxIterations: 2, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "git_diff": true, "git_status": true}, Description: "Review your changes via git_diff. Fix obvious errors. Respond REVIEW_PASSED when clean."},
-		{Name: "COMMIT_PUSH", MaxIterations: 3, AllowedTools: map[string]bool{"git_add": true, "git_commit": true, "git_push": true, "git_status": true}, Description: "Stage, commit, and push your changes. All three must complete."},
-		{Name: "UPDATE_STATE", MaxIterations: 2, AllowedTools: map[string]bool{"write_file": true, "read_file": true}, Description: "Update PROJECT_STATE.md to mark your task complete with [x]."},
-		{Name: "REPORT", MaxIterations: 1, AllowedTools: map[string]bool{}, Description: "Emit final summary. No tools allowed."},
+		{Name: "ORIENT", MaxIterations: 10, AllowedTools: map[string]bool{"read_file": true, "git_status": true, "git_log": true, "git_branch_list": true, "project_overview": true, "list_dir": true}, Description: "Read PROJECT_STATE.md and check git state. The system has already assigned your task — confirm it."},
+		{Name: "BRANCH", MaxIterations: 10, AllowedTools: map[string]bool{"git_branch_list": true, "git_status": true, "read_file": true, "git_checkout": true}, Description: "If on main/master, you MUST create a feature branch (feature/bb-{task-slug}). The system blocks all writes on main. If already on a feature branch, proceed."},
+		{Name: "IMPLEMENT", MaxIterations: 80, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "list_dir": true, "search_files": true, "git_status": true, "git_diff": true}, Description: "Write code for your assigned task. After 3 read_file calls, the system forces you to write. You MUST produce at least one write_file."},
+		{Name: "SELF_REVIEW", MaxIterations: 20, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "git_diff": true, "git_status": true}, Description: "Review your changes via git_diff. Fix obvious errors. Respond REVIEW_PASSED when clean."},
+		{Name: "COMMIT_PUSH", MaxIterations: 10, AllowedTools: map[string]bool{"git_add": true, "git_commit": true, "git_push": true, "git_status": true}, Description: "Stage, commit, and push your changes. All three must complete."},
+		{Name: "UPDATE_STATE", MaxIterations: 10, AllowedTools: map[string]bool{"write_file": true, "read_file": true}, Description: "Update PROJECT_STATE.md to mark your task complete with [x]."},
+		{Name: "REPORT", MaxIterations: 5, AllowedTools: map[string]bool{}, Description: "Emit final summary. No tools allowed."},
 	}
 
 	phaseIdx := 0
