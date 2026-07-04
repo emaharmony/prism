@@ -100,8 +100,21 @@ func enabledWord(b bool) string {
 	return "disabled"
 }
 
-// executeConfig is the `prism config` entry point.
+// executeConfig is the `prism config` entry point. It dispatches the positional
+// subcommands `import` and `wizard`; with no subcommand it validates and
+// summarizes an existing prism.yaml.
 func executeConfig(args []string) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "import":
+			runConfigImport(args[1:])
+			return
+		case "wizard", "init":
+			runConfigWizard(args[1:])
+			return
+		}
+	}
+
 	fs := flag.NewFlagSet("config", flag.ExitOnError)
 	configPath := fs.String("config", "prism.yaml", "Path to prism.yaml configuration file")
 	asJSON := fs.Bool("json", false, "Emit the summary as JSON")
