@@ -346,6 +346,37 @@ channels:
 	}
 }
 
+func TestLoadMCPServersConfig(t *testing.T) {
+	cfg, err := LoadConfigFromBytes([]byte(`
+mcp_auto_approve: true
+mcp_servers:
+  - name: fs
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/repo"]
+    env: ["FOO=bar"]
+    enabled: true
+  - name: disabled
+    command: other
+    enabled: false
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.MCPAutoApprove {
+		t.Fatal("mcp_auto_approve should parse to true")
+	}
+	if len(cfg.MCPServers) != 2 {
+		t.Fatalf("expected 2 mcp servers, got %d", len(cfg.MCPServers))
+	}
+	fs := cfg.MCPServers[0]
+	if fs.Name != "fs" || fs.Command != "npx" || len(fs.Args) != 3 || !fs.Enabled || len(fs.Env) != 1 {
+		t.Fatalf("fs server parsed wrong: %+v", fs)
+	}
+	if cfg.MCPServers[1].Enabled {
+		t.Fatal("second server should be disabled")
+	}
+}
+
 func TestValidateBridgeRequiresSecret(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Bridge.Enabled = true

@@ -28,7 +28,7 @@ func TestCheckToolExecution_MutationBlocked(t *testing.T) {
 	g := NewGuard(pm, nil)
 
 	// No plan exists — mutation should be blocked
-	mutationTools := []string{"write_file", "edit_file", "git_add", "git_commit", "git_push", "shell_exec"}
+	mutationTools := []string{"write_file", "write_file_proposal", "create_directory", "create_directory_proposal", "edit_file", "git_add", "git_commit", "git_push", "shell_exec"}
 	for _, tool := range mutationTools {
 		result := g.CheckToolExecution(tool, nil)
 		if result.Decision != Block {
@@ -46,7 +46,7 @@ func TestCheckToolExecution_MutationWithPlan(t *testing.T) {
 	// Create an auto-proceed plan
 	pm.CreatePlan(plan.Plan{
 		Title: "Fix bug",
-		Scope:  "Small fix only",
+		Scope: "Small fix only",
 	})
 
 	// Mutation tools should now proceed
@@ -195,6 +195,9 @@ func TestFormatPlansSummary(t *testing.T) {
 func TestIsMutationTool(t *testing.T) {
 	if !IsMutationTool("write_file") {
 		t.Error("write_file should be a mutation tool")
+	}
+	if !IsMutationTool("create_directory") {
+		t.Error("create_directory should be a mutation tool")
 	}
 	if !IsMutationTool("git_commit") {
 		t.Error("git_commit should be a mutation tool")

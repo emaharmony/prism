@@ -1,9 +1,9 @@
 package v2
 
 import (
-	"os"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,47 +12,67 @@ import (
 
 // WorkflowConfig is the YAML/JSON configuration for a Natural Gates workflow.
 type WorkflowConfig struct {
-	Name              string            `json:"name"`
-	Version           int               `json:"version"`
-	Description       string            `json:"description"`
-	Global            GlobalConfig      `json:"global"`
-	Phases            []PhaseConfig     `json:"phases"`
-	ConfidenceDomains []string          `json:"confidence_domains"`
-	Agents            []AgentConfig     `json:"agents"`
-	FastPath          *FastPathConfig   `json:"fast_path,omitempty"`
+	Name              string          `json:"name"`
+	Version           int             `json:"version"`
+	Description       string          `json:"description"`
+	Global            GlobalConfig    `json:"global"`
+	Phases            []PhaseConfig   `json:"phases"`
+	ConfidenceDomains []string        `json:"confidence_domains"`
+	Agents            []AgentConfig   `json:"agents"`
+	FastPath          *FastPathConfig `json:"fast_path,omitempty"`
 }
 
 type GlobalConfig struct {
 	MaxTotalIterations   int    `json:"max_total_iterations"`
 	MaxTotalTime         string `json:"max_total_time"`
+	MaxTotalTokens       int    `json:"max_total_tokens,omitempty"`        // hard ceiling on prompt+completion tokens; 0 = unlimited
+	MaxRepeatedToolCalls int    `json:"max_repeated_tool_calls,omitempty"` // abort a phase after this many identical tool calls; 0 = default (6)
 	StatePersistenceDir  string `json:"state_persistence_dir"`
 	EventEmission        bool   `json:"event_emission"`
+	// DelegationTimeouts maps an agent name to its delegation deadline (Go duration
+	// string, e.g. "15m"). The special key "default" sets the fallback for agents
+	// without a specific entry. Lets a project control deadlines for its own roster.
+	DelegationTimeouts map[string]string `json:"delegation_timeouts,omitempty"`
 }
 
 type PhaseConfig struct {
-	Name          string         `json:"name"`
-	Type          string         `json:"type"`
-	Description   string         `json:"description"`
-	MaxIterations int            `json:"max_iterations"`
-	AllowedTools  []string       `json:"allowed_tools"`
-	Gate          GateConfig     `json:"gate"`
-	Fallback      FallbackConfig `json:"fallback"`
+	Name          string              `json:"name"`
+	Type          string              `json:"type"`
+	Description   string              `json:"description"`
+	MaxIterations int                 `json:"max_iterations"`
+	AllowedTools  []string            `json:"allowed_tools"`
+	Gate          GateConfig          `json:"gate"`
+	Fallback      FallbackConfig      `json:"fallback"`
+	Verification  *VerificationConfig `json:"verification,omitempty"`
+}
+
+// VerificationConfig attaches an objective build/test check to a phase. After the
+// phase's work is done (and any commit/push enforcement passes), the engine runs
+// the named validation profile (e.g. "go_test_all") through the V5 validation
+// executor — an allowlisted command, so the model never controls what runs. When
+// Blocking is true the phase cannot complete until the profile passes; the failing
+// output is fed back to the model so it fixes the real problem and retries. This is
+// what turns "writes plausible code" into "writes code that compiles and passes its
+// tests" — the core feedback signal an autonomous dev loop needs.
+type VerificationConfig struct {
+	Profile  string `json:"profile"`            // validation profile name to run
+	Blocking bool   `json:"blocking,omitempty"` // block phase completion until it passes
 }
 
 type GateConfig struct {
-	Type       string                 `json:"type"`
-	Threshold  float64                `json:"threshold"`
-	Weights    map[string]float64     `json:"weights,omitempty"`
-	Domains    []string               `json:"domains,omitempty"`
-	Approvers  []string               `json:"approvers,omitempty"`
-	Mode       string                 `json:"mode,omitempty"`
-	RequiredReviewers []string        `json:"required_reviewers,omitempty"`
-	MaxWarn    int                    `json:"max_warn,omitempty"`
+	Type              string             `json:"type"`
+	Threshold         float64            `json:"threshold"`
+	Weights           map[string]float64 `json:"weights,omitempty"`
+	Domains           []string           `json:"domains,omitempty"`
+	Approvers         []string           `json:"approvers,omitempty"`
+	Mode              string             `json:"mode,omitempty"`
+	RequiredReviewers []string           `json:"required_reviewers,omitempty"`
+	MaxWarn           int                `json:"max_warn,omitempty"`
 }
 
 type FallbackConfig struct {
-	OnMaxIterations   string `json:"on_max_iterations"`
-	Blocks            bool   `json:"blocks"`
+	OnMaxIterations string `json:"on_max_iterations"`
+	Blocks          bool   `json:"blocks"`
 }
 
 type AgentConfig struct {
@@ -65,9 +85,9 @@ type AgentConfig struct {
 }
 
 type FastPathConfig struct {
-	Enabled      bool   `json:"enabled"`
-	RiskLevels   []string `json:"risk_levels"` // which risk levels get fast path
-	SkipPhases   []string `json:"skip_phases"` // phases to skip
+	Enabled    bool     `json:"enabled"`
+	RiskLevels []string `json:"risk_levels"` // which risk levels get fast path
+	SkipPhases []string `json:"skip_phases"` // phases to skip
 }
 
 // GetPhase returns the phase config for a given phase name.
@@ -198,6 +218,9 @@ func ValidateConfig(cfg *WorkflowConfig) []string {
 	if len(cfg.Phases) == 0 {
 		errs = append(errs, "at least one phase is required")
 	}
+	if cfg.Global.MaxTotalTokens < 0 {
+		errs = append(errs, "global.max_total_tokens must be >= 0")
+	}
 	validPhase := map[string]bool{"probe": true, "research": true, "plan": true, "feedback_pre": true, "execution": true, "feedback_post": true, "report": true}
 	validGate := map[string]bool{"assumption_threshold": true, "confidence_threshold": true, "plan_completeness": true, "approval": true, "task_completion": true, "review_pass": true, "report_completeness": true, "": true}
 	seen := map[string]bool{}
@@ -217,6 +240,9 @@ func ValidateConfig(cfg *WorkflowConfig) []string {
 		}
 		if p.MaxIterations < 0 {
 			errs = append(errs, fmt.Sprintf("phase %q: max_iterations must be >= 0", p.Name))
+		}
+		if p.Verification != nil && strings.TrimSpace(p.Verification.Profile) == "" {
+			errs = append(errs, fmt.Sprintf("phase %q: verification.profile is required when verification is set", p.Name))
 		}
 	}
 	return errs
@@ -312,10 +338,12 @@ func DefaultConfig() *WorkflowConfig {
 		Version:     2,
 		Description: "7-phase gated loop: PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:  600,
-			MaxTotalTime:        "60m",
-			StatePersistenceDir: "runs/gated-loop",
-			EventEmission:       true,
+			MaxTotalIterations:   600,
+			MaxTotalTime:         "60m",
+			MaxTotalTokens:       1_000_000,
+			MaxRepeatedToolCalls: 6,
+			StatePersistenceDir:  "runs/gated-loop",
+			EventEmission:        true,
 		},
 		ConfidenceDomains: []string{
 			"codebase_understanding", "requirements_clarity", "approach_viability",
@@ -354,8 +382,9 @@ func DefaultConfig() *WorkflowConfig {
 			{
 				Name: "EXECUTION", Type: "execution", Description: "Write code with branch protection, read budget, and commit/push enforcement",
 				MaxIterations: 250,
-				AllowedTools:  []string{"read_file", "write_file", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "git_checkout", "project_overview"},
+				AllowedTools:  []string{"read_file", "write_file", "create_directory", "list_dir", "search_files", "git_status", "git_log", "git_diff", "git_add", "git_commit", "git_push", "git_branch_list", "git_checkout", "project_overview", "run_validation", "delegate"},
 				Gate:          GateConfig{Type: "task_completion", Mode: "partial_allowed"},
+				Verification:  &VerificationConfig{Profile: "go_test_all", Blocking: true},
 				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_partial_completion", Blocks: false},
 			},
 			{

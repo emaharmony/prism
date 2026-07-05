@@ -43,8 +43,8 @@ import (
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/bus"
-	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/claudeworker"
+	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/crossprism"
@@ -68,10 +68,12 @@ import (
 	"github.com/emaharmony/prism/internal/safety"
 	"github.com/emaharmony/prism/internal/scheduler"
 	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prism/internal/tool/mcp"
 
 	"github.com/nats-io/nats.go"
 )
@@ -104,34 +106,36 @@ type discordBotClient interface {
 // OnMessage handler so each message has access to routing, sessions,
 // LLM providers, and the Discord bot for responses.
 type conversationContext struct {
-	router      *router.Router
-	sessMgr     *session.Manager
-	cfg         *orchestrator.Config
-	providers   *provider.ProviderRegistry
-	bot         discordBotClient
-	debounce    *debounce.Tracker
-	eventLog    *runtrack.EventLogger
-	cancelReg   *runtrack.CancelRegistry
-	ctxBuilder  *context.Builder         // V21: workspace context injection
-	natsConn    *nats.Conn               // V21: NATS bus connection for event publishing
-	natsURL     string                   // V21: NATS bus URL
-	actionReg   *action.Registry         // V21: action registry for event-triggered actions
-	remClient   *remembrance.Client      // V21: Remembrance client for memory auto-save
-	remSem      chan struct{}            // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
-	remCache    *remembranceCache        // V26: TTL cache for BuildContext results
-	summarySem  chan struct{}            // Long-running codebase summary concurrency guard
-	delegEngine *delegation.Engine       // V22: Delegation engine for agent-to-agent task delegation
-	taskStore   *task.Store              // V22: Task store for delegation tracking
-	crossCoord  *crossprism.Coordinator  // Cross-Prism NATS delegation coordinator
-	autopatcher *autopatch.Service       // Diagnose-and-propose patch tasks
-	toolExec    *tool.Executor           // V27: Tool executor for file system access
-	stateMgr    *state.Manager           // V32: Working state manager for adaptive context
-	planMgr     *plan.Manager            // V32: Plan manager for plan-first pipeline
-	improveMgr  *improve.Manager         // V32: Self-improvement loop
-	guardian    *guard.Guard             // V32: Guard rail for plan enforcement
-	toolPolicy  tool.PolicyConfig        // V27: Tool policy configuration
-	rateLimiter *safety.UserRateLimiter  // V28: Per-user rate limiting
-	toolGate    *stage.ToolRelevanceGate // P-008: Tool relevance gate
+	router        *router.Router
+	sessMgr       *session.Manager
+	cfg           *orchestrator.Config
+	providers     *provider.ProviderRegistry
+	bot           discordBotClient
+	debounce      *debounce.Tracker
+	eventLog      *runtrack.EventLogger
+	cancelReg     *runtrack.CancelRegistry
+	ctxBuilder    *context.Builder         // V21: workspace context injection
+	natsConn      *nats.Conn               // V21: NATS bus connection for event publishing
+	natsURL       string                   // V21: NATS bus URL
+	actionReg     *action.Registry         // V21: action registry for event-triggered actions
+	remClient     *remembrance.Client      // V21: Remembrance client for memory auto-save
+	remSem        chan struct{}            // V21: Semaphore limiting concurrent Remembrance goroutines (max 4)
+	remCache      *remembranceCache        // V26: TTL cache for BuildContext results
+	summarySem    chan struct{}            // Long-running codebase summary concurrency guard
+	delegEngine   *delegation.Engine       // V22: Delegation engine for agent-to-agent task delegation
+	taskStore     *task.Store              // V22: Task store for delegation tracking
+	crossCoord    *crossprism.Coordinator  // Cross-Prism NATS delegation coordinator
+	autopatcher   *autopatch.Service       // Diagnose-and-propose patch tasks
+	toolExec      *tool.Executor           // V27: Tool executor for file system access
+	stateMgr      *state.Manager           // V32: Working state manager for adaptive context
+	planMgr       *plan.Manager            // V32: Plan manager for plan-first pipeline
+	improveMgr    *improve.Manager         // V32: Self-improvement loop
+	guardian      *guard.Guard             // V32: Guard rail for plan enforcement
+	toolPolicy    tool.PolicyConfig        // V27: Tool policy configuration
+	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
+	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
+	pendingWorkMu sync.Mutex
+	pendingWork   map[string]pendingWorkStart
 
 	// Cached static system content — built once, reused every message.
 	staticSystemText string // For text-based provider path
@@ -387,6 +391,7 @@ func executeServe(args []string) {
 	var improveMgr *improve.Manager
 	// V35: Tool registry and executor — hoisted for wake handler access
 	var toolReg *tool.Registry
+	var skillReg *skill.Registry
 	var toolExec *tool.Executor
 
 	for _, ch := range cfg.Channels {
@@ -452,8 +457,10 @@ func executeServe(args []string) {
 			toolReg = tool.NewRegistry()
 			tool.RegisterBuiltinsWithRoots(toolReg, workspaceRoot, 10*1024*1024, readRoots, writeRoots) // all read-only + project tools
 			toolReg.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
+			toolReg.Register(&tool.CreateDirectoryProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 			// V35: Direct write tool for autonomous wake actions (auto-approved via policy)
 			toolReg.Register(&tool.WriteFileDirect{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
+			toolReg.Register(&tool.CreateDirectoryDirect{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 			// V28: Git mutation tools (require approval)
 			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
@@ -482,6 +489,30 @@ func executeServe(args []string) {
 				toolReg.Register(tool.NewSendCrossMessageTool(crossSvc))
 			}
 
+			// V49: External MCP tool servers — register their tools into the
+			// policy-gated registry so agents can use them like any built-in.
+			if specs := mcpServerSpecs(cfg); len(specs) > 0 {
+				for _, res := range mcp.RegisterServers(ctx, toolReg, specs, mcp.ProcessClientFactory) {
+					if res.Err != nil {
+						fmt.Printf("  MCP %s: error: %v\n", res.Server, res.Err)
+						continue
+					}
+					fmt.Printf("  MCP %s: %d tool(s) registered\n", res.Server, len(res.Tools))
+				}
+			}
+
+			// V54: Skills — discover SKILL.md skills (Claude Code / OpenClaw) under
+			// the workspace and expose them via the use_skill tool + prompt.
+			skillReg = skill.NewRegistry()
+			if n, serr := skillReg.LoadDefault(workspaceRoot); n > 0 || serr != nil {
+				if serr != nil {
+					fmt.Printf("  Skills: %d loaded (%v)\n", n, serr)
+				} else {
+					fmt.Printf("  Skills: %d loaded\n", n)
+				}
+			}
+			tool.RegisterSkillTool(toolReg, skillReg)
+
 			// V32: Self-Improvement Loop
 			improveMgr = improve.NewManager(workspaceRoot)
 			improveMgr.EnsureDir()
@@ -497,6 +528,7 @@ func executeServe(args []string) {
 			toolPolicy.ReadRoots = readRoots
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
+			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
 			toolExec = tool.NewExecutor(toolReg, toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore("runs"))
 
@@ -529,11 +561,12 @@ func executeServe(args []string) {
 					60, // global max 60 concurrent requests
 					10, // global refill 10 tokens/sec
 				),
-				toolGate:   stage.NewToolRelevanceGate(true), // P-008: enabled by default
-				stateMgr:   stateMgr,                         // V32: shared state manager (same instance as tools)
-				planMgr:    planMgr,                          // V32: plan manager
-				improveMgr: improveMgr,                       // V32: improvement manager
-				guardian:   guardian,                         // V32: guard rail
+				toolGate:    stage.NewToolRelevanceGate(true), // P-008: enabled by default
+				stateMgr:    stateMgr,                         // V32: shared state manager (same instance as tools)
+				planMgr:     planMgr,                          // V32: plan manager
+				improveMgr:  improveMgr,                       // V32: improvement manager
+				guardian:    guardian,                         // V32: guard rail
+				pendingWork: make(map[string]pendingWorkStart),
 			}
 
 			// Pre-build static system content for all agents
@@ -543,6 +576,20 @@ func executeServe(args []string) {
 			bot.OnMessage(func(msg *discordbot.InboundMessage) {
 				convCtx.handleDiscordMessage(msg)
 			})
+			// Rich approval cards: a button click publishes the same feedback-response
+			// the typed approve/changes/reject commands do.
+			if natsConn != nil {
+				nc := natsConn
+				bot.OnButton(func(customID, userID, userName string) {
+					payload, ok := feedbackButtonPayload(customID, firstNonEmptyCommandArg(userName, userID, "discord"))
+					if !ok {
+						return
+					}
+					if data, mErr := json.Marshal(payload); mErr == nil {
+						_ = nc.Publish("prism.workflow.feedback.response", data)
+					}
+				})
+			}
 
 			go func() {
 				if err := bot.Start(ctx); err != nil {
@@ -572,16 +619,16 @@ func executeServe(args []string) {
 
 	apiPort := *portFlag + 1 // API on port+1 (default 8322)
 	apiServer := api.NewServer(api.Config{
-		Addr:           cfg.BindAddr(apiPort),
-		Orch:           orch,
-		Store:          taskStore,
-		Sessions:       sessMgr,
-		Engine:         delegEngine,
-		Approval:       approvalMgr,
-		Tracker:        delegTracker,
-		AutoPatch:      autopatcher,
-		NATS:           natsConn,
-		AuthToken:      cfg.API.ResolveAuthToken(),
+		Addr:               cfg.BindAddr(apiPort),
+		Orch:               orch,
+		Store:              taskStore,
+		Sessions:           sessMgr,
+		Engine:             delegEngine,
+		Approval:           approvalMgr,
+		Tracker:            delegTracker,
+		AutoPatch:          autopatcher,
+		NATS:               natsConn,
+		AuthToken:          cfg.API.ResolveAuthToken(),
 		AllowedOrigins:     cfg.API.AllowedOrigins,
 		ConfigDir:          filepath.Dir(*configPath),
 		WorkflowConfigPath: cfg.Prism.WorkflowConfig,
@@ -647,28 +694,38 @@ func executeServe(args []string) {
 		log.Printf("[SCHEDULER] started with %d job(s)", len(cfg.Prism.Scheduler.Jobs))
 	}
 
-	// V32: Start wake handler to process scheduler events
-	// Uses the first Discord bot as the notification channel
-	if cfg.Prism.Scheduler.Enabled && len(discordBots) > 0 && natsConn != nil {
+	// V32/V36: Start wake handler to process scheduled events and interactive
+	// workflow starts. This must run even when the cron scheduler is disabled.
+	var primaryDiscordBot discordBotClient
+	if len(discordBots) > 0 {
+		primaryDiscordBot = discordBots[0]
+	}
+	if natsConn != nil && toolExec != nil && toolReg != nil {
 		wakeHandler := NewWakeHandler(
 			cfg,
 			provReg,
 			sessMgr,
 			stateMgr,
 			natsConn,
-			discordBots[0], // use first bot for notifications
+			primaryDiscordBot,
 			ctxBuildr,
 			planMgr,
 			improveMgr,
 			factoryMon,
 			remClient,
-			toolExec,  // V35: Tool executor for project_work
-			toolReg,   // V35: Tool registry for project_work
+			toolExec, // V35: Tool executor for project_work
+			toolReg,  // V35: Tool registry for project_work
 		)
+		wakeHandler.SetSkills(skillReg) // V54: advertise discovered skills in the loop prompt
 		if err := wakeHandler.Start(); err != nil {
 			log.Printf("[WAKE] WARN failed to start wake handler: %v", err)
 		} else {
-			log.Printf("[WAKE] handler started, listening for scheduled events")
+			log.Printf("[WAKE] handler started, listening for scheduled and workflow events")
+		}
+		if primaryDiscordBot != nil {
+			if err := startWorkflowFeedbackNotifier(natsConn, primaryDiscordBot, cfg); err != nil {
+				log.Printf("[WORKFLOW-NOTIFY] WARN failed to start: %v", err)
+			}
 		}
 	}
 
@@ -726,6 +783,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
+	if cc.handleWorkflowFeedbackCommand(msg) {
+		return
+	}
+
 	// Step 0a: Handle plan approval commands ("approve P-XXX" / "reject P-XXX")
 	if cc.planMgr != nil {
 		if strings.HasPrefix(trimmed, "approve ") || strings.HasPrefix(trimmed, "reject ") {
@@ -735,7 +796,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
-	if cc.crossCoord != nil && cc.handleCrossPrismCommand(msg) {
+	if cc.handlePrismCommand(msg) {
 		return
 	}
 
@@ -800,12 +861,18 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		log.Printf("[SECURITY] medium-severity flags in input from user %s: flags=%v", msg.UserID, injectionCheck.Flags)
 	}
 
+	if cc.handlePendingWorkStartReply(msg) {
+		return
+	}
 	if codesummary.RequestMatches(sanitizedContent) {
 		cc.handleCodebaseSummaryRequest(msg, sanitizedContent)
 		return
 	}
 	if autopatch.RequestMatches(sanitizedContent) {
 		cc.handleAutoPatchRequest(msg, sanitizedContent)
+		return
+	}
+	if cc.maybeStartDetectedWork(msg, sanitizedContent) {
 		return
 	}
 
@@ -1850,11 +1917,13 @@ var readOnlyTools = map[string]bool{
 }
 
 var mutationProposalTools = map[string]bool{
-	"write_file":          true,
-	"write_file_proposal": true,
-	"git_add":             true,
-	"git_commit":          true,
-	"git_push":            true,
+	"write_file":                true,
+	"write_file_proposal":       true,
+	"create_directory":          true,
+	"create_directory_proposal": true,
+	"git_add":                   true,
+	"git_commit":                true,
+	"git_push":                  true,
 }
 
 // ToolMode represents the tool access level for a channel.
@@ -1912,4 +1981,23 @@ func filterChatToolsByAgentPolicy(tools []provider.ChatTool, policy tool.PolicyC
 		}
 	}
 	return filtered
+}
+
+// mcpServerSpecs maps configured MCP servers to transport-neutral specs for
+// mcp.RegisterServers.
+func mcpServerSpecs(cfg *orchestrator.Config) []mcp.ServerSpec {
+	if cfg == nil {
+		return nil
+	}
+	specs := make([]mcp.ServerSpec, 0, len(cfg.MCPServers))
+	for _, s := range cfg.MCPServers {
+		specs = append(specs, mcp.ServerSpec{
+			Name:    s.Name,
+			Command: s.Command,
+			Args:    s.Args,
+			Env:     s.Env,
+			Enabled: s.Enabled,
+		})
+	}
+	return specs
 }

@@ -120,6 +120,7 @@ phases:
     allowed_tools:
       - read_file
       - write_file
+      - create_directory
       - list_dir
       - search_files
       - remembrance_search
@@ -160,6 +161,7 @@ phases:
     allowed_tools:
       - read_file
       - write_file
+      - create_directory
       - list_dir
       - search_files
       - git_status

@@ -2,9 +2,9 @@ package v2
 
 import (
 	"encoding/json"
-	"time"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -93,12 +93,12 @@ func (p *NATSPublisher) PublishReviewRequest(subject string, workflowID string, 
 		return fmt.Errorf("NATS not connected")
 	}
 	payload := map[string]any{
-		"type":            "review_request",
-		"workflow_id":     workflowID,
-		"phase":           "FEEDBACK_POST",
-		"review_package":  reviewPackage,
+		"type":               "review_request",
+		"workflow_id":        workflowID,
+		"phase":              "FEEDBACK_POST",
+		"review_package":     reviewPackage,
 		"required_reviewers": []string{"lumi", "mango"},
-		"timestamp":       fmt.Sprintf("%d", time.Now().Unix()),
+		"timestamp":          fmt.Sprintf("%d", time.Now().Unix()),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -138,8 +138,8 @@ func (p *NATSPublisher) PublishEvent(subject string, eventType string, payload m
 // the Natural Gates engine. It converts incoming NATS messages into
 // ExternalEvent structs and sends them to the engine's external event channel.
 type NATSListener struct {
-	conn       *nats.Conn
-	subs       []*nats.Subscription
+	conn *nats.Conn
+	subs []*nats.Subscription
 }
 
 // NewNATSListener connects to NATS and returns a listener.
@@ -214,9 +214,9 @@ func (l *NATSListener) Listen(engine *Engine) error {
 			CorrelationID: workflowID,
 			Source:        "nats",
 			Data: map[string]any{
-				"decision": decision,
-				"reviewer": reviewer,
-				"notes":    payload["notes"],
+				"decision":   decision,
+				"reviewer":   reviewer,
+				"notes":      payload["notes"],
 				"dimensions": payload["dimensions"],
 			},
 		}
@@ -251,9 +251,9 @@ func (l *NATSListener) Listen(engine *Engine) error {
 				"status":         completion.Status,
 				"output_summary": completion.OutputSummary,
 				"artifacts": map[string]any{
-					"file_paths":   completion.Artifacts.FilePaths,
+					"file_paths":    completion.Artifacts.FilePaths,
 					"commit_hashes": completion.Artifacts.CommitHashes,
-					"pr_urls":      completion.Artifacts.PRURLs,
+					"pr_urls":       completion.Artifacts.PRURLs,
 				},
 				"review_notes": completion.ReviewNotes,
 			},

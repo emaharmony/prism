@@ -342,6 +342,88 @@ func TestExecutorWriteToSubdirectory(t *testing.T) {
 	}
 }
 
+func TestExecutorCreateDirectoryApprovedCreatesDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_mkdir", "corr_mkdir", "test-cli", "prism", approval.MutationCreateDirectory, "empty/child", "", policy)
+	if err := store.Save(a); err != nil {
+		t.Fatalf("save approval: %v", err)
+	}
+
+	executor := NewExecutor(tmpDir, store)
+	result, err := executor.ApplyWithRun(context.Background(), "run_mkdir", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Message)
+	}
+
+	absPath := filepath.Join(tmpDir, "empty", "child")
+	info, statErr := os.Stat(absPath)
+	if statErr != nil {
+		t.Fatalf("expected directory to exist: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("target should be a directory")
+	}
+}
+
+func TestExecutorCreateDirectoryApprovedAbsolutePathWithinAllowedRoot(t *testing.T) {
+	workspace := t.TempDir()
+	allowedRoot := t.TempDir()
+	runsDir := t.TempDir()
+	store := approval.NewStore(runsDir)
+
+	targetPath := filepath.Join(allowedRoot, "empty")
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_mkdir_abs", "corr_mkdir_abs", "test-cli", "prism", approval.MutationCreateDirectory, targetPath, "", policy)
+	if err := store.Save(a); err != nil {
+		t.Fatalf("save approval: %v", err)
+	}
+
+	executor := NewExecutor(workspace, store, allowedRoot)
+	result, err := executor.ApplyWithRun(context.Background(), "run_mkdir_abs", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Message)
+	}
+	info, statErr := os.Stat(targetPath)
+	if statErr != nil {
+		t.Fatalf("expected directory to exist: %v", statErr)
+	}
+	if !info.IsDir() {
+		t.Fatalf("target should be a directory")
+	}
+}
+
+func TestExecutorCreateDirectoryRejectsExistingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+	if err := os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_mkdir_file", "corr_mkdir_file", "test-cli", "prism", approval.MutationCreateDirectory, "file.txt", "", policy)
+	if err := store.Save(a); err != nil {
+		t.Fatalf("save approval: %v", err)
+	}
+
+	executor := NewExecutor(tmpDir, store)
+	result, err := executor.ApplyWithRun(context.Background(), "run_mkdir_file", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Fatalf("expected failure when target is an existing file")
+	}
+}
+
 func TestExecutorCannotOverwriteDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := approval.NewStore(tmpDir)

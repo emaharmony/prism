@@ -38,14 +38,19 @@ type EditorNode struct {
 	Position      Position `json:"position"`
 }
 
-// EditorEdge represents a connection between two nodes.
+// EditorEdge represents a connection between two nodes — a flow along which one
+// system/agent communicates with another. An edge can carry an Action: the thing
+// that happens when the flow is traversed (e.g. a registered action key like
+// "remembrance.gate.extract", or a free-form label). This is what makes the canvas
+// a behavior diagram, not just a topology picture.
 type EditorEdge struct {
-	ID    string `json:"id"`
-	From  string `json:"from"`  // source node ID
-	To    string `json:"to"`    // target node ID
-	Type  string `json:"type"`  // "delegation", "review", "approval", "event"
-	Label string `json:"label"` // optional display label
-	Style string `json:"style"` // "solid", "dashed", "dotted", "bold"
+	ID     string `json:"id"`
+	From   string `json:"from"`             // source node ID
+	To     string `json:"to"`               // target node ID
+	Type   string `json:"type"`             // "delegation", "review", "approval", "event"
+	Label  string `json:"label"`            // optional display label
+	Style  string `json:"style"`            // "solid", "dashed", "dotted", "bold"
+	Action string `json:"action,omitempty"` // optional action invoked along this flow
 }
 
 // EditorState is the full state of the workflow editor.
@@ -416,6 +421,43 @@ func (s *EditorState) RemoveEdge(id string) error {
 	}
 	s.Edges = newEdges
 	return nil
+}
+
+// EdgeUpdate represents partial updates to an edge. Only non-nil fields are
+// applied, so the front-end can change just the action (or label/type) of a flow.
+type EdgeUpdate struct {
+	Label  *string `json:"label"`
+	Type   *string `json:"type"`
+	Style  *string `json:"style"`
+	Action *string `json:"action"`
+}
+
+// UpdateEdge applies a partial update to the edge with the given ID. A changed
+// Type is validated against the known edge types.
+func (s *EditorState) UpdateEdge(id string, upd EdgeUpdate) error {
+	validEdgeTypes := map[string]bool{"delegation": true, "review": true, "approval": true, "event": true}
+	for i := range s.Edges {
+		if s.Edges[i].ID != id {
+			continue
+		}
+		if upd.Type != nil {
+			if !validEdgeTypes[*upd.Type] {
+				return fmt.Errorf("invalid edge type %q", *upd.Type)
+			}
+			s.Edges[i].Type = *upd.Type
+		}
+		if upd.Label != nil {
+			s.Edges[i].Label = *upd.Label
+		}
+		if upd.Style != nil {
+			s.Edges[i].Style = *upd.Style
+		}
+		if upd.Action != nil {
+			s.Edges[i].Action = strings.TrimSpace(*upd.Action)
+		}
+		return nil
+	}
+	return fmt.Errorf("edge %q not found", id)
 }
 
 // NodeUpdate represents partial updates to a node.

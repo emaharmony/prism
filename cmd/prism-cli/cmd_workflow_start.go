@@ -16,14 +16,18 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/workstart"
 	"github.com/nats-io/nats.go"
 )
 
 func executeWorkflowStart(args []string) {
 	cmd := flag.NewFlagSet("workflow start", flag.ExitOnError)
 	configPath := cmd.String("config", "prism.yaml", "Path to prism.yaml configuration file")
-	project := cmd.String("project", "", "Project ID to work on (defaults to the configured default project)")
+	project := cmd.String("project", "", "Project ID to work on")
 	prompt := cmd.String("prompt", "", "The task prompt that seeds the gated loop")
+	repoPath := cmd.String("repo-path", "", "Repository path to work in (must be inside a configured write root)")
+	pathAlias := cmd.String("path", "", "Alias for --repo-path")
+	bootstrap := cmd.Bool("bootstrap", false, "Create the repo directory and run git init when the confirmed path is new")
 	channel := cmd.String("channel", "", "Channel ID to post results to (defaults to the project channel)")
 	natsURL := cmd.String("nats", "", "NATS URL (defaults to prism.nats_url or nats://127.0.0.1:4222)")
 	cmd.Parse(args)
@@ -33,11 +37,44 @@ func executeWorkflowStart(args []string) {
 		fmt.Fprintln(os.Stderr, `Usage: prism workflow start --project <id> --prompt "build feature X"`)
 		os.Exit(1)
 	}
+	if *repoPath == "" {
+		*repoPath = *pathAlias
+	}
+
+	var cfg *orchestrator.Config
+	if loaded, err := orchestrator.LoadConfig(*configPath); err == nil {
+		cfg = loaded
+	}
+	req := workstart.Request{
+		Project:   *project,
+		Prompt:    *prompt,
+		RepoPath:  *repoPath,
+		Channel:   *channel,
+		Source:    "cli",
+		Bootstrap: *bootstrap,
+	}
+	resolved, err := workstart.Resolve(cfg, req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if resolved.NeedsLocation {
+		fmt.Fprintln(os.Stderr, "Error: project location required before Prism can create files.")
+		if resolved.Recommendation != "" {
+			fmt.Fprintf(os.Stderr, "Recommended path: %s\n", resolved.Recommendation)
+			fmt.Fprintln(os.Stderr, "Retry with --path above, or choose another path inside prism.write_roots.")
+		}
+		os.Exit(2)
+	}
+	req.Project = resolved.ProjectID
+	req.RepoPath = resolved.RepoPath
+	req.Channel = resolved.Channel
+	req.Bootstrap = req.Bootstrap || resolved.Project == nil
 
 	// Resolve the NATS URL from config when not given explicitly.
 	url := *natsURL
 	if url == "" {
-		if cfg, err := orchestrator.LoadConfig(*configPath); err == nil && cfg.Prism.NATSURL != "" {
+		if cfg != nil && cfg.Prism.NATSURL != "" {
 			url = cfg.Prism.NATSURL
 		}
 	}
@@ -53,11 +90,7 @@ func executeWorkflowStart(args []string) {
 	}
 	defer nc.Close()
 
-	payload, _ := json.Marshal(map[string]string{
-		"project": *project,
-		"prompt":  *prompt,
-		"channel": *channel,
-	})
+	payload, _ := json.Marshal(req)
 	if err := nc.Publish("prism.workflow.start", payload); err != nil {
 		fmt.Fprintf(os.Stderr, "Error publishing start request: %v\n", err)
 		os.Exit(1)
@@ -67,11 +100,12 @@ func executeWorkflowStart(args []string) {
 		os.Exit(1)
 	}
 
-	target := *project
+	target := req.Project
 	if target == "" {
 		target = "(default project)"
 	}
 	fmt.Printf("🔁 Gated loop start requested for %s\n", target)
-	fmt.Printf("   prompt: %s\n", *prompt)
+	fmt.Printf("   repo: %s\n", req.RepoPath)
+	fmt.Printf("   prompt: %s\n", req.Prompt)
 	fmt.Println("   The running Prism instance will execute the loop and post results.")
 }

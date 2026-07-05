@@ -2,6 +2,7 @@ package autopatch
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,24 @@ import (
 
 	"github.com/emaharmony/prism/internal/validation"
 )
+
+var errInjected = errors.New("injected pr failure")
+
+type mockPROpener struct {
+	got   PRRequest
+	url   string
+	err   error
+	calls int
+}
+
+func (m *mockPROpener) OpenPR(_ context.Context, req PRRequest) (PRResult, error) {
+	m.calls++
+	m.got = req
+	if m.err != nil {
+		return PRResult{Branch: req.Branch}, m.err
+	}
+	return PRResult{URL: m.url, Branch: req.Branch}, nil
+}
 
 type fakeWorker struct {
 	name string
@@ -203,5 +222,118 @@ func runGit(t *testing.T, dir string, args ...string) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, string(out))
+	}
+}
+
+func TestRunOpensPRInPRMode(t *testing.T) {
+	root := newGitRepo(t)
+	opener := &mockPROpener{url: "https://github.com/acme/repo/pull/42"}
+	svc := NewService(Config{
+		Enabled:              true,
+		Mode:                 "pr",
+		RequireCleanWorktree: true,
+		MaxAttempts:          1,
+		Root:                 root,
+		WorktreeRoot:         filepath.Join(t.TempDir(), "worktrees"),
+		ArtifactRoot:         filepath.Join(t.TempDir(), "artifacts"),
+		ValidationProfiles:   []string{"echo_test"},
+		PROpener:             opener,
+		BaseBranch:           "main",
+		Workers: map[string]PatchWorker{
+			"fake": fakeWorker{name: "fake", run: func(req WorkerRequest) error {
+				return os.WriteFile(filepath.Join(req.Worktree, "hello.txt"), []byte("patched\n"), 0644)
+			}},
+		},
+		WorkerOrder: []string{"fake"},
+	})
+
+	result, err := svc.Run(context.Background(), "autopatch-pr", Request{Description: "fix the crash on startup"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Status != StatusPROpened {
+		t.Fatalf("status = %q, want pr_opened: %+v", result.Status, result)
+	}
+	if result.PRURL != "https://github.com/acme/repo/pull/42" || result.Branch != "autopatch/autopatch-pr" {
+		t.Fatalf("PR fields wrong: url=%q branch=%q", result.PRURL, result.Branch)
+	}
+	if opener.calls != 1 {
+		t.Fatalf("opener should be called once, got %d", opener.calls)
+	}
+	if opener.got.Worktree == "" || !strings.HasPrefix(opener.got.Title, "fix: ") || opener.got.BaseBranch != "main" {
+		t.Fatalf("PR request wrong: %+v", opener.got)
+	}
+	if !strings.Contains(opener.got.Body, "Validation") {
+		t.Fatalf("PR body should include validation evidence:\n%s", opener.got.Body)
+	}
+}
+
+func TestPRFailureKeepsProposedPatch(t *testing.T) {
+	root := newGitRepo(t)
+	opener := &mockPROpener{err: errInjected}
+	svc := NewService(Config{
+		Enabled: true, Mode: "pr", RequireCleanWorktree: true, MaxAttempts: 1,
+		Root:               root,
+		WorktreeRoot:       filepath.Join(t.TempDir(), "worktrees"),
+		ArtifactRoot:       filepath.Join(t.TempDir(), "artifacts"),
+		ValidationProfiles: []string{"echo_test"},
+		PROpener:           opener,
+		Workers: map[string]PatchWorker{
+			"fake": fakeWorker{name: "fake", run: func(req WorkerRequest) error {
+				return os.WriteFile(filepath.Join(req.Worktree, "hello.txt"), []byte("patched\n"), 0644)
+			}},
+		},
+		WorkerOrder: []string{"fake"},
+	})
+	result, err := svc.Run(context.Background(), "autopatch-prfail", Request{Description: "fix bug"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Status != StatusProposed {
+		t.Fatalf("status = %q, want proposed (patch preserved): %+v", result.Status, result)
+	}
+	if result.PatchPath == "" || !strings.Contains(result.Error, "pr creation failed") {
+		t.Fatalf("expected preserved patch + pr error: %+v", result)
+	}
+}
+
+func TestProposeModeDoesNotOpenPR(t *testing.T) {
+	root := newGitRepo(t)
+	opener := &mockPROpener{url: "x"}
+	svc := NewService(Config{
+		Enabled: true, RequireCleanWorktree: true, MaxAttempts: 1, // default mode = propose
+		Root:               root,
+		WorktreeRoot:       filepath.Join(t.TempDir(), "worktrees"),
+		ArtifactRoot:       filepath.Join(t.TempDir(), "artifacts"),
+		ValidationProfiles: []string{"echo_test"},
+		PROpener:           opener,
+		Workers: map[string]PatchWorker{
+			"fake": fakeWorker{name: "fake", run: func(req WorkerRequest) error {
+				return os.WriteFile(filepath.Join(req.Worktree, "hello.txt"), []byte("patched\n"), 0644)
+			}},
+		},
+		WorkerOrder: []string{"fake"},
+	})
+	result, _ := svc.Run(context.Background(), "autopatch-propose", Request{Description: "fix bug"})
+	if result.Status != StatusProposed {
+		t.Fatalf("want proposed, got %q", result.Status)
+	}
+	if opener.calls != 0 {
+		t.Fatalf("propose mode must not open a PR, got %d calls", opener.calls)
+	}
+}
+
+func TestPRTitleAndBody(t *testing.T) {
+	if got := prTitle("Fix the crash\nmore detail"); got != "fix: Fix the crash" {
+		t.Fatalf("prTitle = %q", got)
+	}
+	if got := prTitle(""); got != "fix: autopatch fix" {
+		t.Fatalf("empty prTitle = %q", got)
+	}
+	body := prBody(Result{Diagnosis: "null deref", DiffStat: "a | 2 +-", ValidationResults: []validation.Result{{Profile: "go_test_all", Status: "passed"}}})
+	for _, want := range []string{"Diagnosis", "null deref", "Changes", "Validation", "go_test_all"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("prBody missing %q:\n%s", want, body)
+		}
 	}
 }

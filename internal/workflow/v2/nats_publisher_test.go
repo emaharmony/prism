@@ -15,8 +15,8 @@ func TestTaskPacketMarshaling(t *testing.T) {
 		TaskID:      "T-001",
 		Description: "Implement the NATS delegation wiring for Phase 3",
 		Context: TaskContext{
-			Files:      []string{"delegation.go", "engine.go"},
-			Decisions:  []string{"Use nats.go library", "Follow existing patterns"},
+			Files:       []string{"delegation.go", "engine.go"},
+			Decisions:   []string{"Use nats.go library", "Follow existing patterns"},
 			Constraints: []string{"Must use existing NATS connection if available"},
 		},
 		ExpectedDeliverable: "nats_publisher.go with NATSPublisher and NATSListener",
@@ -222,9 +222,9 @@ func TestEventPayloadMarshaling(t *testing.T) {
 	event := map[string]any{
 		"type": "workflow.phase.entered",
 		"payload": map[string]any{
-			"phase":     "PROBE",
-			"workflow":  "bassbook-chapter-1",
-			"run_id":    "ng-12345",
+			"phase":    "PROBE",
+			"workflow": "bassbook-chapter-1",
+			"run_id":   "ng-12345",
 		},
 		"timestamp": "1234567890",
 	}
