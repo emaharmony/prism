@@ -123,6 +123,10 @@ type PlanTask struct {
 	ID              string         `json:"id"`
 	Description     string         `json:"description"`
 	Agent           string         `json:"agent"`
+	// Capability, when set, is the capability an agent must hold to run this
+	// task. It enables capability-aware routing/validation: a task delegated to
+	// an agent that lacks it fails closed. Empty = no capability requirement.
+	Capability      string         `json:"capability,omitempty"`
 	DependsOn       []string       `json:"depends_on,omitempty"`
 	SuccessCriteria string         `json:"success_criteria"`
 	RiskLevel       string         `json:"risk_level"`

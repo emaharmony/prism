@@ -77,6 +77,9 @@ type TaskPacket struct {
 	ValidationChecklist []string    `json:"validation_checklist"`
 	Priority            string      `json:"priority"`
 	Deadline            string      `json:"deadline"`
+	// RequiredCapability, when set, is the capability the target agent must hold
+	// to run this task (capability-aware routing). Empty = no requirement.
+	RequiredCapability string `json:"required_capability,omitempty"`
 }
 
 type TaskContext struct {
@@ -125,6 +128,7 @@ func (dm *DelegationManager) BuildTaskPacket(task PlanTask) TaskPacket {
 		ExpectedDeliverable: task.SuccessCriteria,
 		Priority:            task.RiskLevel,
 		Deadline:            time.Now().Add(dm.timeoutFor(task.Agent)).UTC().Format(time.RFC3339),
+		RequiredCapability:  task.Capability,
 	}
 }
 

@@ -74,9 +74,13 @@ Design principles for production/long-term:
   tools; researchers/planners stay read-only), enforced in the runner (denied
   tools are fed back, never executed) and wired in serve; bounded concurrent
   runs (semaphore, cap 4). Denials are non-fatal so the agent adapts.
-- [ ] **4b — (deferred) Capability routing + worktree-per-subagent:** add
-  `RequiredCapability` to `TaskPacket` for capability-aware assignment, and give
-  file-mutating sub-agents their own V56 worktree for true parallel isolation.
+- [x] **4b — Capability-aware routing:** `PlanTask.Capability` →
+  `TaskPacket.RequiredCapability` (via `BuildTaskPacket`); the Worker fails a
+  task closed when the target agent lacks the required capability. Empty =
+  no requirement (backward compatible).
+- [ ] **4c — (next) Worktree-per-subagent:** file-mutating sub-agents get their
+  own V56 gitx worktree (exec pointed at it, cleanup on completion) for true
+  parallel isolation.
 - [ ] **5 — Full system run (Eggventura):** one proper end-to-end run against
   D:/Projects/Roblox/Eggventura. **(a)** report-only first (safe, no writes),
   then **(b)** a non-report / implementation run (write-enabled) — per user
@@ -103,6 +107,10 @@ Design principles for production/long-term:
   the "code" capability; enforced in the runner (denied → fed back, not
   executed) and wired in serve. Bounded concurrent sub-agent runs (semaphore).
   4 scope tests incl. deny/allow-in-role runner paths. Green build.
+- **Iteration 4b (2026-07-05):** Capability-aware routing — `PlanTask.Capability`
+  flows to `TaskPacket.RequiredCapability`; the Worker fails a task closed if the
+  target agent lacks it (empty = no requirement, backward compatible). Tests for
+  the packet propagation and worker gate (missing/satisfied). Green build.
 
 ## Verification
 `go build ./... && go vet ./... && go test ./...` green each iteration. Smoke

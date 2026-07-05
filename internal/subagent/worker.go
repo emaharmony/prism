@@ -83,6 +83,12 @@ func (w *Worker) Handle(ctx context.Context, packet v2.TaskPacket) v2.TaskComple
 		return failed(packet.TaskID, fmt.Sprintf("unknown agent %q", packet.TargetAgent))
 	}
 
+	// Capability-aware routing: a task delegated to an agent that lacks the
+	// required capability fails closed rather than running on the wrong agent.
+	if packet.RequiredCapability != "" && !hasCapability(runtime, packet.RequiredCapability) {
+		return failed(packet.TaskID, fmt.Sprintf("agent %q lacks required capability %q", packet.TargetAgent, packet.RequiredCapability))
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, w.deadlineFor(packet))
 	defer cancel()
 
