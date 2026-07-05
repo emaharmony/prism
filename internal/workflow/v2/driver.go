@@ -368,6 +368,35 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 
 			case ActionFinal, ActionPhaseComplete:
 				if reject := e.enforceCommitPush(phaseName, hasWritten, hasCommitted, hasPushed, opts.SkipPushRequirement); reject != "" {
+					// Try auto-commit: if files were written and git_add was called
+					// (staged changes exist), run git_commit + git_push automatically.
+					if hasWritten && !hasCommitted {
+						log.Printf("[V2] auto-commit: writing was detected but no commit. Attempting auto-commit...")
+						commitResult, commitErr := e.executeTool(ctx, phaseName, &ToolRequest{
+							Tool:  "git_commit",
+							Input: map[string]any{"message": "auto: " + fmt.Sprintf("autonomous loop work (%s)", e.state.RunID)},
+						}, tool)
+						if commitErr == nil && commitResult != "" {
+							hasCommitted = true
+							messages = append(messages, Message{Role: "user", Content: fmt.Sprintf("Auto-committed: %s", truncate(commitResult, 500))})
+							// Now try push
+							if !hasPushed && !opts.SkipPushRequirement {
+								pushResult, pushErr := e.executeTool(ctx, phaseName, &ToolRequest{
+									Tool:  "git_push",
+									Input: map[string]any{},
+								}, tool)
+								if pushErr == nil {
+									hasPushed = true
+									messages = append(messages, Message{Role: "user", Content: fmt.Sprintf("Auto-pushed: %s", truncate(pushResult, 500))})
+								}
+							}
+							// Re-check enforcement after auto-commit
+							if reject2 := e.enforceCommitPush(phaseName, hasWritten, hasCommitted, hasPushed, opts.SkipPushRequirement); reject2 == "" {
+								// Enforcement passed, proceed to verification
+								break
+							}
+						}
+					}
 					messages = append(messages, Message{Role: "system", Content: reject})
 					iter-- // don't burn the budget on an enforcement bounce
 					continue
