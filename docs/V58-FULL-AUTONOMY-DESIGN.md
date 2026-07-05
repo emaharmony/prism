@@ -91,11 +91,27 @@ Design principles for production/long-term:
   over real embedded NATS (packet → worker → LoopRunner → completion, incl.
   fail-closed), plus a full-system boot with `PRISM_SUBAGENT_WORKER=1` targeting
   the Eggventura project (agents + worker + health up). No writes.
-- [ ] **5b — (awaiting explicit go-ahead) Implementation run (Eggventura):**
-  write-enabled run through the Factory (`approval_mode: implementation` +
-  `run_codex`) against D:/Projects/Roblox/Eggventura. Requires the Python
-  Factory running and user confirmation to flip write access to the real
-  project. The cron re-firing the same prompt is NOT treated as authorization.
+- [~] **5b — Implementation run (Eggventura): PREREQS VERIFIED, trigger gated.**
+  User authorized; verified: Factory Python running, Eggventura is a real Rojo
+  git repo (baseline `0092d6b`, clean), claude CLI authed, and the dedicated
+  Eggventura serve **boots write-enabled** (astraea+atlas on claude_code,
+  factory→Eggventura `implementation`+`run_codex`). Blockers to a *fully
+  unattended* Codex-write run (each surmountable, but together too risky to
+  gamble unattended on the real project):
+  1. Serve tool registration (incl. `send_cross_message` + the sub-agent worker)
+     is coupled to having a messaging channel configured — no channel → not
+     registered (the documented serve coupling).
+  2. Default gated loop pauses at FEEDBACK_PRE (no `auto_approve`) — needs a
+     fast-loop/auto-approve workflow config to run unattended.
+  3. Gated-loop verification profile is `go_test_all` (Go-oriented) — wrong for
+     a Roblox/Luau project; the real Roblox executor is the Factory (Rojo/Codex),
+     triggered via `send_cross_message`, not the gated loop.
+  4. The Factory handoff depends on the LLM emitting the right `send_cross_message`
+     call (non-deterministic).
+  Recommended completion: run it eyes-on (auto-approve + channel-configured
+  dedicated serve, watch inbox→outbox→Eggventura git, revert to `0092d6b` if
+  needed), OR use the Factory's documented direct-inbox handoff (the runbook's
+  recommended path for `run_codex` implementation runs).
 
 ## Loop conclusion (2026-07-05)
 
