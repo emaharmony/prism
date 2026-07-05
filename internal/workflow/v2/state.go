@@ -16,6 +16,10 @@ const (
 	StatusCompleted  WorkflowStatus = "completed"
 	StatusFailed     WorkflowStatus = "failed"
 	StatusBlocked    WorkflowStatus = "blocked"
+	// StatusRolledBack marks a run whose work was discarded by the V57
+	// auto-rollback (blocking verification exhausted or the run ended in a
+	// failing state with auto_rollback enabled).
+	StatusRolledBack WorkflowStatus = "rolled_back"
 )
 
 // PhaseStatus represents the status of a single phase.
@@ -53,6 +57,7 @@ type WorkflowState struct {
 	Feedback              *FeedbackState               `json:"feedback,omitempty"`
 	Report                *ReportState                 `json:"report,omitempty"`
 	Verification          *VerificationRecord          `json:"verification,omitempty"`
+	Rollback              *RollbackRecord              `json:"rollback,omitempty"`
 	SystemMessages        map[string][]string          `json:"system_messages,omitempty"` // messages to inject per phase
 	AgentRegistry         map[string]*AgentInfo        `json:"agent_registry,omitempty"`
 	TotalPromptTokens     int                          `json:"total_prompt_tokens,omitempty"`
@@ -66,9 +71,14 @@ type WorkflowState struct {
 type PhaseState struct {
 	Status     PhaseStatus     `json:"status"`
 	Iterations int             `json:"iterations"`
-	EnteredAt  string          `json:"entered_at"`
-	ExitedAt   string          `json:"exited_at,omitempty"`
-	GateResult *GateResultData `json:"gate_result,omitempty"`
+	// PromptTokens/CompletionTokens accumulate this phase's LLM usage so a
+	// per-phase budget (PhaseConfig.MaxTokens) can be enforced and observers
+	// can see where a run spends its tokens.
+	PromptTokens     int             `json:"prompt_tokens,omitempty"`
+	CompletionTokens int             `json:"completion_tokens,omitempty"`
+	EnteredAt        string          `json:"entered_at"`
+	ExitedAt         string          `json:"exited_at,omitempty"`
+	GateResult       *GateResultData `json:"gate_result,omitempty"`
 }
 
 // GateResultData is the persisted gate result.
@@ -189,6 +199,15 @@ type VerificationRecord struct {
 	Summary  string `json:"summary,omitempty"`
 	Attempts int    `json:"attempts"`
 	RanAt    string `json:"ran_at"`
+}
+
+// RollbackRecord captures a V57 auto-rollback: why the run's work was
+// discarded and whether the rollback itself succeeded. A non-empty Error means
+// rollback was attempted but failed — the branch may still hold bad commits.
+type RollbackRecord struct {
+	Reason string `json:"reason"`
+	Error  string `json:"error,omitempty"`
+	At     string `json:"at"`
 }
 
 // ReportState tracks the report completeness.
@@ -564,6 +583,25 @@ func (s *WorkflowState) SetVerification(profile string, passed bool, exitCode in
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 }
 
+// SetRollback records a V57 auto-rollback outcome.
+func (s *WorkflowState) SetRollback(reason, errMsg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Rollback = &RollbackRecord{
+		Reason: reason,
+		Error:  errMsg,
+		At:     time.Now().UTC().Format(time.RFC3339),
+	}
+	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+}
+
+// RolledBack reports whether the run's work was successfully rolled back.
+func (s *WorkflowState) RolledBack() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Rollback != nil && s.Rollback.Error == ""
+}
+
 // VerificationPassed reports whether the latest verification run passed.
 func (s *WorkflowState) VerificationPassed() bool {
 	s.mu.RLock()
@@ -577,4 +615,27 @@ func (s *WorkflowState) AddTokens(prompt, completion int) {
 	defer s.mu.Unlock()
 	s.TotalPromptTokens += prompt
 	s.TotalCompletionTokens += completion
+}
+
+// AddPhaseTokens accumulates LLM usage on a phase's state (created on demand).
+func (s *WorkflowState) AddPhaseTokens(phaseName string, prompt, completion int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.PhaseStates[phaseName]
+	if !ok {
+		ps = &PhaseState{Status: PhaseStatusInProgress}
+		s.PhaseStates[phaseName] = ps
+	}
+	ps.PromptTokens += prompt
+	ps.CompletionTokens += completion
+}
+
+// GetPhaseTokens returns a phase's accumulated prompt+completion token total.
+func (s *WorkflowState) GetPhaseTokens(phaseName string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if ps, ok := s.PhaseStates[phaseName]; ok {
+		return ps.PromptTokens + ps.CompletionTokens
+	}
+	return 0
 }

@@ -34,8 +34,10 @@ Read directly — never block on it.
 
 ## 1. MODE SELECT
 
-- Backlog has unchecked items → **BUILDER** cycle.
-- Backlog empty (or all remaining items BLOCKED) → **OPERATOR** cycle.
+- Backlog has unchecked non-stretch items → **BUILDER** cycle.
+- Only *(stretch)* or BLOCKED items remain, or backlog empty → **OPERATOR**
+  cycle. (Stretch items are picked up only when an operator cycle has nothing
+  actionable and the harness is healthy.)
 
 ## 2a. BUILDER cycle (one cohesive V-series iteration)
 

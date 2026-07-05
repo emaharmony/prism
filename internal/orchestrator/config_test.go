@@ -60,6 +60,26 @@ func TestValidateEmptyConfig(t *testing.T) {
 	}
 }
 
+// Both autopatch modes must pass validation — "pr" (V50) was implemented but
+// rejected here, making the whole autopatch-PR feature unreachable.
+func TestValidateAutopatchModes(t *testing.T) {
+	for _, mode := range []string{"propose", "pr"} {
+		cfg := DefaultConfig()
+		cfg.Autopatch.Enabled = true
+		cfg.Autopatch.Mode = mode
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("autopatch mode %q should be valid, got: %v", mode, err)
+		}
+	}
+
+	cfg := DefaultConfig()
+	cfg.Autopatch.Enabled = true
+	cfg.Autopatch.Mode = "yolo"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for unknown autopatch mode")
+	}
+}
+
 func TestValidateAgentIDs(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Agents = []AgentConfig{

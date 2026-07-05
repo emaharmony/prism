@@ -45,9 +45,12 @@ import (
 
 // RunConfig holds the configuration for a run.
 type RunConfig struct {
-	Task          string
-	Project       string
-	Agent         string
+	Task string
+	// WorkspaceContext is pre-built workspace context (V19 --context flags)
+	// injected into the prompt ahead of any Remembrance context.
+	WorkspaceContext string
+	Project          string
+	Agent            string
 	BusURL        string
 	MemoryEnabled bool
 	RequireMemory bool
@@ -324,6 +327,15 @@ func (r *Runner) Run() (*RunResult, error) {
 	}, evt.ID)
 
 	// 6. Build and write prompt
+	// Workspace context (V19 --context flags) is injected ahead of any
+	// Remembrance context so project knowledge frames the memories.
+	if r.config.WorkspaceContext != "" {
+		if contextStr != "" {
+			contextStr = r.config.WorkspaceContext + "\n\n" + contextStr
+		} else {
+			contextStr = r.config.WorkspaceContext
+		}
+	}
 	promptContent := prompt.BuildPrompt(r.config.Agent, r.config.Project, r.config.Task, contextStr)
 	runDir := filepath.Join(r.config.RunDir, r.runID)
 	if err := prompt.WritePrompt(runDir, promptContent); err != nil {

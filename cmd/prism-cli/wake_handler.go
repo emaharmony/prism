@@ -26,6 +26,7 @@ import (
 	"github.com/emaharmony/prism/internal/agent"
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/factorymonitor"
+	"github.com/emaharmony/prism/internal/gitx"
 	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/plan"
@@ -1771,6 +1772,40 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	}
 	runID := fmt.Sprintf("gl-%d", time.Now().Unix())
 
+	// V56: per-run worktree isolation. The run gets its own directory under
+	// <repo>/.prism/worktrees/<runID> on a fresh prism/<runID> branch, so
+	// parallel runs on one repo cannot collide and the main worktree is never
+	// touched. workRoot is what tools, verification, branch detection, and the
+	// system prompt operate on; stateDir stays outside the worktree. Fail
+	// closed: if the user asked for isolation and we can't provide it, don't
+	// run un-isolated.
+	workRoot := repoPath
+	runBranch := ""
+	runRolledBack := false // set by the V57 rollback runner; read by worktree cleanup
+	if project != nil && project.WorktreeIsolation {
+		wtPath := filepath.Join(repoPath, ".prism", "worktrees", runID)
+		runBranch = "prism/" + runID
+		if err := gitx.EnsureExcluded(ctx, repoPath, ".prism/"); err != nil {
+			log.Printf("[GATED-LOOP] worktree exclude not written (continuing): %v", err)
+		}
+		if err := gitx.CreateBranchWorktree(ctx, repoPath, wtPath, runBranch, ""); err != nil {
+			log.Printf("[GATED-LOOP] worktree isolation failed, refusing to run un-isolated: %v", err)
+			return fmt.Sprintf("Gated loop aborted: worktree isolation is enabled for project %s but the worktree could not be created: %v", projectID, err), 0, 0
+		}
+		workRoot = wtPath
+		// Defers run LIFO: the branch deletion is registered FIRST so it runs
+		// AFTER the worktree is removed (a checked-out branch can't be deleted).
+		// A rolled-back run's branch holds nothing worth keeping locally.
+		defer func() {
+			if runRolledBack && runBranch != "" {
+				gitx.DeleteBranch(stdcontext.Background(), repoPath, runBranch)
+				log.Printf("[GATED-LOOP] rolled-back run branch %s deleted", runBranch)
+			}
+		}()
+		defer gitx.RemoveWorktree(stdcontext.Background(), repoPath, wtPath)
+		log.Printf("[GATED-LOOP] run isolated in worktree %s (branch %s)", wtPath, runBranch)
+	}
+
 	// Engine: NATS emitter for dashboard observability + delegation for optional
 	// sub-agent reviewers. Falls back to a no-op log emitter without NATS.
 	var emitter v2.EventEmitter = &v2.LogEmitter{}
@@ -1782,7 +1817,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	engine := v2.NewEngine(config, emitter, delegation)
 	engine.GetState().RunID = runID
 	engine.GetState().ProjectID = projectID
-	engine.GetState().RepoPath = repoPath
+	engine.GetState().RepoPath = workRoot
 	engine.GetState().Channel = channel
 	requirePush := repoHasRemote(repoPath)
 	engine.GetState().RequirePush = requirePush
@@ -1792,7 +1827,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	// controls what runs). This makes EXECUTION prove the code builds and its
 	// tests pass before the phase can complete, instead of committing unverified code.
 	if workflowHasVerification(config) {
-		vexec := validation.NewExecutor(validation.NewRegistry(), repoPath, filepath.Join(stateDir, runID))
+		vexec := validation.NewExecutor(validation.NewRegistry(), workRoot, filepath.Join(stateDir, runID))
 		vexec.SetEmitter(func(eventType, source string, payload map[string]any) {
 			emitter.Emit(eventType, payload)
 		})
@@ -1811,6 +1846,38 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 			}
 			return v2.VerificationOutcome{Ran: true, Passed: passed, ExitCode: res.ExitCode, Summary: summary}
 		})
+	}
+
+	// V57: auto-rollback runner. Captures the run's start SHA; when the engine
+	// declares the run failing (blocking verification exhausted, blocking
+	// fallback, or ending with red verification), the run's work is discarded:
+	// reset --hard to the start SHA and, under worktree isolation, the run
+	// branch is deleted after cleanup. Pushed commits are NOT force-removed —
+	// the remote branch remains for forensics.
+	if config.Global.AutoRollback {
+		startSHA, shaErr := gitx.CurrentSHA(ctx, workRoot)
+		origBranch, _ := gitx.CurrentBranch(ctx, workRoot)
+		if shaErr != nil {
+			log.Printf("[GATED-LOOP] auto_rollback disabled for this run (cannot resolve start SHA): %v", shaErr)
+		} else {
+			engine.SetRollbackRunner(func(rctx stdcontext.Context, reason string) error {
+				if err := gitx.ResetHard(rctx, workRoot, startSHA); err != nil {
+					return err
+				}
+				// Outside worktree isolation the model may have checked out its
+				// own feature branch — return to the branch the run started on.
+				if origBranch != "" {
+					if cur, _ := gitx.CurrentBranch(rctx, workRoot); cur != origBranch {
+						if _, err := gitx.RunCommand(rctx, workRoot, "", "git", "checkout", origBranch); err != nil {
+							return err
+						}
+					}
+				}
+				runRolledBack = true
+				log.Printf("[GATED-LOOP] rolled back to %.12s: %s", startSHA, reason)
+				return nil
+			})
+		}
 	}
 
 	// Delegation transport: publish delegated task packets onto the agent subject so
@@ -1896,10 +1963,15 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	}
 
 	// System prompt (project-aware, no hardcoded paths) + tool schemas.
-	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, repoPath, requirePush)
+	// Under worktree isolation the model is pointed at workRoot and told the
+	// run branch already exists.
+	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, workRoot, requirePush)
+	if runBranch != "" {
+		systemPromptFull += fmt.Sprintf("\n## Worktree isolation\nThis run is isolated in its own git worktree, already checked out on branch `%s`. Do NOT create a new branch (skip git_checkout with create=true) — commit and push on the current branch.\n", runBranch)
+	}
 	if wh.toolReg != nil {
 		toolInfos := wh.toolReg.ListWithDescriptions()
-		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, repoPath, repoPath)
+		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, workRoot, workRoot)
 	}
 	if wh.skills != nil {
 		systemPromptFull += skill.PromptSuffix(wh.skills.List())
@@ -1951,7 +2023,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		}
 		if gitTools[req.Tool] {
 			if _, ok := input["repo_path"]; !ok {
-				input["repo_path"] = repoPath
+				input["repo_path"] = workRoot
 			}
 		}
 		result, err := exec.ExecuteWithPolicy(c, req.Tool, agentCfg.ID, projectID, runID, input)
@@ -1967,14 +2039,14 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		return summarizeToolResult(req.Tool, fmt.Sprintf("%v", result.Output)), nil
 	}
 
-	getBranch := func() string { return wh.getCurrentBranchIn(repoPath) }
+	getBranch := func() string { return wh.getCurrentBranchIn(workRoot) }
 
-	log.Printf("[GATED-LOOP] starting %q project=%s repo=%s (%d phases)", config.Name, projectID, repoPath, len(config.Phases))
+	log.Printf("[GATED-LOOP] starting %q project=%s repo=%s (%d phases)", config.Name, projectID, workRoot, len(config.Phases))
 	wfState, driveErr := engine.Drive(ctx, llm, toolFn, v2.DriveOptions{
 		SystemPrompt:        systemPromptFull,
 		UserPrompt:          userPromptFull,
 		StateDir:            stateDir,
-		RepoPath:            repoPath,
+		RepoPath:            workRoot,
 		ProjectID:           projectID,
 		Channel:             channel,
 		GetBranch:           getBranch,
