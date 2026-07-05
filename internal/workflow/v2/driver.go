@@ -347,6 +347,13 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				// fix, consuming budget so a perpetually-failing build can't loop
 				// forever (it falls through to the phase fallback instead).
 				if e.runVerification(ctx, phaseName, &messages) {
+					// V57: stop burning budget once verification has failed
+					// MaxVerificationAttempts times — roll the run back instead.
+					if e.verificationAttemptsExhausted() {
+						e.doRollback(ctx, fmt.Sprintf("blocking verification failed %d times in %s", e.state.Verification.Attempts, phaseName))
+						e.state.SetPhaseStatus(phaseName, PhaseStatusFallback)
+						break iterLoop
+					}
 					hasCommitted, hasPushed = false, false
 					continue
 				}
@@ -368,15 +375,24 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			}
 		}
 
-		if !completed {
+		if !completed && !e.state.RolledBack() {
 			if e.gatePasses(phaseName) {
 				completed = true
 			} else {
 				e.emitEvent("phase.fallback", map[string]any{"phase": phaseName, "reason": "max_iterations_reached"})
 				e.state.SetPhaseStatus(phaseName, PhaseStatusFallback)
 				if cfg := e.config.GetPhase(phaseName); cfg != nil && cfg.Fallback.Blocks {
+					// V57: a blocking-phase fallback ends the run — discard its
+					// work first when auto-rollback is on.
+					if e.config.Global.AutoRollback {
+						e.doRollback(ctx, fmt.Sprintf("blocking phase %s did not pass its gate", phaseName))
+					}
 					e.state.Status = StatusBlocked
 					e.emitEvent("workflow.blocked", map[string]any{"phase": phaseName})
+					if opts.StateDir != "" {
+						_ = SaveWorkflowState(e.state, opts.StateDir)
+						_ = SaveCurrentWorkflowState(e.state, opts.StateDir)
+					}
 					return e.state, fmt.Errorf("blocking phase %s did not pass its gate", phaseName)
 				}
 			}
@@ -387,6 +403,13 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 		}
 		e.emitEvent("phase.exited", map[string]any{"phase": phaseName})
 
+		// V57: a rolled-back run must not keep executing later phases. Re-stamp
+		// the phase as fallback — ExecutionPhase.Exit unconditionally marks it
+		// completed, which would misreport a discarded run.
+		if e.state.RolledBack() {
+			e.state.SetPhaseStatus(phaseName, PhaseStatusFallback)
+			break
+		}
 		if !e.advance(phaseName) {
 			break
 		}
@@ -396,7 +419,19 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 		}
 	}
 
-	e.state.Status = StatusCompleted
+	// V57: a run that ends in a failing state (budget exhausted or loop ended
+	// with a blocking verification still red) is discarded, not shipped.
+	if e.config.Global.AutoRollback && !e.state.RolledBack() {
+		if v := e.state.Verification; v != nil && !v.Passed {
+			e.doRollback(ctx, "run ended with failing verification")
+		}
+	}
+
+	if e.state.RolledBack() {
+		e.state.Status = StatusRolledBack
+	} else {
+		e.state.Status = StatusCompleted
+	}
 	e.state.CompletedAt = time.Now().UTC().Format(time.RFC3339)
 	e.emitEvent("workflow.completed", map[string]any{"workflow": e.config.Name})
 	if opts.StateDir != "" {
@@ -458,6 +493,37 @@ func (e *Engine) injectGateReason(phaseName string, messages *[]Message) {
 			*messages = append(*messages, Message{Role: "system", Content: "GATE NOT MET: " + result.Reason})
 		}
 	}
+}
+
+// doRollback fires the injected V57 rollback runner (if any), emits the
+// workflow.rollback event, and records the outcome on the state. Idempotent:
+// a second call is a no-op once a rollback has been recorded.
+func (e *Engine) doRollback(ctx context.Context, reason string) {
+	if e.rollback == nil || e.state.Rollback != nil {
+		return
+	}
+	e.emitEvent("workflow.rollback", map[string]any{"reason": reason})
+	log.Printf("[V2] auto-rollback: %s", reason)
+	if err := e.rollback(ctx, reason); err != nil {
+		log.Printf("[V2] rollback FAILED (branch may still hold bad commits): %v", err)
+		e.state.SetRollback(reason, err.Error())
+		return
+	}
+	e.state.SetRollback(reason, "")
+}
+
+// verificationAttemptsExhausted reports whether auto-rollback should fire
+// because a blocking verification has failed MaxVerificationAttempts times.
+func (e *Engine) verificationAttemptsExhausted() bool {
+	if !e.config.Global.AutoRollback {
+		return false
+	}
+	max := e.config.Global.MaxVerificationAttempts
+	if max <= 0 {
+		max = 3
+	}
+	v := e.state.Verification
+	return v != nil && !v.Passed && v.Attempts >= max
 }
 
 // runVerification runs the phase's configured verification profile (if any) and

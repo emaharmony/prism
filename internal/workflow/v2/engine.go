@@ -26,12 +26,23 @@ type Engine struct {
 	externalEvent chan ExternalEvent     // events from Discord/NATS during feedback gates
 	verify        VerificationFunc       // optional objective build/test runner (see driver.go)
 	publishTask   func(TaskPacket) error // optional publisher for delegated task packets
+	rollback      RollbackFunc           // optional V57 rollback runner (see SetRollbackRunner)
 }
+
+// RollbackFunc discards a failing run's work (e.g. git reset --hard to the
+// run's start SHA). reason describes why the rollback fired.
+type RollbackFunc func(ctx context.Context, reason string) error
 
 // SetTaskPublisher wires the transport used to dispatch delegated task packets
 // (e.g. a NATS publish). When nil, delegation still records state and marks the
 // task in_progress but no packet is sent — keeping the engine usable in tests.
 func (e *Engine) SetTaskPublisher(fn func(TaskPacket) error) { e.publishTask = fn }
+
+// SetRollbackRunner wires the V57 auto-rollback action. It only fires when
+// GlobalConfig.AutoRollback is true AND the run ends in a failing state; when
+// nil, rollback is skipped even if configured — keeping the engine usable in
+// tests and callers that cannot roll back.
+func (e *Engine) SetRollbackRunner(fn RollbackFunc) { e.rollback = fn }
 
 // SetVerificationRunner wires an objective build/test runner into the engine.
 // When set, phases that declare a verification profile have it run automatically
