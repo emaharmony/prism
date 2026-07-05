@@ -26,6 +26,7 @@ import (
 	"github.com/emaharmony/prism/internal/agent"
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/factorymonitor"
+	"github.com/emaharmony/prism/internal/gitx"
 	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/plan"
@@ -1769,6 +1770,30 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	}
 	runID := fmt.Sprintf("gl-%d", time.Now().Unix())
 
+	// V56: per-run worktree isolation. The run gets its own directory under
+	// <repo>/.prism/worktrees/<runID> on a fresh prism/<runID> branch, so
+	// parallel runs on one repo cannot collide and the main worktree is never
+	// touched. workRoot is what tools, verification, branch detection, and the
+	// system prompt operate on; stateDir stays outside the worktree. Fail
+	// closed: if the user asked for isolation and we can't provide it, don't
+	// run un-isolated.
+	workRoot := repoPath
+	runBranch := ""
+	if project != nil && project.WorktreeIsolation {
+		wtPath := filepath.Join(repoPath, ".prism", "worktrees", runID)
+		runBranch = "prism/" + runID
+		if err := gitx.EnsureExcluded(ctx, repoPath, ".prism/"); err != nil {
+			log.Printf("[GATED-LOOP] worktree exclude not written (continuing): %v", err)
+		}
+		if err := gitx.CreateBranchWorktree(ctx, repoPath, wtPath, runBranch, ""); err != nil {
+			log.Printf("[GATED-LOOP] worktree isolation failed, refusing to run un-isolated: %v", err)
+			return fmt.Sprintf("Gated loop aborted: worktree isolation is enabled for project %s but the worktree could not be created: %v", projectID, err), 0, 0
+		}
+		workRoot = wtPath
+		defer gitx.RemoveWorktree(stdcontext.Background(), repoPath, wtPath)
+		log.Printf("[GATED-LOOP] run isolated in worktree %s (branch %s)", wtPath, runBranch)
+	}
+
 	// Engine: NATS emitter for dashboard observability + delegation for optional
 	// sub-agent reviewers. Falls back to a no-op log emitter without NATS.
 	var emitter v2.EventEmitter = &v2.LogEmitter{}
@@ -1780,7 +1805,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	engine := v2.NewEngine(config, emitter, delegation)
 	engine.GetState().RunID = runID
 	engine.GetState().ProjectID = projectID
-	engine.GetState().RepoPath = repoPath
+	engine.GetState().RepoPath = workRoot
 	engine.GetState().Channel = channel
 	requirePush := repoHasRemote(repoPath)
 	engine.GetState().RequirePush = requirePush
@@ -1790,7 +1815,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	// controls what runs). This makes EXECUTION prove the code builds and its
 	// tests pass before the phase can complete, instead of committing unverified code.
 	if workflowHasVerification(config) {
-		vexec := validation.NewExecutor(validation.NewRegistry(), repoPath, filepath.Join(stateDir, runID))
+		vexec := validation.NewExecutor(validation.NewRegistry(), workRoot, filepath.Join(stateDir, runID))
 		vexec.SetEmitter(func(eventType, source string, payload map[string]any) {
 			emitter.Emit(eventType, payload)
 		})
@@ -1894,10 +1919,15 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	}
 
 	// System prompt (project-aware, no hardcoded paths) + tool schemas.
-	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, repoPath, requirePush)
+	// Under worktree isolation the model is pointed at workRoot and told the
+	// run branch already exists.
+	systemPromptFull := wh.buildGatedLoopSystemPrompt(project, taskPrompt, workRoot, requirePush)
+	if runBranch != "" {
+		systemPromptFull += fmt.Sprintf("\n## Worktree isolation\nThis run is isolated in its own git worktree, already checked out on branch `%s`. Do NOT create a new branch (skip git_checkout with create=true) — commit and push on the current branch.\n", runBranch)
+	}
 	if wh.toolReg != nil {
 		toolInfos := wh.toolReg.ListWithDescriptions()
-		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, repoPath, repoPath)
+		systemPromptFull += agent.BuildToolPromptSuffix(toolInfos, workRoot, workRoot)
 	}
 	if wh.skills != nil {
 		systemPromptFull += skill.PromptSuffix(wh.skills.List())
@@ -1949,7 +1979,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		}
 		if gitTools[req.Tool] {
 			if _, ok := input["repo_path"]; !ok {
-				input["repo_path"] = repoPath
+				input["repo_path"] = workRoot
 			}
 		}
 		result, err := exec.ExecuteWithPolicy(c, req.Tool, agentCfg.ID, projectID, runID, input)
@@ -1965,14 +1995,14 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		return summarizeToolResult(req.Tool, fmt.Sprintf("%v", result.Output)), nil
 	}
 
-	getBranch := func() string { return wh.getCurrentBranchIn(repoPath) }
+	getBranch := func() string { return wh.getCurrentBranchIn(workRoot) }
 
-	log.Printf("[GATED-LOOP] starting %q project=%s repo=%s (%d phases)", config.Name, projectID, repoPath, len(config.Phases))
+	log.Printf("[GATED-LOOP] starting %q project=%s repo=%s (%d phases)", config.Name, projectID, workRoot, len(config.Phases))
 	wfState, driveErr := engine.Drive(ctx, llm, toolFn, v2.DriveOptions{
 		SystemPrompt:        systemPromptFull,
 		UserPrompt:          userPromptFull,
 		StateDir:            stateDir,
-		RepoPath:            repoPath,
+		RepoPath:            workRoot,
 		ProjectID:           projectID,
 		Channel:             channel,
 		GetBranch:           getBranch,

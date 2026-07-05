@@ -25,10 +25,12 @@ type configSummary struct {
 	PrimaryAgent  string `json:"primary_agent,omitempty"`
 	Channels      int    `json:"channels"`
 	Projects      int    `json:"projects"`
-	MCPServers    int    `json:"mcp_servers"`
-	AutopatchMode string `json:"autopatch_mode,omitempty"`
-	WorkflowFile  string `json:"workflow_file,omitempty"`
-	Remembrance   bool   `json:"remembrance_enabled"`
+	// IsolatedProjects counts projects with worktree_isolation enabled (V56).
+	IsolatedProjects int    `json:"isolated_projects,omitempty"`
+	MCPServers       int    `json:"mcp_servers"`
+	AutopatchMode    string `json:"autopatch_mode,omitempty"`
+	WorkflowFile     string `json:"workflow_file,omitempty"`
+	Remembrance      bool   `json:"remembrance_enabled"`
 }
 
 // summarizeConfig builds the summary from a loaded config (pure, testable).
@@ -46,6 +48,11 @@ func summarizeConfig(cfg *orchestrator.Config) configSummary {
 		if a.Primary {
 			s.PrimaryAgent = a.ID
 			break
+		}
+	}
+	for _, p := range cfg.Projects {
+		if p.WorktreeIsolation {
+			s.IsolatedProjects++
 		}
 	}
 	if cfg.Autopatch.Enabled {
@@ -70,7 +77,11 @@ func renderConfigSummary(s configSummary) string {
 	}
 	fmt.Fprintf(&b, "  agents:      %d (primary: %s)\n", s.Agents, primary)
 	fmt.Fprintf(&b, "  channels:    %d\n", s.Channels)
-	fmt.Fprintf(&b, "  projects:    %d\n", s.Projects)
+	if s.IsolatedProjects > 0 {
+		fmt.Fprintf(&b, "  projects:    %d (%d worktree-isolated)\n", s.Projects, s.IsolatedProjects)
+	} else {
+		fmt.Fprintf(&b, "  projects:    %d\n", s.Projects)
+	}
 	fmt.Fprintf(&b, "  mcp servers: %d\n", s.MCPServers)
 	autopatch := s.AutopatchMode
 	if autopatch == "" {

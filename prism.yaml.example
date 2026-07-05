@@ -233,6 +233,9 @@ projects:
     workflow_config: ""                    # optional per-project workflow override
     orchestrator: ""                       # optional agent ID to drive this project's
                                            # gated loop (e.g. "claude_code"); empty = primary agent
+    worktree_isolation: false              # V56: run each gated loop in its own git worktree
+                                           # (<repo>/.prism/worktrees/<run-id>, branch prism/<run-id>)
+                                           # so parallel runs can't collide; main worktree untouched
     default: true                          # used when no --project is given
 
 agents:

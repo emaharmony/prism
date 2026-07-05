@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/emaharmony/prism/internal/gitx"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/validation"
 	"github.com/rs/xid"
@@ -26,8 +26,10 @@ const (
 )
 
 var (
-	ErrDisabled      = errors.New("autopatch is disabled")
-	ErrDirtyWorktree = errors.New("autopatch requires a clean git worktree")
+	ErrDisabled = errors.New("autopatch is disabled")
+	// ErrDirtyWorktree aliases gitx.ErrDirtyWorktree (V56 lifted the worktree
+	// helpers into internal/gitx) so errors.Is works across both packages.
+	ErrDirtyWorktree = gitx.ErrDirtyWorktree
 	ErrNoWorker      = errors.New("no autopatch worker is available")
 )
 
@@ -434,31 +436,19 @@ func validationsPassed(results []validation.Result) bool {
 	return true
 }
 
+// Worktree/git helpers live in internal/gitx (V56); these thin wrappers keep
+// autopatch call sites unchanged.
+
 func createWorktree(ctx context.Context, root, worktree string) error {
-	if err := os.MkdirAll(filepath.Dir(worktree), 0755); err != nil {
-		return err
-	}
-	_, err := runCommand(ctx, root, "", "git", "worktree", "add", "--detach", worktree, "HEAD")
-	if err != nil {
-		return fmt.Errorf("create worktree: %w", err)
-	}
-	return nil
+	return gitx.CreateDetachedWorktree(ctx, root, worktree)
 }
 
 func removeWorktree(ctx context.Context, root, worktree string) {
-	_, _ = runCommand(ctx, root, "", "git", "worktree", "remove", "--force", worktree)
-	_ = os.RemoveAll(worktree)
+	gitx.RemoveWorktree(ctx, root, worktree)
 }
 
 func ensureCleanWorktree(ctx context.Context, root string) error {
-	out, err := runCommand(ctx, root, "", "git", "status", "--porcelain")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(out) != "" {
-		return fmt.Errorf("%w: %s", ErrDirtyWorktree, strings.TrimSpace(out))
-	}
-	return nil
+	return gitx.EnsureClean(ctx, root)
 }
 
 func captureDiff(ctx context.Context, worktree string) (string, string, error) {
@@ -533,40 +523,15 @@ func resultToMap(result Result) map[string]any {
 }
 
 func runCommand(ctx context.Context, dir, stdin, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
+	return gitx.RunCommand(ctx, dir, stdin, name, args...)
 }
 
 func resolveUnder(root, path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(root, path)
+	return gitx.ResolveUnder(root, path)
 }
 
 func safeID(value string) string {
-	value = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
-			return r
-		}
-		return '-'
-	}, value)
-	value = strings.Trim(value, ".-_")
-	if value == "" {
-		return "autopatch"
-	}
-	if len(value) > 120 {
-		return value[:120]
-	}
-	return value
+	return gitx.SafeID(value, "autopatch")
 }
 
 func firstNonEmpty(values ...string) string {
