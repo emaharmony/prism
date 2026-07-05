@@ -145,7 +145,7 @@ type conversationContext struct {
 func executeServe(args []string) {
 	serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := serveCmd.String("config", "prism.yaml", "Path to prism.yaml configuration file")
-	portFlag := serveCmd.Int("port", 8321, "Health check server port")
+	portFlag := serveCmd.Int("port", 0, "Health check server port (default: prism.port from config, then 8321)")
 	busURL := serveCmd.String("bus-url", "", "NATS bus URL (empty = embedded)")
 
 	serveCmd.Parse(args)
@@ -175,6 +175,17 @@ func executeServe(args []string) {
 	// Override NATS URL if provided
 	if *busURL != "" {
 		cfg.Prism.NATSURL = *busURL
+	}
+
+	// Port precedence: --port flag → prism.port from config → 8321. Clients
+	// (prism status/watch) build URLs from cfg.Prism.Port, so the server must
+	// honor the same knob or they point at the wrong port.
+	servePort := *portFlag
+	if servePort == 0 {
+		servePort = cfg.Prism.Port
+	}
+	if servePort == 0 {
+		servePort = 8321
 	}
 
 	fmt.Printf("  Agents: %v\n", agentNames(cfg))
@@ -617,7 +628,7 @@ func executeServe(args []string) {
 		go delegTracker.Start(stdctx.Background())
 	}
 
-	apiPort := *portFlag + 1 // API on port+1 (default 8322)
+	apiPort := servePort + 1 // API on port+1 (default 8322)
 	apiServer := api.NewServer(api.Config{
 		Addr:               cfg.BindAddr(apiPort),
 		Orch:               orch,
@@ -645,8 +656,8 @@ func executeServe(args []string) {
 	fmt.Printf("  API:    http://%s:%d/api/v1/status\n", displayHost, apiPort)
 
 	// 11. Start health check server
-	go startHealthServer(*portFlag, cfg, agentReg, sessMgr, discordBots)
-	fmt.Printf("  Health: http://%s:%d/health\n", displayHost, *portFlag)
+	go startHealthServer(servePort, cfg, agentReg, sessMgr, discordBots)
+	fmt.Printf("  Health: http://%s:%d/health\n", displayHost, servePort)
 
 	if cfg.FactoryMonitor.Enabled {
 		if len(discordBots) == 0 {
@@ -1590,12 +1601,24 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 	// For now, we support Ollama (local/cloud), OpenAI, Anthropic, and Gemini.
 	//
 	// V21 will add provider chains, fallbacks, and cost tiers.
+	//
+	// The registry is keyed by model ID, so two agents sharing a model with
+	// DIFFERENT providers would silently overwrite each other (last wins).
+	// Fail closed at startup instead of routing traffic to the wrong provider.
+	seen := make(map[string]string) // model ID → provider name
 	for _, agentCfg := range cfg.Agents {
-		p, info, err := createProvider(agentCfg, cfg.ClaudeCode)
+		if prev, ok := seen[agentCfg.Model]; ok {
+			if prev != agentCfg.Provider {
+				return fmt.Errorf("agent %s: model %q is already registered with provider %q; agents sharing a model ID must use the same provider", agentCfg.ID, agentCfg.Model, prev)
+			}
+			continue // same provider+model already registered — reuse it
+		}
+		p, info, err := createProvider(agentCfg, cfg)
 		if err != nil {
 			return fmt.Errorf("agent %s: %w", agentCfg.ID, err)
 		}
 		reg.Register(agentCfg.Model, p, info)
+		seen[agentCfg.Model] = agentCfg.Provider
 	}
 	return nil
 }
@@ -1603,7 +1626,7 @@ func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry)
 // createProvider creates a provider instance for an agent config.
 // V20 supports: ollama, openai, anthropic, gemini.
 // V34 adds openai_responses as an additive OpenAI Responses API option.
-func createProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.ClaudeCodeConfig) (provider.Provider, provider.ModelInfo, error) {
+func createProvider(agentCfg orchestrator.AgentConfig, cfg *orchestrator.Config) (provider.Provider, provider.ModelInfo, error) {
 	info := provider.ModelInfo{
 		ID:           agentCfg.Model,
 		ProviderName: agentCfg.Provider,
@@ -1611,9 +1634,9 @@ func createProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.Claude
 
 	switch agentCfg.Provider {
 	case "ollama":
-		// V20: Use the Ollama provider with default localhost endpoint.
-		// V21: Read base URL from config.
-		p, err := createOllamaProvider(agentCfg.Model)
+		// Base URL precedence: OLLAMA_BASE_URL env → prism.ollama_url →
+		// provider default (localhost:11434).
+		p, err := createOllamaProvider(agentCfg.Model, resolveOllamaURL("", cfg.Prism.OllamaURL))
 		if err != nil {
 			return nil, info, fmt.Errorf("ollama provider: %w", err)
 		}
@@ -1650,7 +1673,7 @@ func createProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.Claude
 	case "claude_code":
 		// Claude Code subscription brain: shells out to the `claude` CLI.
 		// Reuses the top-level claude_code: block for executable/timeout.
-		return createClaudeCodeProvider(agentCfg, ccCfg), info, nil
+		return createClaudeCodeProvider(agentCfg, cfg.ClaudeCode), info, nil
 
 	default:
 		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini, claude_code)", agentCfg.Provider)
@@ -1731,10 +1754,11 @@ func codexConfigFromOrchestrator(cfg orchestrator.CodexConfig, root *orchestrato
 }
 
 // createOllamaProvider creates an Ollama provider instance.
-// Uses localhost:11434 by default. V21: configurable base URL.
+// baseURL comes from resolveOllamaURL (env → config); empty means the
+// provider's default localhost:11434.
 // V30: Returns both Provider and ChatProvider — Ollama supports both interfaces.
-func createOllamaProvider(model string) (provider.Provider, error) {
-	p := ollama.New("") // empty = default localhost:11434
+func createOllamaProvider(model, baseURL string) (provider.Provider, error) {
+	p := ollama.New(baseURL)
 	// The Ollama Provider also implements ChatProvider via ollama.ChatProvider.
 	// It is registered under the same model ID and the runtime uses interface
 	// assertions to detect chat capability: prov.(provider.ChatProvider)

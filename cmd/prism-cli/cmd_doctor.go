@@ -47,9 +47,10 @@ type doctorCheck struct {
 // providerKeyEnv maps an LLM provider to the env var holding its API key. A
 // provider absent from the map needs no key (local or subscription-based).
 var providerKeyEnv = map[string]string{
-	"openai":    "OPENAI_API_KEY",
-	"anthropic": "ANTHROPIC_API_KEY",
-	"gemini":    "GEMINI_API_KEY",
+	"openai":           "OPENAI_API_KEY",
+	"openai_responses": "OPENAI_API_KEY",
+	"anthropic":        "ANTHROPIC_API_KEY",
+	"gemini":           "GEMINI_API_KEY",
 }
 
 // checkWorkspace verifies the workspace root exists and is writable.

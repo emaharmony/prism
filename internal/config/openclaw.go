@@ -129,6 +129,9 @@ func createProvider(providerName string, cfg OpenClawProviderConfig) (provider.P
 		if cfg.APIKey == "" {
 			return nil, fmt.Errorf("gemini provider requires an API key")
 		}
+		if cfg.BaseURL != "" {
+			return gemini.NewWithBaseURL(cfg.APIKey, cfg.BaseURL), nil
+		}
 		return gemini.New(cfg.APIKey), nil
 
 	default:
