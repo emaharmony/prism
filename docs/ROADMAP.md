@@ -48,6 +48,8 @@
 | V49 | Source-current | MCP client — adapt external MCP tool servers into the policy-gated tool.Registry; stdio JSON-RPC transport; `mcp_servers:` config wired into `prism serve`; MCP tools approval-required by default (separate AutoApproveMCP opt-in); `prism mcp` inspection + `prism mcp probe <name>` live tool listing |
 | V50 | Source-current | Self-patching `pr` mode — validated autopatch fix → branch/commit/push/PR via injectable PROpener (gh default); PR-failure preserves the patch |
 | V51 | Source-current | Issue-discovery scanner — autopatch proactively finds issues (CRLF-aware vet/todo/format detectors), ranks them, starts a fix→PR for the top one; `prism scan` surfaces findings with `--severity` filter and `--start` to fix the top issue |
+| V56 | Source-current | Gated-loop worktree isolation — `internal/gitx` shared git package (lifted from autopatch); `projects[].worktree_isolation` runs each loop in `<repo>/.prism/worktrees/<run-id>` on a `prism/<run-id>` branch so parallel runs can't collide; fails closed |
+| V57 | Source-current | Auto-rollback for failed loops (opt-in `global.auto_rollback`) — verification-attempts cap, blocking-fallback, and end-of-run-red triggers; `workflow.rollback` event; `rolled_back` run status; reset to start SHA / discard run branch; pushed commits never force-removed. Plus per-phase token budgets (`phases[].max_tokens`, `phase.budget_exhausted`) and a 10-fix wiring sweep (autopatch `pr` mode reachable, `prism.ollama_url` live, port/doctor/registry/run-context/gemini/remembrance disconnects) |
 
 ---
 

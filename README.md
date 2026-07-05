@@ -205,18 +205,19 @@ After enabling it, local agents can emit `[DELEGATE: codex | code] ...`, and cro
 
 ### Auto-Patching
 
-Autopatch turns explicit bug reports or validation failures into reviewable patch proposals. It creates an isolated git worktree, tries configured patch workers in order, runs allowlisted validation profiles, and stores artifacts under `.prism/data/autopatch/<task-id>/`. It is propose-only: patches are not applied to the main worktree.
+Autopatch turns explicit bug reports or validation failures into reviewable patch proposals. It creates an isolated git worktree, tries configured patch workers in order, runs allowlisted validation profiles, and stores artifacts under `.prism/data/autopatch/<task-id>/`. Two modes: `"propose"` (default — patch artifact only, never touches the main worktree) and `"pr"` (V50 — pushes a branch and opens a GitHub pull request via the `gh` CLI; `prism doctor` preflights `gh` auth).
 
 ```yaml
 autopatch:
   enabled: true
-  mode: "propose"
+  mode: "propose"            # or "pr" to open pull requests
   require_clean_worktree: true
   max_attempts: 2
   validation_profiles: ["go_test_all"]
   worker_order: ["codex", "local_agent"]
   local_agent: "forge"
   worktree_root: ".prism/worktrees"
+  base_branch: ""            # PR base in "pr" mode; empty = repo default
 ```
 
 Start a task with `POST /api/v1/autopatch` using `{"description":"tests are failing, fix this bug"}`. In Discord, explicit requests such as “auto patch this bug” or “tests are failing, fix this bug” start the same tracked `auto_patch` task.
@@ -482,6 +483,8 @@ Current routes include:
 | V52 | `prism config` validate + summarize prism.yaml | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
 | V54 | Skill-use capabilities (Claude Code / OpenClaw SKILL.md) | [V54](./docs/V54-SKILLS-DESIGN.md) |
 | V55 | Config wizard + OpenClaw→prism.yaml import (`prism config wizard` / `import`) | [V55](./docs/V55-CONFIG-WIZARD-DESIGN.md) |
+| V56 | Gated-loop worktree isolation (`projects[].worktree_isolation`, shared `internal/gitx`) | [V56](./docs/V56-WORKTREE-ISOLATION-DESIGN.md) |
+| V57 | Auto-rollback for failed loops + per-phase token budgets | [V57](./docs/V57-AUTO-ROLLBACK-DESIGN.md) |
 
 ---
 
