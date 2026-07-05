@@ -71,9 +71,14 @@ type WorkflowState struct {
 type PhaseState struct {
 	Status     PhaseStatus     `json:"status"`
 	Iterations int             `json:"iterations"`
-	EnteredAt  string          `json:"entered_at"`
-	ExitedAt   string          `json:"exited_at,omitempty"`
-	GateResult *GateResultData `json:"gate_result,omitempty"`
+	// PromptTokens/CompletionTokens accumulate this phase's LLM usage so a
+	// per-phase budget (PhaseConfig.MaxTokens) can be enforced and observers
+	// can see where a run spends its tokens.
+	PromptTokens     int             `json:"prompt_tokens,omitempty"`
+	CompletionTokens int             `json:"completion_tokens,omitempty"`
+	EnteredAt        string          `json:"entered_at"`
+	ExitedAt         string          `json:"exited_at,omitempty"`
+	GateResult       *GateResultData `json:"gate_result,omitempty"`
 }
 
 // GateResultData is the persisted gate result.
@@ -610,4 +615,27 @@ func (s *WorkflowState) AddTokens(prompt, completion int) {
 	defer s.mu.Unlock()
 	s.TotalPromptTokens += prompt
 	s.TotalCompletionTokens += completion
+}
+
+// AddPhaseTokens accumulates LLM usage on a phase's state (created on demand).
+func (s *WorkflowState) AddPhaseTokens(phaseName string, prompt, completion int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ps, ok := s.PhaseStates[phaseName]
+	if !ok {
+		ps = &PhaseState{Status: PhaseStatusInProgress}
+		s.PhaseStates[phaseName] = ps
+	}
+	ps.PromptTokens += prompt
+	ps.CompletionTokens += completion
+}
+
+// GetPhaseTokens returns a phase's accumulated prompt+completion token total.
+func (s *WorkflowState) GetPhaseTokens(phaseName string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if ps, ok := s.PhaseStates[phaseName]; ok {
+		return ps.PromptTokens + ps.CompletionTokens
+	}
+	return 0
 }
