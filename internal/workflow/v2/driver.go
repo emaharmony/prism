@@ -375,6 +375,7 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				messages = append(messages, Message{Role: "user", Content: toolMsg})
 
 			case ActionFinal, ActionPhaseComplete:
+				log.Printf("[V2] %s phase action=%d in %s hasWritten=%v hasCommitted=%v hasPushed=%v GetBranch=%v", phaseName, action.Type, phaseName, hasWritten, hasCommitted, hasPushed, opts.GetBranch != nil)
 				// Block completion if no writes were made during EXECUTION
 				if phaseName == "EXECUTION" && !hasWritten && opts.GetBranch != nil {
 					messages = append(messages, Message{Role: "system", Content: "WRITE REQUIRED: You cannot complete EXECUTION without writing any code. Call write_file NOW to implement your changes. After writing, call git_add, git_commit, git_push, then emit EXECUTION_COMPLETE."})
