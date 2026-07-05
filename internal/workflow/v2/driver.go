@@ -373,6 +373,12 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				messages = append(messages, Message{Role: "user", Content: toolMsg})
 
 			case ActionFinal, ActionPhaseComplete:
+				// Block completion if no writes were made during EXECUTION
+				if phaseName == "EXECUTION" && !hasWritten && opts.GetBranch != nil {
+					messages = append(messages, Message{Role: "system", Content: "WRITE REQUIRED: You cannot complete EXECUTION without writing any code. Call write_file NOW to implement your changes. After writing, call git_add, git_commit, git_push, then emit EXECUTION_COMPLETE."})
+					iter-- // don't burn budget
+					continue
+				}
 				if reject := e.enforceCommitPush(phaseName, hasWritten, hasCommitted, hasPushed, opts.SkipPushRequirement); reject != "" {
 					// Try auto-commit: if files were written and git_add was called
 					// (staged changes exist), run git_commit + git_push automatically.
