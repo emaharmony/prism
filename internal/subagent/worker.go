@@ -26,6 +26,10 @@ type AgentRuntime struct {
 	Provider     string
 	Model        string
 	Capabilities []string
+	// WorkDir is the isolated working directory for this task's run (set by the
+	// Worker from its WorktreeProvider). Empty = the shared/default root. The
+	// backend points file/git tools at it.
+	WorkDir string
 }
 
 // AgentResolver resolves an agent id to its runtime. ok is false when the id is
@@ -60,7 +64,12 @@ type Worker struct {
 	// maxRun caps a single task's wall-clock even if the packet Deadline is
 	// missing or absurd. 0 → DefaultMaxRun.
 	maxRun time.Duration
+	// worktrees, when set, gives code-capable tasks an isolated working dir.
+	worktrees WorktreeProvider
 }
+
+// SetWorktrees enables per-task worktree isolation for code-capable agents.
+func (w *Worker) SetWorktrees(p WorktreeProvider) { w.worktrees = p }
 
 // DefaultMaxRun bounds a single delegated task when no usable deadline is given.
 const DefaultMaxRun = 30 * time.Minute
@@ -87,6 +96,17 @@ func (w *Worker) Handle(ctx context.Context, packet v2.TaskPacket) v2.TaskComple
 	// required capability fails closed rather than running on the wrong agent.
 	if packet.RequiredCapability != "" && !hasCapability(runtime, packet.RequiredCapability) {
 		return failed(packet.TaskID, fmt.Sprintf("agent %q lacks required capability %q", packet.TargetAgent, packet.RequiredCapability))
+	}
+
+	// Worktree isolation: code-capable (file-mutating) agents run in their own
+	// git worktree so parallel runs don't collide. Non-mutating agents skip it.
+	if w.worktrees != nil && hasCapability(runtime, "code") {
+		dir, release, err := w.worktrees.Acquire(ctx, packet.TaskID)
+		if err != nil {
+			return failed(packet.TaskID, fmt.Sprintf("could not isolate worktree for agent %q: %v", packet.TargetAgent, err))
+		}
+		defer release()
+		runtime.WorkDir = dir
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, w.deadlineFor(packet))
