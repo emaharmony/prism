@@ -33,17 +33,36 @@ type GlobalConfig struct {
 	// string, e.g. "15m"). The special key "default" sets the fallback for agents
 	// without a specific entry. Lets a project control deadlines for its own roster.
 	DelegationTimeouts map[string]string `json:"delegation_timeouts,omitempty"`
+	// AutoRollback (V57) discards the run's work when the run ends in a failing
+	// state: blocking verification still failing after MaxVerificationAttempts,
+	// a blocking-phase fallback, or budget exhaustion with failing verification.
+	// The rollback itself is performed by an injected runner (see
+	// Engine.SetRollbackRunner) — typically git reset --hard to the run's start
+	// SHA, or discarding the run's worktree/branch under V56 isolation. Pushed
+	// commits on the run branch are NOT force-removed; branch review stays the
+	// remote safety net. Default false.
+	AutoRollback bool `json:"auto_rollback,omitempty"`
+	// MaxVerificationAttempts caps how many times a blocking verification may
+	// fail before AutoRollback triggers mid-run. 0 = default (3). Only
+	// meaningful when AutoRollback is true — without it, a blocking failure
+	// keeps iterating until phase/budget limits as before.
+	MaxVerificationAttempts int `json:"max_verification_attempts,omitempty"`
 }
 
 type PhaseConfig struct {
-	Name          string              `json:"name"`
-	Type          string              `json:"type"`
-	Description   string              `json:"description"`
-	MaxIterations int                 `json:"max_iterations"`
-	AllowedTools  []string            `json:"allowed_tools"`
-	Gate          GateConfig          `json:"gate"`
-	Fallback      FallbackConfig      `json:"fallback"`
-	Verification  *VerificationConfig `json:"verification,omitempty"`
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`
+	Description   string   `json:"description"`
+	MaxIterations int      `json:"max_iterations"`
+	AllowedTools  []string `json:"allowed_tools"`
+	// MaxTokens caps this phase's prompt+completion tokens. When exceeded the
+	// phase stops iterating (phase.budget_exhausted) and falls through to its
+	// fallback handling — softer than the run-wide global.max_total_tokens,
+	// which ends the whole run. 0 = no per-phase cap.
+	MaxTokens    int                 `json:"max_tokens,omitempty"`
+	Gate         GateConfig          `json:"gate"`
+	Fallback     FallbackConfig      `json:"fallback"`
+	Verification *VerificationConfig `json:"verification,omitempty"`
 }
 
 // VerificationConfig attaches an objective build/test check to a phase. After the
@@ -221,6 +240,23 @@ func ValidateConfig(cfg *WorkflowConfig) []string {
 	if cfg.Global.MaxTotalTokens < 0 {
 		errs = append(errs, "global.max_total_tokens must be >= 0")
 	}
+	if cfg.Global.MaxVerificationAttempts < 0 {
+		errs = append(errs, "global.max_verification_attempts must be >= 0")
+	}
+	if cfg.Global.AutoRollback {
+		// Rollback needs an objective failure signal — without a blocking
+		// verification profile there is nothing to decide "failing" with.
+		hasBlockingVerification := false
+		for _, p := range cfg.Phases {
+			if p.Verification != nil && p.Verification.Blocking && strings.TrimSpace(p.Verification.Profile) != "" {
+				hasBlockingVerification = true
+				break
+			}
+		}
+		if !hasBlockingVerification {
+			errs = append(errs, "global.auto_rollback requires at least one phase with blocking verification")
+		}
+	}
 	validPhase := map[string]bool{"probe": true, "research": true, "plan": true, "feedback_pre": true, "execution": true, "feedback_post": true, "report": true}
 	validGate := map[string]bool{"assumption_threshold": true, "confidence_threshold": true, "plan_completeness": true, "approval": true, "task_completion": true, "review_pass": true, "report_completeness": true, "": true}
 	seen := map[string]bool{}
@@ -240,6 +276,9 @@ func ValidateConfig(cfg *WorkflowConfig) []string {
 		}
 		if p.MaxIterations < 0 {
 			errs = append(errs, fmt.Sprintf("phase %q: max_iterations must be >= 0", p.Name))
+		}
+		if p.MaxTokens < 0 {
+			errs = append(errs, fmt.Sprintf("phase %q: max_tokens must be >= 0", p.Name))
 		}
 		if p.Verification != nil && strings.TrimSpace(p.Verification.Profile) == "" {
 			errs = append(errs, fmt.Sprintf("phase %q: verification.profile is required when verification is set", p.Name))

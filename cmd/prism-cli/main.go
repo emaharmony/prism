@@ -54,6 +54,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -85,7 +86,7 @@ func main() {
 	maxTokensFlag := runCmd.Int("max-tokens", 2048, "Max output tokens")
 	timeoutFlag := runCmd.Duration("timeout", 20*time.Minute, "LLM request timeout")
 	dryRunPrompt := runCmd.Bool("dry-run-prompt", false, "Build prompt and artifacts but skip LLM call")
-	ollamaURL := runCmd.String("ollama-url", "http://localhost:11434", "Ollama base URL")
+	ollamaURL := runCmd.String("ollama-url", "", "Ollama base URL (default: OLLAMA_BASE_URL env, then http://localhost:11434)")
 
 	// OpenClaw config flags (V18)
 	fromConfig := runCmd.Bool("from-config", false, "Load provider configuration from OpenClaw config")
@@ -144,7 +145,7 @@ func main() {
 				p = mock.New()
 				providerName = "mock"
 			case "ollama":
-				p = ollama.New(*ollamaURL)
+				p = ollama.New(resolveOllamaURL(*ollamaURL, ""))
 				providerName = "ollama"
 			case "openai":
 				apiKey := os.Getenv("OPENAI_API_KEY")
@@ -176,16 +177,50 @@ func main() {
 			}
 		}
 
-		// V19 context flags (will be wired into runConfig in a future change)
-		_ = *runContextFlag
-		_ = *runContextAuto
-		_ = *runContextFile
-		_ = *runWorkspaceRoot
+		// V19 context flags — build workspace context with the same builder
+		// as `prism context show` and inject it into the run prompt.
+		var workspaceContext string
+		if *runContextFlag != "" || *runContextAuto || *runContextFile != "" {
+			workspaceRoot := *runWorkspaceRoot
+			if workspaceRoot == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: cannot determine home directory for workspace root: %v\n", err)
+					os.Exit(1)
+				}
+				workspaceRoot = filepath.Join(home, ".openclaw", "workspace")
+			}
+			// Same check as `prism context show`: a missing workspace is a
+			// loud error, not silently-empty context.
+			if _, err := os.Stat(workspaceRoot); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: workspace directory not found: %s\n", workspaceRoot)
+				os.Exit(1)
+			}
+			var namedContexts []string
+			if *runContextFlag != "" {
+				namedContexts = strings.Split(*runContextFlag, ",")
+			}
+			autoTask := ""
+			if *runContextAuto {
+				autoTask = *taskFlag
+			}
+			var explicitFiles []string
+			if *runContextFile != "" {
+				explicitFiles = []string{*runContextFile}
+			}
+			injected, err := buildContextForRun(workspaceRoot, namedContexts, autoTask, explicitFiles, 0)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error building context: %v\n", err)
+				os.Exit(1)
+			}
+			workspaceContext = injected.FormattedString
+		}
 
 		executeRun(runConfig{
-			Task:          *taskFlag,
-			Project:       *projectFlag,
-			Agent:         *agentFlag,
+			Task:             *taskFlag,
+			WorkspaceContext: workspaceContext,
+			Project:          *projectFlag,
+			Agent:            *agentFlag,
 			BusURL:        *busURL,
 			MemoryEnabled: *memoryEnabled,
 			RequireMemory: *requireMemory,

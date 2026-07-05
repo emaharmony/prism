@@ -13,24 +13,23 @@ MCP client V49). The backlog below is what remains.
 
 ## Backlog (ordered — take the topmost unchecked item)
 
-- [ ] **V56 — Gated-loop worktree isolation**: per-run `git worktree` for the
-  wake-handler gated loop, reusing `internal/autopatch/autopatch.go:createWorktree`
-  / `removeWorktree`; config flag `project.worktree_isolation` (default off).
-  Today only autopatch is worktree-isolated; parallel gated-loop runs in one
-  repo share the filesystem.
-- [ ] **V57 — Automated rollback**: when gated-loop verification is still
-  failing after attempts/budget are exhausted, auto `git revert` (or discard
-  the run branch) behind config flag `workflow.auto_rollback` (default off).
-  PR mode remains the human safety net. Today the loop only fixes forward
-  (`internal/workflow/v2/driver.go`).
-- [ ] **Wiring fix — `prism.ollama_url` in serve mode**:
-  `createOllamaProvider` (`cmd/prism-cli/cmd_serve.go:~1736`) constructs
-  `ollama.New("")`, always hitting the default `localhost:11434`. Thread the
-  configured `prism.ollama_url` through (the one-shot `prism run --ollama-url`
-  path and vector search already honor it).
-- [ ] **Per-phase token budgets**: V35 follow-up in
-  `internal/workflow/v2/config.go` — only a per-run ceiling
-  (`MaxTotalTokens`) exists today; add optional per-phase caps.
+- [x] **V56 — Gated-loop worktree isolation**: DONE 2026-07-04 (`internal/gitx`
+  package, `projects[].worktree_isolation`, fail-closed worktree-per-run in
+  `RunGatedLoop`; docs/V56-WORKTREE-ISOLATION-DESIGN.md).
+- [x] **V57 — Automated rollback**: DONE 2026-07-04 (`global.auto_rollback` +
+  `max_verification_attempts`, `Engine.SetRollbackRunner`, three triggers,
+  `workflow.rollback` event, `rolled_back` status;
+  docs/V57-AUTO-ROLLBACK-DESIGN.md).
+- [x] **Wiring fix — `prism.ollama_url` in serve mode**: DONE 2026-07-04 as
+  part of a 10-fix wiring sweep (shared `resolveOllamaURL` precedence:
+  flag → OLLAMA_BASE_URL → config → default). Sweep also fixed: autopatch
+  `pr` mode rejected at validation (V50 was unreachable), serve ignoring
+  `prism.port`, doctor missing `openai_responses`, provider-registry silent
+  overwrite, `prism run` context flags discarded, gemini `base_url` in
+  OpenClaw import, Remembrance default-URL drift, and undocumented
+  config sections in prism.yaml.example.
+- [x] **Per-phase token budgets**: DONE 2026-07-04 (`phases[].max_tokens`,
+  `phase.budget_exhausted`, per-phase token accounting in run state).
 - [ ] *(stretch)* **Enforce per-skill `allowed-tools`**: advisory-only in the
   prompt today (`internal/skill/`, V54 follow-up).
 - [ ] *(stretch)* **MCP streamable-HTTP transport**: client is stdio-only
@@ -40,3 +39,7 @@ MCP client V49). The backlog below is what remains.
 
 <!-- One line per cycle, appended by the loop. Format:
 YYYY-MM-DD HH:MM | BUILDER|OPERATOR | what shipped / was found | verification | next -->
+2026-07-04 20:20 | BUILDER | 10-fix wiring sweep (a341380): pr mode reachable, ollama_url live, port/doctor/registry/context/gemini/remembrance/yaml-docs | go build+vet+test green | V56
+2026-07-04 20:40 | BUILDER | V56 worktree isolation (f0407df): internal/gitx + projects[].worktree_isolation, fail-closed | go build+vet+test green + gitx tests vs real temp repos | V57
+2026-07-04 20:55 | BUILDER | V57 auto-rollback (bdaee16): 3 triggers, rolled_back status, runs --json rollback field | go build+vet+test green, 7 new driver tests | per-phase budgets
+2026-07-04 21:05 | BUILDER | Per-phase token budgets (10dcb46): phases[].max_tokens + phase.budget_exhausted | go build+vet+test green | docs/ROADMAP sync, then backlog = stretch items only → OPERATOR next

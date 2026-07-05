@@ -35,7 +35,14 @@ prism:
   # /workflow-editor.html. See examples/workflows/gated-loop.yaml.
   workflow_config: "examples/workflows/gated-loop.yaml"
   # Local Ollama base URL used by serve-mode Ollama agents.
+  # Precedence: OLLAMA_BASE_URL env var overrides this; default localhost:11434.
   ollama_url: "http://localhost:11434"
+  # Health server port. The HTTP API listens on port+1. `prism status` and
+  # `prism watch` read this too, so server and clients stay in sync.
+  # The serve --port flag overrides it.
+  port: 8321
+  # Token budget for workspace context injection (SOUL.md, AGENTS.md, ...).
+  context_token_budget: 4000
   # Serve-mode LLM timeout in seconds. Local models often need more than 60s.
   llm_timeout_seconds: 1200
   # Log level: debug, info, warn, error
@@ -129,6 +136,42 @@ bridge:
     enable_ui_generation: false
     ui_generation_dry_run: true
 
+# Self-patching scanner + fix loop (V50/V51). `prism scan` finds ranked issues;
+# `prism scan --start` (or Discord "auto patch this bug") launches a fix task.
+# Workers author the fix in an isolated git worktree, then validation profiles
+# gate the result. Artifacts land under .prism/data/autopatch/<task-id>/.
+autopatch:
+  enabled: false
+  # "propose" = produce a patch artifact for review (never touches your repo).
+  # "pr"      = open a GitHub pull request via the gh CLI (doctor preflights auth).
+  mode: "propose"
+  # Refuse to start when the repo has uncommitted changes (recommended).
+  require_clean_worktree: true
+  max_attempts: 2
+  validation_profiles: ["go_test_all"]
+  # Try workers in order: "codex" (Codex CLI) then "local_agent" (agent below).
+  worker_order: ["codex", "local_agent"]
+  # Agent ID used by the local_agent worker (e.g. an Ollama coder agent).
+  local_agent: "forge"
+  # Where isolated worktrees are created (relative to the repo root).
+  worktree_root: ".prism/worktrees"
+  # PR base branch in "pr" mode. Empty = repository default branch.
+  base_branch: ""
+
+# External MCP (Model Context Protocol) tool servers (V49). Tools register as
+# mcp_<name>_<tool> and run through the same policy engine as built-in tools.
+# Probe a server before enabling: prism mcp probe --command npx --args "-y,..."
+mcp_servers: []
+#  - name: "filesystem"
+#    command: "npx"
+#    args: ["-y", "@modelcontextprotocol/server-filesystem", "D:/_projects_"]
+#    env: []
+#    enabled: true
+
+# MCP tools require approval by default (remote tools are higher-trust-risk).
+# Set true to allow UNATTENDED execution of external MCP tools.
+mcp_auto_approve: false
+
 factory_monitor:
   enabled: false
   root: "D:/_projects_/roblox-factory"
@@ -190,6 +233,9 @@ projects:
     workflow_config: ""                    # optional per-project workflow override
     orchestrator: ""                       # optional agent ID to drive this project's
                                            # gated loop (e.g. "claude_code"); empty = primary agent
+    worktree_isolation: false              # V56: run each gated loop in its own git worktree
+                                           # (<repo>/.prism/worktrees/<run-id>, branch prism/<run-id>)
+                                           # so parallel runs can't collide; main worktree untouched
     default: true                          # used when no --project is given
 
 agents:

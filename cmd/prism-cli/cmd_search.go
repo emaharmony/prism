@@ -90,7 +90,7 @@ func createEmbeddingProvider(name string) (vector.EmbeddingProvider, error) {
 		}
 		return vector.NewOpenAIEmbeddingProvider(apiKey, model, 0), nil
 	case "ollama":
-		baseURL := os.Getenv("OLLAMA_BASE_URL")
+		baseURL := resolveOllamaURL("", "")
 		model := os.Getenv("OLLAMA_EMBEDDING_MODEL")
 		if model == "" {
 			model = "nomic-embed-text"

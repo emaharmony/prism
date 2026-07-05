@@ -248,6 +248,12 @@ type runDelegationJSON struct {
 	Status string `json:"status"`
 }
 
+type runRollbackJSON struct {
+	Reason string `json:"reason"`
+	Error  string `json:"error,omitempty"`
+	At     string `json:"at,omitempty"`
+}
+
 type runDetailJSON struct {
 	RunID            string               `json:"run_id"`
 	Workflow         string               `json:"workflow"`
@@ -256,6 +262,7 @@ type runDetailJSON struct {
 	PromptTokens     int                  `json:"prompt_tokens"`
 	CompletionTokens int                  `json:"completion_tokens"`
 	Verification     *runVerificationJSON `json:"verification,omitempty"`
+	Rollback         *runRollbackJSON     `json:"rollback,omitempty"`
 	Phases           []runPhaseJSON       `json:"phases"`
 	Delegations      []runDelegationJSON  `json:"delegations,omitempty"`
 }
@@ -272,6 +279,9 @@ func runStateToJSON(st *v2.WorkflowState) ([]byte, error) {
 	}
 	if v := st.Verification; v != nil {
 		d.Verification = &runVerificationJSON{Profile: v.Profile, Passed: v.Passed, ExitCode: v.ExitCode, Attempts: v.Attempts}
+	}
+	if r := st.Rollback; r != nil {
+		d.Rollback = &runRollbackJSON{Reason: r.Reason, Error: r.Error, At: r.At}
 	}
 	names := make([]string, 0, len(st.PhaseStates))
 	for name := range st.PhaseStates {

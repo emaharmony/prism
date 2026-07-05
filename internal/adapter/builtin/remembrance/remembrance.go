@@ -12,7 +12,7 @@
 // and trigger the dream cycle natively.
 //
 // Architecture Decision: The adapter communicates via HTTP to the
-// Remembrance service (default http://localhost:8788). This keeps
+// Remembrance service (default remcli.DefaultBaseURL). This keeps
 // Prism and Remembrance as separate processes — Remembrance is
 // Python, Prism is Go. The adapter is thin: it translates Prism
 // adapter calls to HTTP requests.
@@ -36,7 +36,7 @@ type Adapter struct {
 
 // Config holds configuration for the Remembrance adapter.
 type Config struct {
-	// BaseURL is the Remembrance service URL (default: http://localhost:8788)
+	// BaseURL is the Remembrance service URL (default: remcli.DefaultBaseURL)
 	BaseURL string `json:"base_url" yaml:"base_url"`
 
 	// Timeout is the HTTP request timeout (default: 60s)
@@ -46,7 +46,7 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() Config {
 	return Config{
-		BaseURL: "http://localhost:8788",
+		BaseURL: remcli.DefaultBaseURL,
 		Timeout: remcli.DefaultTimeout,
 	}
 }
@@ -54,7 +54,7 @@ func DefaultConfig() Config {
 // NewAdapter creates a new Remembrance adapter with the given config.
 func NewAdapter(cfg Config) *Adapter {
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = "http://localhost:8788"
+		cfg.BaseURL = remcli.DefaultBaseURL
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = remcli.DefaultTimeout

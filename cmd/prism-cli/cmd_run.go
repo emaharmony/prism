@@ -31,8 +31,9 @@ import (
 // runConfig holds all CLI flags for the `prism run` command.
 // It maps 1:1 to the flags defined in main.go's subcommand parser.
 type runConfig struct {
-	Task          string // The task description (required)
-	Project       string // Project name for event metadata
+	Task             string // The task description (required)
+	WorkspaceContext string // Pre-built workspace context (V19 --context flags) injected into the prompt
+	Project          string // Project name for event metadata
 	Agent         string // Agent name for event metadata
 	BusURL        string // NATS bus URL for event publishing
 	MemoryEnabled bool   // Enable the Remembrance context hook
@@ -62,8 +63,9 @@ func executeRun(cfg runConfig) {
 	}
 
 	runner := run.NewRunner(run.RunConfig{
-		Task:           cfg.Task,
-		Project:        cfg.Project,
+		Task:             cfg.Task,
+		WorkspaceContext: cfg.WorkspaceContext,
+		Project:          cfg.Project,
 		Agent:          cfg.Agent,
 		BusURL:         cfg.BusURL,
 		MemoryEnabled:  cfg.MemoryEnabled,

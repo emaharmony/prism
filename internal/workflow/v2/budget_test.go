@@ -2,6 +2,7 @@ package v2
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,6 +50,70 @@ func TestDriveStopsOnTokenBudget(t *testing.T) {
 	}
 	if state.Status != StatusCompleted {
 		t.Fatalf("budget-exhausted run should finalize as completed, got %s", state.Status)
+	}
+}
+
+// A phase with its own token cap must stop iterating (phase.budget_exhausted)
+// while the RUN continues to later phases — per-phase caps are softer than the
+// run-wide ceiling.
+func TestDrivePhaseTokenBudgetStopsPhaseNotRun(t *testing.T) {
+	cfg := &WorkflowConfig{
+		Name: "phase-budget", Version: 1,
+		Global: GlobalConfig{MaxTotalIterations: 50},
+		Phases: []PhaseConfig{
+			{
+				Name: "PROBE", Type: "probe", MaxIterations: 20, MaxTokens: 5,
+				Gate: GateConfig{Type: "assumption_threshold", Threshold: 2.0},
+			},
+			{
+				// Second phase with a trivially-passing gate proves the run survives.
+				Name: "EXECUTION", Type: "execution", MaxIterations: 5,
+				Gate: GateConfig{Type: "task_completion", Mode: "partial_allowed"},
+			},
+		},
+	}
+	em := &captureEmitter{}
+	engine := NewEngine(cfg, em, nil)
+	engine.GetState().Plan = &PlanGraph{}
+	llm := func(_ context.Context, _ []Message) (string, int, int, error) {
+		return `{"type":"final","content":"x"}`, 3, 3, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	state, err := engine.Drive(ctx, llm, noopTool, DriveOptions{SystemPrompt: "s", UserPrompt: "u", SkipPushRequirement: true})
+	if err != nil {
+		t.Fatalf("Drive returned error: %v", err)
+	}
+	if !em.has("phase.budget_exhausted") {
+		t.Fatalf("expected phase.budget_exhausted event, got %v", em.events)
+	}
+	if em.has("workflow.budget_exhausted") {
+		t.Fatal("per-phase cap must not trip the run-wide budget event")
+	}
+	if got := state.GetPhaseTokens("PROBE"); got < 5 {
+		t.Fatalf("PROBE should have accumulated at least its cap, got %d", got)
+	}
+	// The run continued past the capped phase.
+	if ps := state.PhaseStates["EXECUTION"]; ps == nil || ps.Iterations == 0 {
+		t.Fatalf("EXECUTION should have run after PROBE hit its cap: %+v", ps)
+	}
+	if state.Status != StatusCompleted {
+		t.Fatalf("run should finalize as completed, got %s", state.Status)
+	}
+}
+
+func TestValidateConfigRejectsNegativePhaseMaxTokens(t *testing.T) {
+	cfg := execVerifyConfig(false)
+	cfg.Phases[0].MaxTokens = -1
+	errs := ValidateConfig(cfg)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "max_tokens must be >= 0") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected max_tokens validation error, got %v", errs)
 	}
 }
 
