@@ -25,6 +25,15 @@ global:
   # delegation_timeouts:
   #   default: "20m"
   #   reviewer: "10m"
+  # V57: discard a failing run's work instead of finishing with a red build.
+  # Fires when blocking verification fails max_verification_attempts times, a
+  # blocking phase falls back, or the run ends with failing verification.
+  # Rollback = git reset --hard to the run's start SHA (and, under V56 worktree
+  # isolation, the run branch is discarded). Pushed commits are never
+  # force-removed. Requires at least one phase with blocking verification.
+  auto_rollback: false
+  # Blocking-verification failures allowed before auto_rollback fires. 0 = 3.
+  max_verification_attempts: 3
   state_persistence_dir: "runs/gated-loop"
   event_emission: true
 

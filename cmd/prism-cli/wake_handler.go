@@ -1779,6 +1779,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	// run un-isolated.
 	workRoot := repoPath
 	runBranch := ""
+	runRolledBack := false // set by the V57 rollback runner; read by worktree cleanup
 	if project != nil && project.WorktreeIsolation {
 		wtPath := filepath.Join(repoPath, ".prism", "worktrees", runID)
 		runBranch = "prism/" + runID
@@ -1790,6 +1791,15 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 			return fmt.Sprintf("Gated loop aborted: worktree isolation is enabled for project %s but the worktree could not be created: %v", projectID, err), 0, 0
 		}
 		workRoot = wtPath
+		// Defers run LIFO: the branch deletion is registered FIRST so it runs
+		// AFTER the worktree is removed (a checked-out branch can't be deleted).
+		// A rolled-back run's branch holds nothing worth keeping locally.
+		defer func() {
+			if runRolledBack && runBranch != "" {
+				gitx.DeleteBranch(stdcontext.Background(), repoPath, runBranch)
+				log.Printf("[GATED-LOOP] rolled-back run branch %s deleted", runBranch)
+			}
+		}()
 		defer gitx.RemoveWorktree(stdcontext.Background(), repoPath, wtPath)
 		log.Printf("[GATED-LOOP] run isolated in worktree %s (branch %s)", wtPath, runBranch)
 	}
@@ -1834,6 +1844,38 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 			}
 			return v2.VerificationOutcome{Ran: true, Passed: passed, ExitCode: res.ExitCode, Summary: summary}
 		})
+	}
+
+	// V57: auto-rollback runner. Captures the run's start SHA; when the engine
+	// declares the run failing (blocking verification exhausted, blocking
+	// fallback, or ending with red verification), the run's work is discarded:
+	// reset --hard to the start SHA and, under worktree isolation, the run
+	// branch is deleted after cleanup. Pushed commits are NOT force-removed —
+	// the remote branch remains for forensics.
+	if config.Global.AutoRollback {
+		startSHA, shaErr := gitx.CurrentSHA(ctx, workRoot)
+		origBranch, _ := gitx.CurrentBranch(ctx, workRoot)
+		if shaErr != nil {
+			log.Printf("[GATED-LOOP] auto_rollback disabled for this run (cannot resolve start SHA): %v", shaErr)
+		} else {
+			engine.SetRollbackRunner(func(rctx stdcontext.Context, reason string) error {
+				if err := gitx.ResetHard(rctx, workRoot, startSHA); err != nil {
+					return err
+				}
+				// Outside worktree isolation the model may have checked out its
+				// own feature branch — return to the branch the run started on.
+				if origBranch != "" {
+					if cur, _ := gitx.CurrentBranch(rctx, workRoot); cur != origBranch {
+						if _, err := gitx.RunCommand(rctx, workRoot, "", "git", "checkout", origBranch); err != nil {
+							return err
+						}
+					}
+				}
+				runRolledBack = true
+				log.Printf("[GATED-LOOP] rolled back to %.12s: %s", startSHA, reason)
+				return nil
+			})
+		}
 	}
 
 	// Delegation transport: publish delegated task packets onto the agent subject so
