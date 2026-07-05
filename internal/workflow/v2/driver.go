@@ -156,6 +156,23 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			hasCommitted, hasPushed = false, false
 		}
 
+		// Auto-approve: skip feedback gates entirely. The phase still enters and
+		// exits (for state tracking) but never pauses for external input.
+		if e.config.Global.AutoApprove && (phaseName == "FEEDBACK_PRE" || phaseName == "FEEDBACK_POST") {
+			log.Printf("[V2] auto-approve: skipping %s gate", phaseName)
+			e.state.Status = StatusInProgress
+			e.state.PauseReason = ""
+			e.recordGate(phaseName)
+			if err := phase.Exit(ctx, e.state); err != nil {
+				log.Printf("[V2] phase %s exit: %v", phaseName, err)
+			}
+			e.emitEvent("phase.exited", map[string]any{"phase": phaseName})
+			if e.advance(phaseName) {
+				continue
+			}
+			break
+		}
+
 		// Feedback phases pause for human/sub-agent input instead of calling the LLM.
 		if e.state.Status == StatusPaused {
 			pausePayload := map[string]any{

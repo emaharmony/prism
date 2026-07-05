@@ -14,6 +14,9 @@ global:
   # V57: auto-rollback on failure
   auto_rollback: false
   max_verification_attempts: 2
+  # Auto-approve: skip FEEDBACK_PRE and FEEDBACK_POST gates entirely.
+  # Set to true for fully autonomous loops (no human approval needed).
+  auto_approve: true
 
 confidence_domains:
   - codebase_understanding
