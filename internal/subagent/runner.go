@@ -54,6 +54,7 @@ type LoopRunner struct {
 	maxIterations int
 	maxTokens     int // 0 = no token ceiling (still bounded by maxIterations)
 	systemPrompt  func(packet v2.TaskPacket, runtime AgentRuntime) string
+	scope         ToolScope // nil = no per-agent tool scoping
 }
 
 // LoopRunnerConfig configures a LoopRunner. Only Backend is required.
@@ -63,6 +64,9 @@ type LoopRunnerConfig struct {
 	MaxTokens     int // 0 → unlimited
 	// SystemPrompt overrides the default task charter builder.
 	SystemPrompt func(packet v2.TaskPacket, runtime AgentRuntime) string
+	// Scope enforces per-agent tool scoping. nil disables it (any registered
+	// tool the policy engine permits may run).
+	Scope ToolScope
 }
 
 // DefaultMaxIterations bounds a single delegated task's tool-loop turns.
@@ -82,6 +86,7 @@ func NewLoopRunner(cfg LoopRunnerConfig) *LoopRunner {
 		maxIterations: cfg.MaxIterations,
 		maxTokens:     cfg.MaxTokens,
 		systemPrompt:  sp,
+		scope:         cfg.Scope,
 	}
 }
 
@@ -123,6 +128,13 @@ func (r *LoopRunner) Run(ctx context.Context, packet v2.TaskPacket, runtime Agen
 		if action.Tool == "" {
 			// Neither final nor a tool call — nudge and continue.
 			messages = append(messages, v2.Message{Role: "user", Content: "Respond with a tool call or a final answer."})
+			continue
+		}
+
+		// Per-agent tool scoping: deny out-of-role tools before execution and
+		// feed the denial back so the agent adapts (not fatal).
+		if r.scope != nil && !r.scope.Allowed(runtime, action.Tool) {
+			messages = append(messages, v2.Message{Role: "user", Content: fmt.Sprintf("Tool %q is not permitted for agent %q (role scope). Use a tool within your role or give your final answer.", action.Tool, runtime.AgentID)})
 			continue
 		}
 

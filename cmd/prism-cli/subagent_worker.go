@@ -27,6 +27,8 @@ import (
 const (
 	subAgentDelegationSubject = "prism.agent.openclaw"
 	subAgentCompletionSubject = "prism.workflow.task.complete"
+	// subAgentMaxConcurrency bounds simultaneous sub-agent task runs.
+	subAgentMaxConcurrency = 4
 )
 
 // subAgentResolver resolves an agent id to its runtime from the loaded config.
@@ -142,6 +144,9 @@ func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, ex
 	backend := &subAgentBackend{providers: providers, exec: exec}
 	runner := subagent.NewLoopRunner(subagent.LoopRunnerConfig{
 		Backend: backend,
+		// Per-agent tool scoping: keep each sub-agent in its role lane (only
+		// "code"-capable agents may mutate/git-write/use MCP build tools).
+		Scope: subagent.DefaultToolScope(),
 		SystemPrompt: func(_ v2.TaskPacket, rt subagent.AgentRuntime) string {
 			// Charter + the tool JSON contract so the model emits the
 			// {"type":"tool_request"|"final"} format the parser expects.
@@ -156,6 +161,11 @@ func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, ex
 	worker := subagent.NewWorker(resolver, runner, 0)
 	pub := &subAgentPublisher{nc: nc, subject: subAgentCompletionSubject}
 
+	// Bound concurrent sub-agent runs so a burst of delegations can't exhaust
+	// resources. Parallel runs stay isolated at the git layer via V56 worktrees
+	// when a task mutates files.
+	sem := make(chan struct{}, subAgentMaxConcurrency)
+
 	_, err := nc.Subscribe(subAgentDelegationSubject, func(msg *nats.Msg) {
 		var packet v2.TaskPacket
 		if err := json.Unmarshal(msg.Data, &packet); err != nil {
@@ -166,6 +176,8 @@ func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, ex
 			return
 		}
 		go func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			completion, herr := worker.HandleAndPublish(stdcontext.Background(), packet, pub)
 			if herr != nil {
 				log.Printf("[SUBAGENT] task %s publish error: %v", packet.TaskID, herr)
