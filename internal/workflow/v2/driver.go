@@ -366,7 +366,11 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 					messages = append(messages, Message{Role: "user", Content: fmt.Sprintf("Tool %q failed: %v. Try a different approach.", req.Tool, terr)})
 					continue
 				}
-				messages = append(messages, Message{Role: "user", Content: truncate(fmt.Sprintf("Tool %q result:\n%s", req.Tool, result), 3000)})
+				toolMsg := truncate(fmt.Sprintf("Tool %q result:\n%s", req.Tool, result), 3000)
+				if phaseName == "EXECUTION" && req.Tool == "git_checkout" && !hasWritten {
+					toolMsg += "\n\n**NEXT STEP: You MUST call write_file now to implement your changes. Do not read more files. Write the code, then git_add, git_commit, git_push, then EXECUTION_COMPLETE.**"
+				}
+				messages = append(messages, Message{Role: "user", Content: toolMsg})
 
 			case ActionFinal, ActionPhaseComplete:
 				if reject := e.enforceCommitPush(phaseName, hasWritten, hasCommitted, hasPushed, opts.SkipPushRequirement); reject != "" {
@@ -805,7 +809,7 @@ func (e *Engine) phaseGuidance(phase Phase) string {
 		"PROBE":     "PROBE_COMPLETE",
 		"RESEARCH":  "RESEARCH_COMPLETE",
 		"PLAN":      "PLAN_COMPLETE",
-		"EXECUTION": "EXECUTION_COMPLETE",
+		"EXECUTION": "You MUST write code now. Call write_file to implement your changes. Do not read more files. After writing, call git_add, git_commit, and git_push. Then emit EXECUTION_COMPLETE.",
 		"REPORT":    "REPORT_COMPLETE",
 	}[phase.Name()]
 
