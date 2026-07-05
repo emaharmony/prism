@@ -78,9 +78,14 @@ Design principles for production/long-term:
   `TaskPacket.RequiredCapability` (via `BuildTaskPacket`); the Worker fails a
   task closed when the target agent lacks the required capability. Empty =
   no requirement (backward compatible).
-- [ ] **4c — (next) Worktree-per-subagent:** file-mutating sub-agents get their
-  own V56 gitx worktree (exec pointed at it, cleanup on completion) for true
-  parallel isolation.
+- [x] **4c — Worktree-per-subagent:** `WorktreeProvider` (gitx-backed
+  `GitWorktreeProvider` + `NoopWorktreeProvider`). The Worker acquires a
+  per-task worktree on branch `subagent/<task>` for code-capable agents only,
+  threads its dir into the runtime, and releases it on completion; serve points
+  git tools at it via `repo_path`. Non-mutating agents skip isolation.
+  *Known limit (→ 4d): `write_file`/`create_directory` tools are bound to the
+  executor's fixed root, so full write isolation needs a per-run executor rooted
+  at the worktree; git operations are isolated today.*
 - [ ] **5 — Full system run (Eggventura):** one proper end-to-end run against
   D:/Projects/Roblox/Eggventura. **(a)** report-only first (safe, no writes),
   then **(b)** a non-report / implementation run (write-enabled) — per user
@@ -111,6 +116,12 @@ Design principles for production/long-term:
   flows to `TaskPacket.RequiredCapability`; the Worker fails a task closed if the
   target agent lacks it (empty = no requirement, backward compatible). Tests for
   the packet propagation and worker gate (missing/satisfied). Green build.
+- **Iteration 4c (2026-07-05):** Worktree-per-subagent isolation. `WorktreeProvider`
+  (gitx-backed + noop); Worker acquires a per-task worktree on `subagent/<task>`
+  for code-capable agents, threads it into the runtime, releases on completion;
+  serve injects it as git `repo_path`. 5 tests incl. a real gitx temp-repo
+  acquire/release and non-code-skips-isolation. Green build. (write-tool full
+  isolation → 4d.)
 
 ## Verification
 `go build ./... && go vet ./... && go test ./...` green each iteration. Smoke

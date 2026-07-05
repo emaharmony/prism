@@ -52,6 +52,15 @@ func (r *subAgentResolver) Resolve(id string) (subagent.AgentRuntime, bool) {
 	return rt, ok
 }
 
+// subAgentRepoRoot picks the git repo sub-agent worktrees are cut from: the
+// default project's repo, else the workspace. Empty disables isolation.
+func subAgentRepoRoot(cfg *orchestrator.Config) string {
+	if p := cfg.DefaultProject(); p != nil && p.RepoPath != "" {
+		return p.RepoPath
+	}
+	return cfg.Prism.Workspace
+}
+
 // subAgentBackend binds an agent runtime to live provider + tool execution
 // callbacks, reusing the same text-generation + JSON-contract parsing the gated
 // loop uses.
@@ -93,6 +102,15 @@ func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, suba
 	}
 
 	execFn := func(ctx stdcontext.Context, toolName string, input map[string]any) (string, error) {
+		// Point git tools at the task's isolated worktree when one was acquired.
+		if rt.WorkDir != "" && strings.HasPrefix(toolName, "git_") {
+			if _, set := input["repo_path"]; !set {
+				if input == nil {
+					input = map[string]any{}
+				}
+				input["repo_path"] = rt.WorkDir
+			}
+		}
 		res, xerr := b.exec.ExecuteWithPolicy(ctx, toolName, rt.AgentID, "subagent", rt.AgentID, input)
 		if xerr != nil {
 			return "", xerr
@@ -159,6 +177,11 @@ func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, ex
 		},
 	})
 	worker := subagent.NewWorker(resolver, runner, 0)
+	// Per-task worktree isolation for code-capable agents, rooted at the default
+	// project repo (falls back to the workspace). Non-mutating agents skip it.
+	if root := subAgentRepoRoot(cfg); root != "" {
+		worker.SetWorktrees(subagent.GitWorktreeProvider{Root: root})
+	}
 	pub := &subAgentPublisher{nc: nc, subject: subAgentCompletionSubject}
 
 	// Bound concurrent sub-agent runs so a burst of delegations can't exhaust
