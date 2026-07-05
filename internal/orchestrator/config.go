@@ -404,6 +404,13 @@ type ProjectConfig struct {
 	// provider "claude_code", without changing the global default.
 	Orchestrator string `yaml:"orchestrator"`
 
+	// WorktreeIsolation runs each gated loop in its own git worktree under
+	// <repo>/.prism/worktrees/<run-id> on a fresh prism/<run-id> branch (V56).
+	// Parallel runs on the same repo cannot collide, and the main worktree is
+	// never touched. Default false (runs share the main worktree, isolated by
+	// feature branch only).
+	WorktreeIsolation bool `yaml:"worktree_isolation"`
+
 	// Default marks this project as the one used when no project is specified.
 	Default bool `yaml:"default"`
 }
