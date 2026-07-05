@@ -159,6 +159,12 @@ Be thorough, proactive, and fast. You are not just a reporter — you are a deve
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 2048,
 	},
+	"status_report": {
+		Prompt:    `Generate a 2-hour status report for BassBook autonomous development.`,
+		ChannelID: "1491622581348864162", // manager-room
+		MaxTokens: 1024,
+		SkipLLM:   true, // Reads run summaries + PROJECT_STATE.md directly
+	},
 	"review_improvements": {
 		Prompt: `You are reviewing active improvement proposals.
 
@@ -179,7 +185,13 @@ Be thorough, proactive, and fast. You are not just a reporter — you are a deve
 		// RunGatedLoop. The actual phase prompt is built dynamically per project
 		// in buildGatedLoopSystemPrompt, so this static prompt is only a seed used
 		// when no project state file supplies a task.
-		Prompt:    `Work autonomously on the assigned project task using the gated loop.`,
+		Prompt: `You are working on BassBook in an autonomous development loop. Your job has two phases:
+
+1. DISCOVERY: Read PROJECT_STATE.md. If there are no unchecked tasks (or all remaining tasks are stale/vague), scan the codebase for issues, TODOs, broken features, or improvement opportunities. Add new tasks to PROJECT_STATE.md with clear descriptions and risk levels.
+
+2. IMPLEMENTATION: Pick the topmost unchecked task. Create a feature branch (feature/bb-{task-slug}). Implement the change. Run self-review via git_diff. Fix obvious errors. Stage, commit, and push. Mark the task [x] in PROJECT_STATE.md only AFTER the review passes.
+
+Work fast and decisively. Don't overthink — implement, review, push. If you get stuck, report the blocker and move on.`,
 		ChannelID: "1491622581348864162", // manager-room (fallback; project.channel preferred)
 		MaxTokens: 4096,
 	},
@@ -740,7 +752,7 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 			})
 			if err != nil {
 				log.Printf("[WAKE] ERROR chat LLM call failed for action %q: %v", action, err)
-				if wh.bot != nil {
+				if wh.bot != nil && action != "project_work" {
 					wh.bot.Send(&discordbot.OutboundMessage{
 						ChannelID: actionDef.ChannelID,
 						Content:   fmt.Sprintf("⚠️ Scheduled task **%s** failed: %v", formatActionName(action), err),
@@ -770,7 +782,7 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 			})
 			if err != nil {
 				log.Printf("[WAKE] ERROR text LLM call failed for action %q: %v", action, err)
-				if wh.bot != nil {
+				if wh.bot != nil && action != "project_work" {
 					wh.bot.Send(&discordbot.OutboundMessage{
 						ChannelID: actionDef.ChannelID,
 						Content:   fmt.Sprintf("⚠️ Scheduled task **%s** failed: %v", formatActionName(action), err),
@@ -789,20 +801,31 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 	wh.sessMgr.AddMessage(sess.ID, "agent", responseContent, agentCfg.ID)
 
 	// Send result to Discord
+	// For project_work: suppress per-cycle Discord posts (post only run summary).
+	// The status_report action (every 2h) sends the human-facing summary.
+	// project_work still posts on errors/blockers.
 	if wh.bot != nil && actionDef.ChannelID != "" {
-		// Send result to Discord (the bot adapter handles splitting long messages)
-		content := fmt.Sprintf("🔔 **%s**\n\n%s", formatActionName(action), responseContent)
-		wh.bot.Send(&discordbot.OutboundMessage{
-			ChannelID: actionDef.ChannelID,
-			Content:   content,
-		})
-		log.Printf("[WAKE] sent %s result to Discord channel %s", action, actionDef.ChannelID)
-
-		// V35c: Write run summary to runs/ directory for dashboard visibility
-		if action == "project_work" || action == "auto_patch" {
-			// Clean JSON tool requests from the output before sending to Discord
+		if action == "project_work" {
+			// Only write run summary, don't post to Discord
+			log.Printf("[WAKE] project_work completed (suppressed Discord post; will report on next status_report cycle)")
+			// Clean JSON tool requests from the output before writing summary
 			responseContent = cleanForDiscord(responseContent)
 			wh.writeRunSummary(action, agentCfg.ID, responseContent, promptTokens, completionTokens)
+		} else {
+			// Send result to Discord (the bot adapter handles splitting long messages)
+			content := fmt.Sprintf("🔔 **%s**\n\n%s", formatActionName(action), responseContent)
+			wh.bot.Send(&discordbot.OutboundMessage{
+				ChannelID: actionDef.ChannelID,
+				Content:   content,
+			})
+			log.Printf("[WAKE] sent %s result to Discord channel %s", action, actionDef.ChannelID)
+
+			// V35c: Write run summary to runs/ directory for dashboard visibility
+			if action == "auto_patch" {
+				// Clean JSON tool requests from the output before sending to Discord
+				responseContent = cleanForDiscord(responseContent)
+				wh.writeRunSummary(action, agentCfg.ID, responseContent, promptTokens, completionTokens)
+			}
 		}
 	}
 
@@ -826,6 +849,8 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 		resultContent = wh.checkPRStatus()
 	case "factory_status_digest":
 		resultContent = wh.factoryStatusDigest()
+	case "status_report":
+		resultContent = wh.statusReport()
 	default:
 		log.Printf("[WAKE] WARN unknown direct action %q", action)
 		return
@@ -853,6 +878,123 @@ func (wh *WakeHandler) factoryStatusDigest() string {
 	}
 	wh.factoryMon.PublishDigest()
 	return ""
+}
+
+// statusReport generates a 2-hour status report by reading recent run summaries
+// and PROJECT_STATE.md. No LLM needed — pure file reading + formatting.
+func (wh *WakeHandler) statusReport() string {
+	var sb strings.Builder
+	sb.WriteString("<@1512994928769237002>\n\n") // Tag OpenClaw Lumi
+	sb.WriteString("📊 **2-Hour Status Report — BassBook**\n\n")
+
+	// Read PROJECT_STATE.md
+	statePath := "/Users/ema/projects/repos/BassBook/PROJECT_STATE.md"
+	stateContent, err := os.ReadFile(statePath)
+	if err != nil {
+		sb.WriteString("⚠️ Could not read PROJECT_STATE.md\n\n")
+	} else {
+		sb.WriteString("### Project State\n")
+		// Extract task lines (lines starting with - [ ] or - [x])
+		lines := strings.Split(string(stateContent), "\n")
+		done := 0
+		pending := 0
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "- [x]") {
+				done++
+				sb.WriteString("✅ " + trimmed + "\n")
+			} else if strings.HasPrefix(trimmed, "- [ ]") {
+				pending++
+			}
+		}
+		sb.WriteString(fmt.Sprintf("\n**Progress:** %d done, %d pending\n\n", done, pending))
+	}
+
+	// Read recent run summaries (last 2 hours)
+	runsDir := filepath.Join(wh.cfg.Prism.Workspace, "runs")
+	if wh.cfg.Prism.Workspace == "" {
+		runsDir = "runs"
+	}
+	cutoff := time.Now().Add(-2 * time.Hour)
+	recentRuns := 0
+	successRuns := 0
+	failedRuns := 0
+
+	if entries, err := os.ReadDir(runsDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			// Check if run is recent enough
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			if info.ModTime().Before(cutoff) {
+				continue
+			}
+			recentRuns++
+
+			// Read summary.json
+			summaryPath := filepath.Join(runsDir, entry.Name(), "summary.json")
+			summaryData, err := os.ReadFile(summaryPath)
+			if err != nil {
+				continue
+			}
+			var summary map[string]any
+			if err := json.Unmarshal(summaryData, &summary); err != nil {
+				continue
+			}
+			status := fmt.Sprintf("%v", summary["status"])
+			if status == "completed" {
+				successRuns++
+			} else {
+				failedRuns++
+			}
+		}
+	}
+
+	sb.WriteString("### Recent Activity (last 2h)\n")
+	sb.WriteString(fmt.Sprintf("- **Runs:** %d total, %d completed, %d failed/other\n", recentRuns, successRuns, failedRuns))
+
+	// List run summaries
+	if entries, err := os.ReadDir(runsDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil || info.ModTime().Before(cutoff) {
+				continue
+			}
+			summaryPath := filepath.Join(runsDir, entry.Name(), "summary.json")
+			summaryData, err := os.ReadFile(summaryPath)
+			if err != nil {
+				continue
+			}
+			var summary map[string]any
+			if err := json.Unmarshal(summaryData, &summary); err != nil {
+				continue
+			}
+			action := fmt.Sprintf("%v", summary["task"])
+			status := fmt.Sprintf("%v", summary["status"])
+			output := fmt.Sprintf("%v", summary["output"])
+			if len(output) > 150 {
+				output = output[:150] + "..."
+			}
+			emoji := "✅"
+			if status != "completed" {
+				emoji = "❌"
+			}
+			sb.WriteString(fmt.Sprintf("%s **%s** — %s\n", emoji, action, output))
+		}
+	}
+
+	if recentRuns == 0 {
+		sb.WriteString("\n*No runs in the last 2 hours.*\n")
+	}
+
+	return sb.String()
 }
 
 // checkPRStatus runs gh pr list and formats the results.
