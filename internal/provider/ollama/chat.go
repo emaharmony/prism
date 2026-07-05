@@ -149,25 +149,44 @@ func (cp *ChatProvider) ChatGenerate(ctx context.Context, req provider.ChatGener
 		return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, cp.BaseURL+"/api/chat", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
+	// Send request with retry for transient errors (502, 503, 504, 429).
+	var resp *http.Response
+	var respBody []byte
+	for attempt := 0; attempt < 4; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, cp.BaseURL+"/api/chat", bytes.NewReader(bodyBytes))
+		if err != nil {
+			return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := cp.HTTPClient.Do(httpReq)
-	if err != nil {
-		return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err = cp.HTTPClient.Do(httpReq)
+		if err != nil {
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+			return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: %w", err)
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: read response: %w", err)
-	}
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			if attempt < 3 {
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+			return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: read response: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		if resp.StatusCode != http.StatusOK {
+			// Retry on transient errors
+			if isRetryableStatus(resp.StatusCode) && attempt < 3 {
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+			return provider.ChatGenerateResponse{}, fmt.Errorf("ollama/chat: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+		break // success
 	}
 
 	var oResp chatResponse
@@ -239,3 +258,8 @@ func estimateTokens(messages []provider.ChatMessage) int {
 
 // Compile-time interface check.
 var _ provider.ChatProvider = (*ChatProvider)(nil)
+
+// isRetryableStatus returns true for transient HTTP status codes worth retrying.
+func isRetryableStatus(code int) bool {
+	return code == 429 || code == 502 || code == 503 || code == 504
+}
