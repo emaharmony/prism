@@ -198,6 +198,10 @@ The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION 
 
 The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/CROSS-PRISM-FACTORY-SETUP.md](./docs/CROSS-PRISM-FACTORY-SETUP.md).
 
+### Roblox Game-Dev Team
+
+A multi-agent studio (orchestrator, researcher, game planner, Factory master, asset maker) that designs and builds Roblox games — with native reference-image tools, a Blender-MCP asset pipeline, and a cross-Prism rubric handshake. See [docs/ROBLOX-TEAM.md](./docs/ROBLOX-TEAM.md).
+
 ### Codex Subscription Worker
 
 Prism can delegate selected tasks to the local OpenAI Codex CLI through a `codex` worker. This uses the user's existing `codex login` session, so Prism does not handle ChatGPT OAuth tokens and does not route this path through `OPENAI_API_KEY`.
