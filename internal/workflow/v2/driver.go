@@ -312,6 +312,12 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			switch action.Type {
 			case ActionToolCall:
 				req := action.ToolRequest
+				// Check enforcement BEFORE counting repeats — denied tools
+				// should not trigger stuck-loop detection.
+				if deny := e.enforceExecution(phaseName, req, opts, &hasWritten, &readsInPhase); deny != "" {
+					messages = append(messages, Message{Role: "user", Content: deny})
+					continue
+				}
 				// Stuck-loop detection: the same tool+input repeated with no progress
 				// burns the budget. Nudge at the halfway mark, abort the phase at the cap.
 				sig := toolSignature(req)
@@ -339,10 +345,6 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				// external event and reflected in the task_completion gate.
 				if req.Tool == "delegate" {
 					messages = append(messages, Message{Role: "user", Content: e.handleDelegate(ctx, req)})
-					continue
-				}
-				if deny := e.enforceExecution(phaseName, req, opts, &hasWritten, &readsInPhase); deny != "" {
-					messages = append(messages, Message{Role: "user", Content: deny})
 					continue
 				}
 				result, terr := e.executeTool(ctx, phaseName, req, tool)
