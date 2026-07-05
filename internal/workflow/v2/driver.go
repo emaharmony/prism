@@ -442,6 +442,12 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 
 			case ActionContinue:
 				// Opportunistic gate check — PROBE/RESEARCH/PLAN parse state each turn.
+				// In EXECUTION, don't let the gate pass trivially if code hasn't been committed.
+				if phaseName == "EXECUTION" && hasWritten && !hasCommitted {
+					// Force the model to commit before the phase can complete.
+					messages = append(messages, Message{Role: "system", Content: "COMMIT REQUIRED: You wrote files but have not committed. Call git_add (if not done), git_commit, then git_push. Then emit EXECUTION_COMPLETE."})
+					continue
+				}
 				if e.gatePasses(phaseName) {
 					completed = true
 					break iterLoop
