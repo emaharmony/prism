@@ -66,7 +66,46 @@ func subAgentRepoRoot(cfg *orchestrator.Config) string {
 // loop uses.
 type subAgentBackend struct {
 	providers *provider.ProviderRegistry
-	exec      *tool.Executor
+	exec      *tool.Executor // shared executor (no worktree isolation)
+	toolReg   *tool.Registry // shared registry, source for non-root tools
+}
+
+// subAgentWorktreeMaxFileSize matches serve's builtin file-size cap.
+const subAgentWorktreeMaxFileSize = 10 * 1024 * 1024
+
+// executorFor returns the tool executor for a run. With no worktree it's the
+// shared executor; with a worktree it builds a per-run executor whose file and
+// git tools are rooted at the worktree (read/write roots = the worktree), so
+// write_file/create_directory are isolated too — not just git (V58 4d). Shared,
+// root-agnostic tools (research, image, skill, MCP, state, plan) are copied from
+// the main registry so the sub-agent keeps its full toolset. Same policy as the
+// shared executor.
+func (b *subAgentBackend) executorFor(workDir string) *tool.Executor {
+	if workDir == "" || b.toolReg == nil {
+		return b.exec
+	}
+	reg := tool.NewRegistry()
+	roots := []string{workDir}
+	tool.RegisterBuiltinsWithRoots(reg, workDir, subAgentWorktreeMaxFileSize, roots, roots)
+	_ = reg.Register(&tool.WriteFileProposal{WorkspaceRoot: workDir, AllowedPaths: roots})
+	_ = reg.Register(&tool.CreateDirectoryProposal{WorkspaceRoot: workDir, AllowedPaths: roots})
+	_ = reg.Register(&tool.WriteFileDirect{WorkspaceRoot: workDir, AllowedPaths: roots})
+	_ = reg.Register(&tool.CreateDirectoryDirect{WorkspaceRoot: workDir, AllowedPaths: roots})
+	_ = reg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}})
+	_ = reg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}})
+	_ = reg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}})
+	// Copy every shared tool not already provided as a worktree-rooted version
+	// (research/image/skill/MCP/state/plan/read-only git). Same instance reuse
+	// keeps live MCP client connections intact.
+	for _, name := range b.toolReg.List() {
+		if _, err := reg.Resolve(name); err == nil {
+			continue // worktree-rooted version already registered
+		}
+		if t, err := b.toolReg.Resolve(name); err == nil {
+			_ = reg.Register(t)
+		}
+	}
+	return tool.NewExecutor(reg, b.exec.Policy)
 }
 
 func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, subagent.Parser, subagent.ToolExec, error) {
@@ -74,6 +113,10 @@ func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, suba
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
+	// Per-run executor: rooted at the task's worktree when isolated, so all
+	// file + git tools (not just git) operate inside it.
+	ex := b.executorFor(rt.WorkDir)
 
 	llm := func(ctx stdcontext.Context, msgs []v2.Message) (subagent.Turn, error) {
 		var sb strings.Builder
@@ -102,16 +145,9 @@ func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, suba
 	}
 
 	execFn := func(ctx stdcontext.Context, toolName string, input map[string]any) (string, error) {
-		// Point git tools at the task's isolated worktree when one was acquired.
-		if rt.WorkDir != "" && strings.HasPrefix(toolName, "git_") {
-			if _, set := input["repo_path"]; !set {
-				if input == nil {
-					input = map[string]any{}
-				}
-				input["repo_path"] = rt.WorkDir
-			}
-		}
-		res, xerr := b.exec.ExecuteWithPolicy(ctx, toolName, rt.AgentID, "subagent", rt.AgentID, input)
+		// The executor's tools are already rooted at the worktree (executorFor),
+		// so no per-call repo_path injection is needed.
+		res, xerr := ex.ExecuteWithPolicy(ctx, toolName, rt.AgentID, "subagent", rt.AgentID, input)
 		if xerr != nil {
 			return "", xerr
 		}
@@ -159,7 +195,7 @@ func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, ex
 	}
 
 	resolver := newSubAgentResolver(cfg)
-	backend := &subAgentBackend{providers: providers, exec: exec}
+	backend := &subAgentBackend{providers: providers, exec: exec, toolReg: toolReg}
 	runner := subagent.NewLoopRunner(subagent.LoopRunnerConfig{
 		Backend: backend,
 		// Per-agent tool scoping: keep each sub-agent in its role lane (only
