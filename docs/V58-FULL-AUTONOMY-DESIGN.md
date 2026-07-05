@@ -63,8 +63,12 @@ Design principles for production/long-term:
   tool loop with iteration + token budgets, tool-failure feedback, artifact
   capture, and context-deadline honoring. Model/tool specifics injected via a
   `Backend` (mock in tests; provider registry + tool executor in iteration 3).
-- [ ] **3 — Serve wiring:** subscribe the worker to the delegation subject in
-  `cmd_serve.go` (replace the M3.1d stub), publish completions; feature-flagged.
+- [x] **3 — Serve wiring:** `cmd/prism-cli/subagent_worker.go` — resolver (config
+  agents → runtime), backend (provider registry + tool executor + reused v2
+  parsers via new exported `ParseToolRequestText`/`ParseFinalText`), NATS
+  completion publisher, and a subscription on the delegation subject that runs
+  task packets through the worker. Feature-flagged via `PRISM_SUBAGENT_WORKER`
+  (off by default → no behavior change; verified on/off in serve).
 - [ ] **4 — Capability routing + concurrency:** worktree-isolated parallel runs,
   per-agent tool scoping, capability-aware assignment.
 - [ ] **5 — Full system run:** one proper end-to-end run against the Eggventura
@@ -78,6 +82,14 @@ Design principles for production/long-term:
   `TaskRunner` (iteration + token budgets, tool-failure feedback, artifact
   capture, deadline honoring) with a `Backend` seam. 8 runner tests incl. an
   end-to-end Worker+LoopRunner path. Still no serve wiring; green build.
+- **Iteration 3 (2026-07-05):** Wired the worker into serve behind
+  `PRISM_SUBAGENT_WORKER` (off by default): config→runtime resolver, a backend
+  bound to the live provider registry + tool executor reusing the gated loop's
+  JSON parsers (newly exported `v2.ParseToolRequestText`/`ParseFinalText`), and
+  a NATS completion publisher. Subscribes the delegation subject and filters for
+  task_delegation packets (ignores inter-agent chat on the same subject).
+  Verified the flag on/off in a live serve boot; resolver + parser unit tests
+  added. Green build.
 
 ## Verification
 `go build ./... && go vet ./... && go test ./...` green each iteration. Smoke

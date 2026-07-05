@@ -767,6 +767,10 @@ func executeServe(args []string) {
 		} else {
 			log.Printf("[WAKE] handler started, listening for scheduled and workflow events")
 		}
+		// V58: generic sub-agent worker — runs delegated task packets as
+		// autonomous sub-agents. Feature-flagged (PRISM_SUBAGENT_WORKER); a
+		// no-op until enabled, so this changes nothing by default.
+		startSubAgentWorker(natsConn, provReg, toolExec, toolReg, cfg)
 		if primaryDiscordBot != nil {
 			if err := startWorkflowFeedbackNotifier(natsConn, primaryDiscordBot, cfg); err != nil {
 				log.Printf("[WORKFLOW-NOTIFY] WARN failed to start: %v", err)
