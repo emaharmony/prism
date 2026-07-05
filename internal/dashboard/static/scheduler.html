@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cron Jobs · Prism</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<nav class="nav">
+  <span class="brand">◆ Prism</span>
+  <a href="/index.html">Runs</a>
+  <a href="/v2.html">Status</a>
+  <a href="/scheduler.html" class="active">Cron Jobs</a>
+  <a href="/config.html">Settings</a>
+  <a href="/editor.html">Agent Graph</a>
+  <a href="/workflow-editor.html">Workflow</a>
+</nav>
+
+<div class="container">
+  <h1 class="page-title">Cron Jobs</h1>
+  <p class="page-sub">Schedule recurring wake actions. Each job fires a NATS event on its cron schedule; the wake handler runs the action. Changes are saved to <span class="mono">prism.yaml</span> and apply after a <span class="mono">prism serve</span> restart.</p>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="card">
+    <div class="field inline" style="margin-bottom:18px;">
+      <label class="toggle"><input type="checkbox" id="schedEnabled"><span class="slider"></span></label>
+      <label for="schedEnabled" style="margin:0;color:var(--text);font-size:14px;">Scheduler enabled</label>
+    </div>
+
+    <table class="jobs">
+      <thead>
+        <tr>
+          <th style="width:22%">Name</th>
+          <th style="width:26%">Schedule (cron)</th>
+          <th style="width:28%">Action</th>
+          <th style="width:12%">Enabled</th>
+          <th style="width:12%"></th>
+        </tr>
+      </thead>
+      <tbody id="jobsBody"></tbody>
+    </table>
+
+    <div class="actions-row" style="margin-top:16px;">
+      <button class="btn secondary small" id="addJob">+ Add job</button>
+    </div>
+  </div>
+
+  <div class="actions-row">
+    <button class="btn" id="saveBtn">Save cron jobs</button>
+    <span class="hint" id="saveHint"></span>
+  </div>
+</div>
+
+<script>
+// Friendly labels for the known actions (keys come from the API).
+const ACTION_LABELS = {
+  status_report: "Status report (2-hour digest)",
+  check_prs: "Check PRs (open PR summary)",
+  factory_status_digest: "Factory queue digest",
+  daily_review: "Daily review",
+  review_improvements: "Review improvement proposals",
+  auto_patch: "Auto-patch (bug-fix loop)",
+  project_work: "Project work (gated loop)",
+  memory_consolidation: "Memory consolidation",
+};
+const DEFAULT_EVENT = "prism.task.scheduled";
+let ACTIONS = [];
+let jobs = [];
+
+const $ = (s, el=document) => el.querySelector(s);
+const banner = (msg, kind) => {
+  const b = $("#banner"); b.textContent = msg;
+  b.className = "banner show " + kind;
+};
+
+// Tiny client-side cron describer for common patterns (server is authoritative).
+function describeCron(expr) {
+  const p = expr.trim().split(/\s+/);
+  if (p.length !== 5) return "";
+  const [m, h, dom, mon, dow] = p;
+  if (expr.trim() === "* * * * *") return "Every minute";
+  if (m.startsWith("*/") && h === "*" ) return `Every ${m.slice(2)} minutes`;
+  if (h.startsWith("*/") && m === "0") return `Every ${h.slice(2)} hours, on the hour`;
+  if (/^\d+$/.test(m) && /^\d+$/.test(h) && dom === "*" && mon === "*" && dow === "*")
+    return `Daily at ${h.padStart(2,"0")}:${m.padStart(2,"0")}`;
+  if (/^\d+$/.test(m) && /^\d+$/.test(h) && dow !== "*")
+    return `At ${h.padStart(2,"0")}:${m.padStart(2,"0")} on days-of-week ${dow}`;
+  return "";
+}
+
+async function validateCron(expr) {
+  try {
+    const r = await fetch("/api/v1/config/cron/validate", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({schedule: expr})
+    });
+    return await r.json();
+  } catch (e) { return {valid: false, error: String(e)}; }
+}
+
+function newJob() {
+  return {name: "", schedule: "0 */2 * * *", event: DEFAULT_EVENT, action: "", enabled: true, payload: {}};
+}
+
+function render() {
+  const body = $("#jobsBody");
+  body.innerHTML = "";
+  jobs.forEach((job, i) => {
+    const tr = document.createElement("tr");
+    const actionOpts = ACTIONS.map(a =>
+      `<option value="${a.key}" ${a.key===job.action?"selected":""}>${ACTION_LABELS[a.key]||a.key}${a.skip_llm?"":" ⚙"}</option>`
+    ).join("");
+    tr.innerHTML = `
+      <td>
+        <input type="text" data-f="name" value="${esc(job.name)}" placeholder="job-name">
+      </td>
+      <td>
+        <input type="text" class="mono" data-f="schedule" value="${esc(job.schedule)}" placeholder="0 */2 * * *">
+        <div class="hint" data-role="cronhint"></div>
+      </td>
+      <td>
+        <select data-f="action"><option value="">— none —</option>${actionOpts}</select>
+        <details class="expander">
+          <summary>Advanced</summary>
+          <div class="field"><label>Custom action (overrides dropdown)</label>
+            <input type="text" data-f="customaction" value="${esc(job.customAction||'')}" placeholder="leave blank to use dropdown"></div>
+          <div class="field"><label>Event subject</label>
+            <input type="text" class="mono" data-f="event" value="${esc(job.event||DEFAULT_EVENT)}"></div>
+          <div class="field"><label>Extra payload (key = value, one per line)</label>
+            <input type="text" data-f="payload" value="${esc(payloadToStr(job.payload))}" placeholder="channel_id=123, mode=fast"></div>
+        </details>
+      </td>
+      <td>
+        <label class="toggle"><input type="checkbox" data-f="enabled" ${job.enabled?"checked":""}><span class="slider"></span></label>
+      </td>
+      <td><button class="btn danger" data-role="del">Delete</button></td>`;
+    body.appendChild(tr);
+
+    // Wire inputs
+    tr.querySelectorAll("[data-f]").forEach(inp => {
+      const f = inp.getAttribute("data-f");
+      inp.addEventListener(inp.type === "checkbox" ? "change" : "input", () => {
+        if (f === "enabled") job.enabled = inp.checked;
+        else if (f === "customaction") job.customAction = inp.value;
+        else if (f === "payload") job.payloadStr = inp.value;
+        else job[f] = inp.value;
+        if (f === "schedule") debounceCron(tr, job);
+      });
+    });
+    tr.querySelector("[data-role=del]").addEventListener("click", () => {
+      jobs.splice(i, 1); render();
+    });
+    checkCron(tr, job);
+  });
+}
+
+const timers = new WeakMap();
+function debounceCron(tr, job) {
+  clearTimeout(timers.get(tr));
+  timers.set(tr, setTimeout(() => checkCron(tr, job), 300));
+}
+async function checkCron(tr, job) {
+  const hint = tr.querySelector("[data-role=cronhint]");
+  if (!job.schedule.trim()) { hint.className = "hint"; hint.textContent = ""; return; }
+  const res = await validateCron(job.schedule);
+  if (res.valid) {
+    const d = describeCron(job.schedule);
+    hint.className = "hint ok"; hint.textContent = "✓ valid" + (d ? " — " + d : "");
+  } else {
+    hint.className = "hint err"; hint.textContent = "✗ " + (res.error || "invalid");
+  }
+}
+
+function esc(s){ return String(s==null?"":s).replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function payloadToStr(p){
+  if (!p) return "";
+  return Object.entries(p).filter(([k])=>k!=="action").map(([k,v])=>`${k}=${v}`).join(", ");
+}
+function parsePayload(str){
+  const out = {};
+  (str||"").split(/[,\n]/).forEach(pair => {
+    const idx = pair.indexOf("=");
+    if (idx>0){ out[pair.slice(0,idx).trim()] = pair.slice(idx+1).trim(); }
+  });
+  return out;
+}
+
+async function load() {
+  try {
+    const [cfgR, actR] = await Promise.all([fetch("/api/v1/config"), fetch("/api/v1/config/actions")]);
+    if (!cfgR.ok) { banner("Could not load config: " + cfgR.status, "err"); return; }
+    const cfg = await cfgR.json();
+    ACTIONS = (await actR.json()).actions || [];
+    $("#schedEnabled").checked = !!cfg.scheduler_enabled;
+    jobs = (cfg.jobs || []).map(j => ({
+      name: j.name, schedule: j.schedule, event: j.event || DEFAULT_EVENT,
+      action: j.action || "", enabled: !!j.enabled, payload: j.payload || {}, payloadStr: null,
+    }));
+    if (jobs.length === 0) jobs = [newJob()];
+    render();
+  } catch (e) { banner("Load failed: " + e, "err"); }
+}
+
+async function save() {
+  const payloadJobs = jobs.map(j => {
+    const extra = parsePayload(j.payloadStr != null ? j.payloadStr : payloadToStr(j.payload));
+    return {
+      name: j.name, schedule: j.schedule, event: j.event || DEFAULT_EVENT,
+      action: (j.customAction && j.customAction.trim()) ? j.customAction.trim() : j.action,
+      enabled: j.enabled, payload: extra,
+    };
+  });
+  const body = {enabled: $("#schedEnabled").checked, jobs: payloadJobs};
+  const btn = $("#saveBtn"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/v1/config/scheduler", {
+      method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body)
+    });
+    const res = await r.json();
+    if (r.ok) banner("✓ Saved " + res.jobs + " job(s) to prism.yaml. ⟳ Restart `prism serve` to apply.", "ok");
+    else banner("✗ " + (res.error || ("HTTP " + r.status)), "err");
+  } catch (e) { banner("Save failed: " + e, "err"); }
+  finally { btn.disabled = false; }
+}
+
+$("#addJob").addEventListener("click", () => { jobs.push(newJob()); render(); });
+$("#saveBtn").addEventListener("click", save);
+load();
+</script>
+</body>
+</html>

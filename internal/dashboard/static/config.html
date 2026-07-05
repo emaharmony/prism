@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings · Prism</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<nav class="nav">
+  <span class="brand">◆ Prism</span>
+  <a href="/index.html">Runs</a>
+  <a href="/v2.html">Status</a>
+  <a href="/scheduler.html">Cron Jobs</a>
+  <a href="/config.html" class="active">Settings</a>
+  <a href="/editor.html">Agent Graph</a>
+  <a href="/workflow-editor.html">Workflow</a>
+</nav>
+
+<div class="container">
+  <h1 class="page-title">Settings</h1>
+  <p class="page-sub">Edit the common <span class="mono">prism.yaml</span> fields. Saves are surgical — comments and sections you don't touch are preserved. Changes apply after a <span class="mono">prism serve</span> restart.</p>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="card">
+    <h2>Instance &amp; paths</h2>
+    <div class="grid-2">
+      <div class="field"><label>Instance ID</label><input type="text" id="instance_id"></div>
+      <div class="field"><label>Log level</label>
+        <select id="log_level"><option>debug</option><option>info</option><option>warn</option><option>error</option></select></div>
+      <div class="field"><label>Workspace path</label><input type="text" id="workspace" class="mono"></div>
+      <div class="field"><label>Ollama URL</label><input type="text" id="ollama_url" class="mono"></div>
+      <div class="field"><label>Health port</label><input type="number" id="port"></div>
+      <div class="field"><label>Workflow config file</label><input type="text" id="workflow_config" class="mono" placeholder="examples/workflows/gated-loop.yaml"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Feature toggles</h2>
+    <div class="field inline"><label class="toggle"><input type="checkbox" id="scheduler_enabled"><span class="slider"></span></label><label style="margin:0;color:var(--text);font-size:14px;">Scheduler (cron jobs)</label></div>
+    <div class="field inline"><label class="toggle"><input type="checkbox" id="autopatch_enabled"><span class="slider"></span></label><label style="margin:0;color:var(--text);font-size:14px;">Autopatch</label></div>
+    <div class="field inline"><label class="toggle"><input type="checkbox" id="remembrance_enabled"><span class="slider"></span></label><label style="margin:0;color:var(--text);font-size:14px;">Remembrance (memory)</label></div>
+  </div>
+
+  <div class="card">
+    <h2>Autopatch</h2>
+    <div class="grid-2">
+      <div class="field"><label>Mode</label><select id="autopatch_mode"><option value="propose">propose (patch artifact)</option><option value="pr">pr (open pull request)</option></select></div>
+      <div class="field"><label>Max attempts</label><input type="number" id="autopatch_max_attempts"></div>
+      <div class="field"><label>Worker order (comma-separated)</label><input type="text" id="autopatch_worker_order" class="mono" placeholder="codex, local_agent"></div>
+      <div class="field"><label>Local agent</label><input type="text" id="autopatch_local_agent"></div>
+      <div class="field"><label>PR base branch</label><input type="text" id="autopatch_base_branch" placeholder="(repo default)"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Remembrance</h2>
+    <div class="grid-2">
+      <div class="field"><label>URL</label><input type="text" id="remembrance_url" class="mono"></div>
+      <div class="field"><label>Timeout (seconds)</label><input type="number" id="remembrance_timeout_seconds"></div>
+    </div>
+  </div>
+
+  <div class="actions-row" style="margin-bottom:32px;">
+    <button class="btn" id="saveSettings">Save settings</button>
+    <span class="hint" id="settingsHint"></span>
+  </div>
+
+  <div class="card" id="wfCard">
+    <h2>Workflow run behavior</h2>
+    <p class="card-hint" id="wfHint">Global gated-loop settings. Written to the workflow file (<span class="mono" id="wfPath"></span>), not prism.yaml.</p>
+    <div id="wfPanel" class="grid-2">
+      <div class="field inline"><label class="toggle"><input type="checkbox" id="wf_auto_rollback"><span class="slider"></span></label><label style="margin:0;color:var(--text);font-size:14px;">Auto-rollback failed runs</label></div>
+      <div class="field inline"><label class="toggle"><input type="checkbox" id="wf_auto_approve"><span class="slider"></span></label><label style="margin:0;color:var(--text);font-size:14px;">Auto-approve gates</label></div>
+      <div class="field"><label>Max verification attempts</label><input type="number" id="wf_max_verification_attempts"></div>
+      <div class="field"><label>Max total tokens (0 = unlimited)</label><input type="number" id="wf_max_total_tokens"></div>
+      <div class="field"><label>Max total time (e.g. 60m)</label><input type="text" id="wf_max_total_time" class="mono"></div>
+    </div>
+    <div class="actions-row" style="margin-top:12px;">
+      <button class="btn" id="saveWf">Save run behavior</button>
+      <span class="hint" id="wfSaveHint"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const banner = (msg, kind) => { const b = $("#banner"); b.textContent = msg; b.className = "banner show " + kind; window.scrollTo(0,0); };
+
+let initial = {};       // settings snapshot for diffing
+let wfConfig = null;     // full workflow config object
+
+const SETTING_IDS = ["instance_id","workspace","ollama_url","port","log_level","workflow_config",
+  "scheduler_enabled","autopatch_enabled","autopatch_mode","autopatch_max_attempts",
+  "autopatch_worker_order","autopatch_local_agent","autopatch_base_branch",
+  "remembrance_enabled","remembrance_url","remembrance_timeout_seconds"];
+const BOOL_IDS = new Set(["scheduler_enabled","autopatch_enabled","remembrance_enabled"]);
+const INT_IDS = new Set(["port","autopatch_max_attempts","remembrance_timeout_seconds"]);
+const LIST_IDS = new Set(["autopatch_worker_order"]);
+
+function setField(id, val) {
+  const el = $("#"+id); if (!el) return;
+  if (BOOL_IDS.has(id)) el.checked = !!val;
+  else if (LIST_IDS.has(id)) el.value = Array.isArray(val) ? val.join(", ") : (val||"");
+  else el.value = (val==null ? "" : val);
+}
+function getField(id) {
+  const el = $("#"+id);
+  if (BOOL_IDS.has(id)) return el.checked;
+  if (INT_IDS.has(id)) return el.value === "" ? null : parseInt(el.value, 10);
+  if (LIST_IDS.has(id)) return el.value.split(",").map(s=>s.trim()).filter(Boolean);
+  return el.value;
+}
+function eq(a,b){ return JSON.stringify(a) === JSON.stringify(b); }
+
+async function load() {
+  try {
+    const r = await fetch("/api/v1/config");
+    if (!r.ok) { banner("Could not load config: " + r.status, "err"); return; }
+    const cfg = await r.json();
+    const s = cfg.settings;
+    SETTING_IDS.forEach(id => setField(id, s[id]));
+    initial = {}; SETTING_IDS.forEach(id => initial[id] = getField(id));
+
+    // Workflow run-behavior panel
+    $("#wfPath").textContent = cfg.workflow_config_path || "(not set)";
+    if (!cfg.workflow_config_path) {
+      $("#wfPanel").classList.add("disabled-panel");
+      $("#saveWf").disabled = true;
+      $("#wfHint").innerHTML = "Set a <b>Workflow config file</b> above and save settings to enable editing run behavior.";
+    } else {
+      await loadWorkflow();
+    }
+  } catch (e) { banner("Load failed: " + e, "err"); }
+}
+
+async function loadWorkflow() {
+  try {
+    const r = await fetch("/api/v1/workflow-config");
+    if (!r.ok) return;
+    wfConfig = await r.json();
+    const g = wfConfig.global || {};
+    $("#wf_auto_rollback").checked = !!g.auto_rollback;
+    $("#wf_auto_approve").checked = !!g.auto_approve;
+    $("#wf_max_verification_attempts").value = g.max_verification_attempts || 0;
+    $("#wf_max_total_tokens").value = g.max_total_tokens || 0;
+    $("#wf_max_total_time").value = g.max_total_time || "";
+  } catch (e) { /* leave defaults */ }
+}
+
+async function saveSettings() {
+  const patch = {};
+  SETTING_IDS.forEach(id => { const v = getField(id); if (!eq(v, initial[id])) patch[id] = v; });
+  if (Object.keys(patch).length === 0) { $("#settingsHint").textContent = "No changes."; return; }
+  const btn = $("#saveSettings"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/v1/config/settings", {
+      method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(patch)});
+    const res = await r.json();
+    if (r.ok) { banner("✓ Saved settings to prism.yaml. ⟳ Restart `prism serve` to apply.", "ok");
+      SETTING_IDS.forEach(id => initial[id] = getField(id)); }
+    else banner("✗ " + (res.error || ("HTTP "+r.status)), "err");
+  } catch (e) { banner("Save failed: " + e, "err"); }
+  finally { btn.disabled = false; }
+}
+
+async function saveWorkflow() {
+  if (!wfConfig) { banner("Workflow config not loaded.", "err"); return; }
+  wfConfig.global = wfConfig.global || {};
+  wfConfig.global.auto_rollback = $("#wf_auto_rollback").checked;
+  wfConfig.global.auto_approve = $("#wf_auto_approve").checked;
+  wfConfig.global.max_verification_attempts = parseInt($("#wf_max_verification_attempts").value||"0",10);
+  wfConfig.global.max_total_tokens = parseInt($("#wf_max_total_tokens").value||"0",10);
+  wfConfig.global.max_total_time = $("#wf_max_total_time").value;
+  const btn = $("#saveWf"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/v1/workflow-config", {
+      method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(wfConfig)});
+    const res = await r.json();
+    if (r.ok) banner("✓ Saved workflow run behavior. ⟳ Restart `prism serve` to apply.", "ok");
+    else banner("✗ " + (res.error || ("HTTP "+r.status)), "err");
+  } catch (e) { banner("Save failed: " + e, "err"); }
+  finally { btn.disabled = false; }
+}
+
+$("#saveSettings").addEventListener("click", saveSettings);
+$("#saveWf").addEventListener("click", saveWorkflow);
+load();
+</script>
+</body>
+</html>

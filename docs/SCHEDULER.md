@@ -83,7 +83,28 @@ Action prompts and target channels are defined in `knownActions`
 
 ---
 
-## Add a job
+## Edit cron jobs in the dashboard
+
+`prism serve` now hosts the dashboard on the API port (default
+`http://localhost:8322/`). Open **`/scheduler.html`** for a pleasant cron
+editor:
+
+- Add / edit / enable / disable / delete jobs in a table.
+- **Live cron validation** as you type (with a plain-English description of
+  common schedules).
+- An **action dropdown** populated from the known wake actions, plus an
+  **Advanced** expander per job for a custom action string, a custom event
+  subject, and extra payload key/values.
+- **Save** writes `prism.yaml` **surgically** — your comments and every other
+  section are preserved. Changes apply after you **restart `prism serve`**
+  (the banner reminds you).
+
+The **`/config.html`** page does the same for common settings (instance, paths,
+feature toggles, autopatch, remembrance) and the workflow run-behavior knobs.
+
+The sections below describe the underlying `prism.yaml` format the UI edits.
+
+## Add a job (by hand)
 
 1. Open `prism.yaml` → `prism.scheduler.jobs`.
 2. Append an entry with a unique `name`, a `schedule`, `event:

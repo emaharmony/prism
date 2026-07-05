@@ -24,6 +24,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/api"
 	contextpkg "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/factorymonitor"
 	"github.com/emaharmony/prism/internal/gitx"
@@ -195,6 +196,16 @@ Work fast and decisively. Don't overthink — implement, review, push. If you ge
 		ChannelID: "1491622581348864162", // manager-room (fallback; project.channel preferred)
 		MaxTokens: 4096,
 	},
+}
+
+// schedulerActionList exposes the known wake actions as cron-job presets for
+// the dashboard scheduler editor (action dropdown).
+func schedulerActionList() []api.SchedulerAction {
+	out := make([]api.SchedulerAction, 0, len(knownActions))
+	for key, def := range knownActions {
+		out = append(out, api.SchedulerAction{Key: key, SkipLLM: def.SkipLLM})
+	}
+	return out
 }
 
 // NewWakeHandler creates a wake handler with the given dependencies.
