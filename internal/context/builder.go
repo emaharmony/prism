@@ -39,15 +39,15 @@ var SourcePriority = map[string]int{
 
 // ContextFile represents a workspace file that has been read and processed.
 type ContextFile struct {
-	Name         string // Short name (e.g., "soul")
-	Path         string // Full file path
-	Content      string // Raw file content
-	SizeBytes    int    // File size in bytes
-	EstimatedTokens int  // Rough token estimate (content / 4)
-	Priority     int    // Truncation priority (higher = kept longer)
-	Source       string // "named", "auto", or "file"
-	Truncated    bool  // Whether content was truncated
-	TruncatedBy  int    // Number of tokens removed by truncation
+	Name            string // Short name (e.g., "soul")
+	Path            string // Full file path
+	Content         string // Raw file content
+	SizeBytes       int    // File size in bytes
+	EstimatedTokens int    // Rough token estimate (content / 4)
+	Priority        int    // Truncation priority (higher = kept longer)
+	Source          string // "named", "auto", or "file"
+	Truncated       bool   // Whether content was truncated
+	TruncatedBy     int    // Number of tokens removed by truncation
 }
 
 // InjectedContext is the result of context injection.
@@ -62,14 +62,14 @@ type InjectedContext struct {
 // Builder constructs injected context from workspace files.
 type Builder struct {
 	WorkspaceRoot string
-	NamedContexts []string   // e.g., ["soul", "agents"]
-	AutoFiles     []string   // Files discovered by keyword matching
-	ExplicitFiles []string   // Files specified via --context-file
-	TokenBudget   int        // Max tokens to inject (0 = no limit)
+	NamedContexts []string // e.g., ["soul", "agents"]
+	AutoFiles     []string // Files discovered by keyword matching
+	ExplicitFiles []string // Files specified via --context-file
+	TokenBudget   int      // Max tokens to inject (0 = no limit)
 
 	// Cache for BuildCached(). Invalidated when workspace files change.
-	cache     *cachedContext
-	cacheMu   sync.Mutex
+	cache   *cachedContext
+	cacheMu sync.Mutex
 }
 
 // cachedContext holds a previously-built InjectedContext along with file
@@ -269,10 +269,11 @@ func (b *Builder) BuildCached() (*InjectedContext, error) {
 
 	return b.cache.result, nil
 }
+
 // readFile reads a single file from the workspace.
 func (b *Builder) readFile(name, filename, source string, priority int) (ContextFile, error) {
 	// Resolve path: named sources are relative to workspace root
- fullPath := filename
+	fullPath := filename
 	if !filepath.IsAbs(filename) && source == "named" {
 		fullPath = filepath.Join(b.WorkspaceRoot, filename)
 	}
@@ -292,7 +293,7 @@ func (b *Builder) readFile(name, filename, source string, priority int) (Context
 		SizeBytes:       len(data),
 		EstimatedTokens: tokens,
 		Priority:        priority,
-		Source:           source,
+		Source:          source,
 	}, nil
 }
 
@@ -333,7 +334,11 @@ func (b *Builder) applyBudget(files []ContextFile) []ContextFile {
 			continue
 		}
 
-		if sorted[i].EstimatedTokens > 0 && sorted[i].Source != "named" || sorted[i].Priority < 80 {
+		// Truncate a file only if it actually has tokens AND it is either a
+		// non-named source or a low-priority (<80) named source. High-priority
+		// named sources (soul, agents, …) are preserved. Parenthesised to match
+		// this documented intent rather than rely on operator precedence.
+		if sorted[i].EstimatedTokens > 0 && (sorted[i].Source != "named" || sorted[i].Priority < 80) {
 			// Truncate this file
 			keepTokens := sorted[i].EstimatedTokens - overage
 			if keepTokens < 0 {

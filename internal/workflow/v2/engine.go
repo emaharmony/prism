@@ -23,8 +23,22 @@ type Engine struct {
 	eventEmitter  EventEmitter
 	delegation    *DelegationManager
 	config        *WorkflowConfig
-	externalEvent chan ExternalEvent // events from Discord/NATS during feedback gates
+	externalEvent chan ExternalEvent     // events from Discord/NATS during feedback gates
+	verify        VerificationFunc       // optional objective build/test runner (see driver.go)
+	publishTask   func(TaskPacket) error // optional publisher for delegated task packets
 }
+
+// SetTaskPublisher wires the transport used to dispatch delegated task packets
+// (e.g. a NATS publish). When nil, delegation still records state and marks the
+// task in_progress but no packet is sent — keeping the engine usable in tests.
+func (e *Engine) SetTaskPublisher(fn func(TaskPacket) error) { e.publishTask = fn }
+
+// SetVerificationRunner wires an objective build/test runner into the engine.
+// When set, phases that declare a verification profile have it run automatically
+// before they complete (see PhaseConfig.Verification and runVerification). When
+// nil, verification is skipped — keeping the engine usable in tests and for
+// projects that have not configured a validation profile.
+func (e *Engine) SetVerificationRunner(fn VerificationFunc) { e.verify = fn }
 
 // Phase is the core abstraction. Each phase encapsulates its own gate logic,
 // tool permissions, and interaction patterns.
@@ -186,10 +200,10 @@ func (e *Engine) Run(ctx context.Context) (*WorkflowState, error) {
 
 			result := gate.Evaluate(e.state)
 			e.emitEvent("phase.gate_check", map[string]any{
-				"phase":   phaseName,
-				"passed":  result.Passed,
-				"score":   result.Score,
-				"reason":  result.Reason,
+				"phase":  phaseName,
+				"passed": result.Passed,
+				"score":  result.Score,
+				"reason": result.Reason,
 			})
 
 			if result.Passed {
@@ -208,8 +222,8 @@ func (e *Engine) Run(ctx context.Context) (*WorkflowState, error) {
 		if !completed {
 			// Phase didn't complete within its iteration budget
 			e.emitEvent("phase.fallback", map[string]any{
-				"phase":     phaseName,
-				"reason":    "max_iterations_reached",
+				"phase":  phaseName,
+				"reason": "max_iterations_reached",
 			})
 			e.state.SetPhaseStatus(phaseName, PhaseStatusFallback)
 
@@ -217,8 +231,8 @@ func (e *Engine) Run(ctx context.Context) (*WorkflowState, error) {
 			if phaseCfg := e.config.GetPhase(phaseName); phaseCfg != nil && phaseCfg.Fallback.Blocks {
 				e.state.Status = StatusBlocked
 				e.emitEvent("workflow.blocked", map[string]any{
-					"phase":   phaseName,
-					"reason":  "blocking phase fallback",
+					"phase":  phaseName,
+					"reason": "blocking phase fallback",
 				})
 				return e.state, fmt.Errorf("blocking phase %s failed", phaseName)
 			}
@@ -327,7 +341,16 @@ func (e *Engine) handleExternalEvent(evt ExternalEvent, phaseName string) {
 	case "task_complete":
 		taskID, _ := evt.Data["task_id"].(string)
 		status, _ := evt.Data["status"].(string)
-		e.state.UpdateTaskStatus(taskID, status, evt.Data)
+		if e.delegation != nil {
+			// Route through the delegation manager so the matching delegation
+			// record is closed out alongside the task status.
+			summary, _ := evt.Data["output_summary"].(string)
+			e.delegation.HandleTaskCompletion(TaskCompletion{
+				TaskID: taskID, Status: status, OutputSummary: summary,
+			}, e.state)
+		} else {
+			e.state.UpdateTaskStatus(taskID, status, evt.Data)
+		}
 	case "agent_status":
 		agentName, _ := evt.Data["agent"].(string)
 		availability, _ := evt.Data["availability"].(string)

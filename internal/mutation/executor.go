@@ -152,28 +152,50 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 		return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: resolveErr.Error()}, nil
 	}
 
-	// Ensure parent directory exists
-	parentDir := filepath.Dir(absPath)
-	if err := os.MkdirAll(parentDir, 0755); err != nil {
+	switch a.MutationType {
+	case approval.MutationCreateDirectory:
+		if err := os.MkdirAll(absPath, 0755); err != nil {
+			e.emitEvent("prism.mutation.failed", map[string]any{
+				"approval_id":    approvalID,
+				"mutation_type":  a.MutationType,
+				"target_path":    a.TargetPath,
+				"correlation_id": a.CorrelationID,
+				"error":          "directory creation failed: " + err.Error(),
+			})
+			return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "directory creation failed: " + err.Error()}, nil
+		}
+	case approval.MutationWriteFile:
+		// Ensure parent directory exists
+		parentDir := filepath.Dir(absPath)
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			e.emitEvent("prism.mutation.failed", map[string]any{
+				"approval_id":    approvalID,
+				"mutation_type":  a.MutationType,
+				"target_path":    a.TargetPath,
+				"correlation_id": a.CorrelationID,
+				"error":          "failed to create parent directory: " + err.Error(),
+			})
+			return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "failed to create parent directory"}, nil
+		}
+		if err := os.WriteFile(absPath, []byte(a.Content), 0644); err != nil {
+			e.emitEvent("prism.mutation.failed", map[string]any{
+				"approval_id":    approvalID,
+				"mutation_type":  a.MutationType,
+				"target_path":    a.TargetPath,
+				"correlation_id": a.CorrelationID,
+				"error":          "file write failed: " + err.Error(),
+			})
+			return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "file write failed: " + err.Error()}, nil
+		}
+	default:
 		e.emitEvent("prism.mutation.failed", map[string]any{
 			"approval_id":    approvalID,
 			"mutation_type":  a.MutationType,
 			"target_path":    a.TargetPath,
 			"correlation_id": a.CorrelationID,
-			"error":          "failed to create parent directory: " + err.Error(),
+			"error":          "unsupported mutation type",
 		})
-		return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "failed to create parent directory"}, nil
-	}
-
-	if err := os.WriteFile(absPath, []byte(a.Content), 0644); err != nil {
-		e.emitEvent("prism.mutation.failed", map[string]any{
-			"approval_id":    approvalID,
-			"mutation_type":  a.MutationType,
-			"target_path":    a.TargetPath,
-			"correlation_id": a.CorrelationID,
-			"error":          "file write failed: " + err.Error(),
-		})
-		return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "file write failed: " + err.Error()}, nil
+		return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "unsupported mutation type: " + a.MutationType}, nil
 	}
 
 	// 8. Emit mutation.applied
@@ -210,6 +232,20 @@ func (e *Executor) validateSafety(a *approval.Approval) error {
 	resolvedTargetPath, resolveErr := e.resolveTargetPath(a.TargetPath)
 	if resolveErr != nil {
 		return resolveErr
+	}
+	if a.MutationType == approval.MutationCreateDirectory {
+		if info, statErr := os.Lstat(resolvedTargetPath); statErr == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("target path %q is a symlink, not a directory", a.TargetPath)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("target path %q exists and is not a directory", a.TargetPath)
+			}
+		}
+		return nil
+	}
+	if a.MutationType != approval.MutationWriteFile {
+		return fmt.Errorf("unsupported mutation type %q", a.MutationType)
 	}
 	if len(a.Content) > MaxContentSize {
 		return fmt.Errorf("content size %d bytes exceeds maximum %d bytes", len(a.Content), MaxContentSize)

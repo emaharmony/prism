@@ -55,6 +55,13 @@ type PolicyConfig struct {
 	// (write_file_proposal, git_add, git_commit, git_push). Used by
 	// autonomous wake handler actions where no human is present to approve.
 	AutoApproveMutations bool
+
+	// AutoApproveMCP opts in to autonomous execution of external MCP tools
+	// (mcp_<server>_<tool>). It is deliberately SEPARATE from AutoApproveMutations:
+	// MCP tools are remote and their descriptions/schemas are attacker-influenced
+	// text reaching the model, so they default to approval-required and only run
+	// unattended when an operator explicitly turns this on.
+	AutoApproveMCP bool
 }
 
 // DefaultPolicyConfig returns a PolicyConfig with sensible defaults.
@@ -128,9 +135,9 @@ type PolicyResult struct {
 //   - list_dir → approved if path is within workspace root
 //   - read_file → approved if path is within workspace root and file size ≤ MaxFileSize
 //   - write_file_dry_run → always approved (no mutation)
-//   - write_file_proposal → requires_approval (mutation gate)
+//   - write_file_proposal/create_directory_proposal → requires_approval (mutation gate)
 //   - apply_patch_proposal → denied (V5 candidate, not implemented)
-//   - write_file (direct) → denied (must use write_file_proposal)
+//   - write_file/create_directory (direct) → denied unless AutoApproveMutations is set
 //   - anything else → denied
 //   - Path traversal with ".." or absolute paths outside workspace → denied
 func EvaluatePolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
@@ -147,6 +154,11 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "web_search", "memory_search":
 		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is read-only research, always approved", toolName)}
 
+	// use_skill only returns a skill's instructions (no mutation) — always approved.
+	// Scripts a skill bundles still run through the mutation tools' own gates.
+	case "use_skill":
+		return PolicyResult{Decision: PolicyApproved, Reason: "use_skill returns skill instructions, read-only"}
+
 	case "write_file_dry_run":
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 
@@ -159,6 +171,15 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		}
 		return evaluateV4ProposalPolicy(cfg, toolName, input)
 
+	case "create_directory_proposal":
+		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose directory mutations; route write requests through the orchestrator", agentID)}
+		}
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: directory creation proposal approved for autonomous wake action"}
+		}
+		return evaluateDirectoryProposalPolicy(cfg, toolName, input)
+
 	case "apply_patch_proposal":
 		return PolicyResult{Decision: PolicyDenied, Reason: "apply_patch_proposal is not implemented (V5 candidate)"}
 
@@ -167,6 +188,12 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct write approved for autonomous wake action"}
 		}
 		return PolicyResult{Decision: PolicyDenied, Reason: "direct write_file is denied — use write_file_proposal for approval-gated mutations"}
+
+	case "create_directory":
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct directory creation approved for autonomous wake action"}
+		}
+		return PolicyResult{Decision: PolicyDenied, Reason: "direct create_directory is denied — use create_directory_proposal for approval-gated mutations"}
 
 	case "list_dir":
 		return evaluatePathPolicy(cfg, toolName, input)
@@ -208,8 +235,41 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s is a git mutation, requires approval", toolName)}
 
 	default:
+		// V49: external MCP tools (mcp_<server>_<tool>). Remote and untrusted, so
+		// they are gated behind approval by default — never silently denied (which
+		// would make them unusable) nor auto-run. Operators opt into unattended MCP
+		// execution explicitly via AutoApproveMCP.
+		if strings.HasPrefix(toolName, "mcp_") {
+			if cfg.AutoApproveMCP {
+				return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("auto-approve: MCP tool %q approved (AutoApproveMCP)", toolName)}
+			}
+			return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("MCP tool %q is external; requires approval", toolName)}
+		}
 		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("tool %q is not in the approved list", toolName)}
 	}
+}
+
+// evaluateDirectoryProposalPolicy validates a create_directory_proposal.
+func evaluateDirectoryProposalPolicy(cfg PolicyConfig, toolName string, input map[string]any) PolicyResult {
+	pathVal, ok := input["path"]
+	if !ok {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s requires a 'path' parameter", toolName)}
+	}
+
+	pathStr, ok := pathVal.(string)
+	if !ok || strings.TrimSpace(pathStr) == "" {
+		return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("%s 'path' must be a non-empty string", toolName)}
+	}
+
+	if strings.Contains(pathStr, "..") {
+		return PolicyResult{Decision: PolicyDenied, Reason: "path traversal with '..' is blocked"}
+	}
+
+	if _, err := safety.ResolveAndContainMulti(cfg.WriteRootsAll(), pathStr); err != nil {
+		return PolicyResult{Decision: PolicyDenied, Reason: err.Error()}
+	}
+
+	return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s requires explicit approval to apply the mutation", toolName)}
 }
 
 // evaluateV4ProposalPolicy validates a write_file_proposal or similar V4 mutation proposal.

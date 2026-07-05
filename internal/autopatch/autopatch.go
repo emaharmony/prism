@@ -20,6 +20,7 @@ import (
 
 const (
 	StatusProposed         = "proposed"
+	StatusPROpened         = "pr_opened"
 	StatusValidationFailed = "validation_failed"
 	StatusFailed           = "failed"
 )
@@ -52,9 +53,11 @@ type Config struct {
 	Root                 string
 	WorktreeRoot         string
 	ArtifactRoot         string
+	BaseBranch           string // PR base branch (empty → repo default)
 	Store                *task.Store
 	Registry             *validation.Registry
 	Workers              map[string]PatchWorker
+	PROpener             PROpener // opens a PR in "pr" mode; nil → gh-based default
 	Emit                 func(eventType, source string, payload map[string]any)
 }
 
@@ -70,6 +73,8 @@ type Result struct {
 	DiffStat          string              `json:"diff_stat,omitempty"`
 	ValidationResults []validation.Result `json:"validation_results,omitempty"`
 	ReviewPath        string              `json:"review_path,omitempty"`
+	Branch            string              `json:"branch,omitempty"`
+	PRURL             string              `json:"pr_url,omitempty"`
 	Artifacts         []string            `json:"artifacts,omitempty"`
 	Error             string              `json:"error,omitempty"`
 	DurationMS        int64               `json:"duration_ms"`
@@ -156,6 +161,9 @@ func NormalizeConfig(cfg Config) Config {
 	if cfg.Workers == nil {
 		cfg.Workers = map[string]PatchWorker{}
 	}
+	if cfg.Mode == "pr" && cfg.PROpener == nil {
+		cfg.PROpener = ghPROpener{}
+	}
 	return cfg
 }
 
@@ -218,6 +226,11 @@ func (s *Service) runTask(taskID string, req Request) {
 		result.Error = err.Error()
 		_ = s.cfg.Store.UpdateStatus(taskID, task.StatusFailed, resultToMap(result))
 		s.emit("prism.autopatch.failed", map[string]any{"task_id": taskID, "error": err.Error()})
+		return
+	}
+	if result.Status == StatusPROpened {
+		_ = s.cfg.Store.UpdateStatus(taskID, task.StatusCompleted, resultToMap(result))
+		s.emit("prism.autopatch.pr_opened", map[string]any{"task_id": taskID, "pr_url": result.PRURL, "branch": result.Branch})
 		return
 	}
 	if result.Status == StatusProposed {
@@ -327,6 +340,10 @@ func (s *Service) Run(ctx context.Context, taskID string, req Request) (Result, 
 			result.Status = StatusProposed
 			result.PatchPath, result.DiffStatPath = copyFinalDiffs(artifactDir, diff, stat)
 			result.Artifacts = append(result.Artifacts, result.PatchPath, result.DiffStatPath)
+			// "pr" mode: turn the validated patch into a real pull request. A PR
+			// failure keeps the proposed patch (records the error) rather than
+			// discarding good work.
+			s.maybeOpenPR(ctx, cfg, req, taskID, worktreePath, &result)
 			result.ReviewPath = writeReview(artifactDir, result)
 			result.Artifacts = append(result.Artifacts, result.ReviewPath)
 			attemptResult.Status = StatusProposed

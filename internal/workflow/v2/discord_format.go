@@ -11,13 +11,31 @@ import (
 // These are posted to #manager-room for feedback gates and reports.
 type DiscordFormatter struct{}
 
-// FormatPlanForApproval formats a plan for the FEEDBACK_PRE gate.
-// Posted to Discord for Lumi/Ema to review and approve.
-func FormatPlanForApproval(state *WorkflowState) string {
+// AgentGlyphs is an optional, overridable decoration map: agent name → emoji used
+// in plan/report formatting. It is purely cosmetic and defaults to a generic robot
+// for any agent not listed, so no persona is hardcoded into the formatting logic.
+// Projects can extend or replace this map to match their own roster.
+var AgentGlyphs = map[string]string{}
+
+// agentGlyph returns the decoration for an agent name, defaulting to 🤖.
+func agentGlyph(agent string) string {
+	if g, ok := AgentGlyphs[agent]; ok {
+		return g
+	}
+	return "🤖"
+}
+
+// FormatPlanForApproval formats a plan for the FEEDBACK_PRE gate. approvers comes
+// from the gate config, so the message names whichever approvers the project
+// configured rather than any hardcoded persona.
+func FormatPlanForApproval(state *WorkflowState, approvers []string) string {
 	var sb strings.Builder
 
 	sb.WriteString("## 📋 Plan Review Required\n\n")
 	sb.WriteString(fmt.Sprintf("**Workflow:** %s\n", state.RunID))
+	if len(approvers) > 0 {
+		sb.WriteString(fmt.Sprintf("**Approvers:** %s\n", strings.Join(approvers, ", ")))
+	}
 	sb.WriteString(fmt.Sprintf("**Requested:** %s\n\n", time.Now().UTC().Format(time.RFC3339)))
 
 	// Assumptions summary
@@ -67,17 +85,7 @@ func FormatPlanForApproval(state *WorkflowState) string {
 	if state.Plan != nil && len(state.Plan.Tasks) > 0 {
 		sb.WriteString("### Task Breakdown\n")
 		for _, task := range state.Plan.Tasks {
-			agentEmoji := "🤖"
-			switch task.Agent {
-			case "prism":
-				agentEmoji = "⚡"
-			case "mango":
-				agentEmoji = "🥭"
-			case "junie":
-				agentEmoji = "🔧"
-			case "lumi":
-				agentEmoji = "✨"
-			}
+			agentEmoji := agentGlyph(task.Agent)
 			riskBadge := ""
 			switch task.RiskLevel {
 			case "high":
@@ -115,12 +123,43 @@ func FormatPlanForApproval(state *WorkflowState) string {
 	return sb.String()
 }
 
+// formatReviewerList renders configured reviewer names as a human-readable phrase,
+// with the first marked (required). Falls back to a generic phrase when no
+// reviewers are configured, so nothing is hardcoded to a specific roster.
+func formatReviewerList(reviewers []string) string {
+	if len(reviewers) == 0 {
+		return "the configured reviewers"
+	}
+	parts := make([]string, len(reviewers))
+	for i, r := range reviewers {
+		if i == 0 {
+			parts[i] = fmt.Sprintf("**%s** (required)", r)
+		} else {
+			parts[i] = fmt.Sprintf("**%s**", r)
+		}
+	}
+	return strings.Join(parts, " and ")
+}
+
 // FormatReviewPackage formats a review package for the FEEDBACK_POST gate.
-func FormatReviewPackage(state *WorkflowState, gitDiff string) string {
+// requiredReviewers comes from the gate config, so the message names whichever
+// reviewers the project configured rather than any hardcoded persona.
+func FormatReviewPackage(state *WorkflowState, gitDiff string, requiredReviewers []string) string {
 	var sb strings.Builder
 
 	sb.WriteString("## 🔍 Post-Execution Review Required\n\n")
 	sb.WriteString(fmt.Sprintf("**Workflow:** %s\n\n", state.RunID))
+
+	// Verification status — objective proof the committed code builds and its
+	// tests pass, so reviewers aren't relying on the model's say-so.
+	if v := state.Verification; v != nil {
+		status, emoji := "passed", "✅"
+		if !v.Passed {
+			status, emoji = "FAILED", "❌"
+		}
+		sb.WriteString(fmt.Sprintf("### Verification\n%s `%s` — %s (exit %d, %d attempt(s))\n\n",
+			emoji, v.Profile, status, v.ExitCode, v.Attempts))
+	}
 
 	// Completed tasks
 	if state.Plan != nil {
@@ -166,7 +205,7 @@ func FormatReviewPackage(state *WorkflowState, gitDiff string) string {
 
 	// Review instructions
 	sb.WriteString("### Review\n")
-	sb.WriteString("Reviewers needed: **Mango** (required) and **Lumi**\n")
+	sb.WriteString("Reviewers needed: " + formatReviewerList(requiredReviewers) + "\n")
 	sb.WriteString("6 dimensions: code_quality, task_completion, regression_check, test_coverage, documentation, git_hygiene\n\n")
 	sb.WriteString("Reply with:\n")
 	sb.WriteString("- `review_approve " + state.RunID + "` — all dimensions pass\n")
@@ -233,6 +272,36 @@ func FormatFinalReport(state *WorkflowState) string {
 				emoji = "❌"
 			}
 			sb.WriteString(fmt.Sprintf("%s **%s** → %s (%s)\n", emoji, task.ID, task.Description, task.Status))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Verification — objective proof the committed code builds and its tests pass.
+	if v := state.Verification; v != nil {
+		status, emoji := "passed", "✅"
+		if !v.Passed {
+			status, emoji = "FAILED", "❌"
+		}
+		sb.WriteString(fmt.Sprintf("### Verification\n%s `%s` — %s (exit %d, %d attempt(s))\n\n",
+			emoji, v.Profile, status, v.ExitCode, v.Attempts))
+	}
+
+	// Delegations — what was handed to other agents and how it resolved.
+	if len(state.Delegations) > 0 {
+		sb.WriteString("### Delegations\n")
+		for _, d := range state.Delegations {
+			emoji := "✅"
+			switch d.Status {
+			case "failed", "timed_out":
+				emoji = "❌"
+			case "sent", "acknowledged", "in_progress":
+				emoji = "⏳"
+			}
+			line := fmt.Sprintf("%s **%s** → %s (%s)", emoji, d.TaskID, d.Agent, d.Status)
+			if d.RetryCount > 0 {
+				line += fmt.Sprintf(", %d retries", d.RetryCount)
+			}
+			sb.WriteString(line + "\n")
 		}
 		sb.WriteString("\n")
 	}

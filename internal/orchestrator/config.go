@@ -73,6 +73,27 @@ type Config struct {
 	// ChannelRoles maps Discord channel IDs to role names that determine
 	// which state action applies. Role names must match state_actions keys.
 	ChannelRoles []ChannelRole `yaml:"channel_roles"`
+
+	// MCPServers declares external Model Context Protocol tool servers whose tools
+	// are registered into the policy-gated tool registry at serve startup.
+	MCPServers []MCPServerConfig `yaml:"mcp_servers"`
+
+	// MCPAutoApprove opts in to UNATTENDED execution of external MCP tools (skips
+	// the approval gate for mcp_<server>_<tool>). Default false: MCP tools require
+	// approval. Separate from any mutation auto-approve — remote tools are
+	// higher-trust-risk, so enabling autonomous MCP execution is an explicit choice.
+	MCPAutoApprove bool `yaml:"mcp_auto_approve"`
+}
+
+// MCPServerConfig declares one external MCP (Model Context Protocol) tool server.
+// Its tools are registered as mcp_<name>_<tool> and run through the same policy
+// engine as built-in tools.
+type MCPServerConfig struct {
+	Name    string   `yaml:"name"`    // logical server name (namespaces its tools)
+	Command string   `yaml:"command"` // executable to spawn, e.g. "npx"
+	Args    []string `yaml:"args"`    // arguments, e.g. ["-y","@modelcontextprotocol/server-filesystem","/repo"]
+	Env     []string `yaml:"env"`     // extra KEY=VALUE environment entries
+	Enabled bool     `yaml:"enabled"` // skip when false
 }
 
 // PrismConfig holds top-level service settings.
@@ -258,24 +279,25 @@ type CodexConfig struct {
 // an approve / changes_requested verdict automatically.
 type ClaudeCodeConfig struct {
 	Enabled        bool     `yaml:"enabled"`
-	Executable     string   `yaml:"executable"`     // CLI binary (default: claude / claude.cmd)
-	Model          string   `yaml:"model"`          // optional --model override
-	ReviewerName   string   `yaml:"reviewer_name"`  // gate approver/reviewer name this fulfills (default: claude)
+	Executable     string   `yaml:"executable"`      // CLI binary (default: claude / claude.cmd)
+	Model          string   `yaml:"model"`           // optional --model override
+	ReviewerName   string   `yaml:"reviewer_name"`   // gate approver/reviewer name this fulfills (default: claude)
 	TimeoutMinutes int      `yaml:"timeout_minutes"` // per-review timeout (default: 10)
-	AllowedTools   string   `yaml:"allowed_tools"`  // --allowedTools whitelist (read-only review tools)
-	ExtraArgs      []string `yaml:"extra_args"`     // additional CLI args
+	AllowedTools   string   `yaml:"allowed_tools"`   // --allowedTools whitelist (read-only review tools)
+	ExtraArgs      []string `yaml:"extra_args"`      // additional CLI args
 }
 
 // AutopatchConfig configures the bug diagnosis and patch proposal loop.
 type AutopatchConfig struct {
 	Enabled              bool     `yaml:"enabled"`
-	Mode                 string   `yaml:"mode"`
+	Mode                 string   `yaml:"mode"` // "propose" (patch artifact) or "pr" (open a pull request)
 	RequireCleanWorktree *bool    `yaml:"require_clean_worktree"`
 	MaxAttempts          int      `yaml:"max_attempts"`
 	ValidationProfiles   []string `yaml:"validation_profiles"`
 	WorkerOrder          []string `yaml:"worker_order"`
 	LocalAgent           string   `yaml:"local_agent"`
 	WorktreeRoot         string   `yaml:"worktree_root"`
+	BaseBranch           string   `yaml:"base_branch"` // PR base branch in "pr" mode (empty → repo default)
 }
 
 // FactoryMonitorConfig configures local Factory queue status notifications.

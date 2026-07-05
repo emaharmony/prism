@@ -14,6 +14,17 @@ description: "7-phase gated loop with human-blocking pre/post feedback and itera
 global:
   max_total_iterations: 60
   max_total_time: "60m"
+  # Hard token ceiling across the whole run (prompt + completion). When exceeded the
+  # loop stops gracefully and finalizes, emitting workflow.budget_exhausted. 0 = unlimited.
+  max_total_tokens: 1000000
+  # Abort a phase after this many identical tool calls (same tool + same input) with
+  # no progress, emitting phase.stuck. Guards against oscillation/stuck loops. 0 = default (6).
+  max_repeated_tool_calls: 6
+  # Per-agent delegation deadlines (Go duration strings) for your own roster. The
+  # "default" key sets the fallback for unlisted agents. Omit entirely to use 20m.
+  # delegation_timeouts:
+  #   default: "20m"
+  #   reviewer: "10m"
   state_persistence_dir: "runs/gated-loop"
   event_emission: true
 
@@ -92,10 +103,22 @@ phases:
     type: execution
     description: "Write code with branch protection, read budget, and commit/push enforcement"
     max_iterations: 25
-    allowed_tools: [read_file, write_file, list_dir, search_files, git_status, git_log, git_diff, git_add, git_commit, git_push, git_branch_list, git_checkout, project_overview]
+    # run_validation lets the model self-check (runs the verification profile) before
+    # declaring done — catching failures before a commit instead of after.
+    # delegate hands a planned task to another agent (via NATS); its completion is
+    # collected asynchronously and reflected in the task_completion gate.
+    allowed_tools: [read_file, write_file, create_directory, list_dir, search_files, git_status, git_log, git_diff, git_add, git_commit, git_push, git_branch_list, git_checkout, project_overview, run_validation, delegate]
     gate:
       type: task_completion
       mode: partial_allowed
+    # Objective build/test verification. After the model commits, Prism runs the
+    # named V5 validation profile (an allowlisted command — the model cannot choose
+    # what runs). With blocking: true the phase cannot complete until it passes; the
+    # failing output is fed back so the model fixes it and re-commits. Match the
+    # profile to the project's toolchain (go_test_all, or a custom registered profile).
+    verification:
+      profile: go_test_all
+      blocking: true
     fallback:
       on_max_iterations: proceed_with_partial_completion
       blocks: false

@@ -166,9 +166,9 @@ func (g *PlanCompletenessGate) Evaluate(state *WorkflowState) GateResult {
 
 	passed := score >= g.Threshold
 	result := GateResult{
-		Passed:  passed,
-		Score:   score,
-		Reason:  "",
+		Passed: passed,
+		Score:  score,
+		Reason: "",
 	}
 
 	if !passed {
@@ -213,9 +213,9 @@ func (g *ApprovalGate) Evaluate(state *WorkflowState) GateResult {
 	switch status {
 	case "approved":
 		return GateResult{
-			Passed:  true,
-			Score:   1.0,
-			Reason:  fmt.Sprintf("Plan approved by %s", state.Feedback.PreExecution.Approver),
+			Passed: true,
+			Score:  1.0,
+			Reason: fmt.Sprintf("Plan approved by %s", state.Feedback.PreExecution.Approver),
 		}
 	case "changes_requested":
 		return GateResult{

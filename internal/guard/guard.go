@@ -39,37 +39,40 @@ const (
 
 // CheckResult is the output of a guard rail check.
 type CheckResult struct {
-	Decision   Decision `json:"decision"`
-	Reason     string    `json:"reason"`
-	PlanID     string    `json:"plan_id,omitempty"`
+	Decision      Decision           `json:"decision"`
+	Reason        string             `json:"reason"`
+	PlanID        string             `json:"plan_id,omitempty"`
 	ApprovalLevel plan.ApprovalLevel `json:"approval_level,omitempty"`
-	Warning    string    `json:"warning,omitempty"`
+	Warning       string             `json:"warning,omitempty"`
 }
 
 // CodeMutationTools lists tool names that mutate code/files.
 // These require an active plan before execution.
 var CodeMutationTools = map[string]bool{
-	"write_file":        true,
-	"edit_file":         true,
-	"git_add":           true,
-	"git_commit":        true,
-	"git_push":          true,
-	"shell_exec":        true,
-	"set_active_task":   true,
-	"record_decision":   true,
-	"update_context":    true,
+	"write_file":                true,
+	"write_file_proposal":       true,
+	"create_directory":          true,
+	"create_directory_proposal": true,
+	"edit_file":                 true,
+	"git_add":                   true,
+	"git_commit":                true,
+	"git_push":                  true,
+	"shell_exec":                true,
+	"set_active_task":           true,
+	"record_decision":           true,
+	"update_context":            true,
 }
 
 // ReadTools lists tool names that are read-only.
 // These never require a plan.
 var ReadTools = map[string]bool{
 	"read_project":      true,
-	"search_files":     true,
-	"project_overview": true,
-	"git_status":       true,
-	"git_log":          true,
-	"git_diff":         true,
-	"git_branch_list":  true,
+	"search_files":      true,
+	"project_overview":  true,
+	"git_status":        true,
+	"git_log":           true,
+	"git_diff":          true,
+	"git_branch_list":   true,
 	"clear_active_task": true,
 	"unblock":           true,
 }
@@ -130,9 +133,9 @@ func (g *Guard) CheckToolExecution(toolName string, args map[string]any) CheckRe
 	// Plan exists — check if it can proceed
 	if !plan.CanProceed(activePlan) {
 		return CheckResult{
-			Decision:   Block,
-			Reason:     fmt.Sprintf("active plan %q is %s — needs approval before execution", activePlan.ID, activePlan.Status),
-			PlanID:     activePlan.ID,
+			Decision:      Block,
+			Reason:        fmt.Sprintf("active plan %q is %s — needs approval before execution", activePlan.ID, activePlan.Status),
+			PlanID:        activePlan.ID,
 			ApprovalLevel: activePlan.ApprovalLevel,
 		}
 	}
@@ -247,10 +250,10 @@ type GuardHistory struct {
 
 // GuardEntry records a single guard rail decision.
 type GuardEntry struct {
-	Timestamp time.Time     `json:"timestamp"`
-	ToolName  string        `json:"tool_name"`
-	Decision  Decision      `json:"decision"`
-	Reason    string        `json:"reason"`
-	PlanID    string        `json:"plan_id,omitempty"`
-	Message   string        `json:"message,omitempty"` // Original user message (if intent check)
+	Timestamp time.Time `json:"timestamp"`
+	ToolName  string    `json:"tool_name"`
+	Decision  Decision  `json:"decision"`
+	Reason    string    `json:"reason"`
+	PlanID    string    `json:"plan_id,omitempty"`
+	Message   string    `json:"message,omitempty"` // Original user message (if intent check)
 }
