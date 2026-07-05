@@ -8,7 +8,7 @@ description: "Fast gated loop for 10-minute autonomous cycles — reduced iterat
 
 global:
   max_total_iterations: 100
-  max_total_time: "9m"
+  max_total_time: "15m"
   max_total_tokens: 500000
   max_repeated_tool_calls: 3
   # V57: auto-rollback on failure
@@ -25,7 +25,7 @@ phases:
   - name: PROBE
     type: probe
     description: "Quickly assess the task. Read PROJECT_STATE.md. Identify the topmost unchecked task."
-    max_iterations: 5
+    max_iterations: 8
     allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log, git_branch_list]
     gate:
       type: assumption_threshold
@@ -37,7 +37,7 @@ phases:
   - name: RESEARCH
     type: research
     description: "Brief research — check the specific files you need to modify. 1-2 file reads max."
-    max_iterations: 5
+    max_iterations: 8
     allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log]
     gate:
       type: confidence_threshold
@@ -49,7 +49,7 @@ phases:
   - name: PLAN
     type: plan
     description: "Create a minimal plan — what files to change, what to add. Be brief."
-    max_iterations: 5
+    max_iterations: 8
     allowed_tools: [read_file, write_file, list_dir, search_files, git_status]
     gate:
       type: plan_completeness
