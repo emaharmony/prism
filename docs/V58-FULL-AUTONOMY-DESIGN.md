@@ -86,10 +86,15 @@ Design principles for production/long-term:
   *Known limit (→ 4d): `write_file`/`create_directory` tools are bound to the
   executor's fixed root, so full write isolation needs a per-run executor rooted
   at the worktree; git operations are isolated today.*
-- [ ] **5 — Full system run (Eggventura):** one proper end-to-end run against
-  D:/Projects/Roblox/Eggventura. **(a)** report-only first (safe, no writes),
-  then **(b)** a non-report / implementation run (write-enabled) — per user
-  request. Confirm the worker flag + Factory approval_mode before (b).
+- [x] **5a — Report-only / safe run (Eggventura):** end-to-end delegation smoke
+  over real embedded NATS (packet → worker → LoopRunner → completion, incl.
+  fail-closed), plus a full-system boot with `PRISM_SUBAGENT_WORKER=1` targeting
+  the Eggventura project (agents + worker + health up). No writes.
+- [ ] **5b — (awaiting explicit go-ahead) Implementation run (Eggventura):**
+  write-enabled run through the Factory (`approval_mode: implementation` +
+  `run_codex`) against D:/Projects/Roblox/Eggventura. Requires the Python
+  Factory running and user confirmation to flip write access to the real
+  project. The cron re-firing the same prompt is NOT treated as authorization.
 
 ## Report of changes (append per iteration)
 
@@ -122,6 +127,12 @@ Design principles for production/long-term:
   serve injects it as git `repo_path`. 5 tests incl. a real gitx temp-repo
   acquire/release and non-code-skips-isolation. Green build. (write-tool full
   isolation → 4d.)
+- **Iteration 5a (2026-07-05):** End-to-end smoke over real embedded NATS
+  (`bus.StartEmbeddedBus`): a delegation packet round-trips packet → worker →
+  LoopRunner → completion, plus a fail-closed (unknown-agent) case. Verified the
+  complete system boots with `PRISM_SUBAGENT_WORKER=1` pointed at the Eggventura
+  project (agents registered, worker started, health up) — report-only, no
+  writes. Write-enabled run (5b) held for explicit authorization.
 
 ## Verification
 `go build ./... && go vet ./... && go test ./...` green each iteration. Smoke
