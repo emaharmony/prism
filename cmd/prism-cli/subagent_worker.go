@@ -1,0 +1,182 @@
+package main
+
+import (
+	stdcontext "context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+
+	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prism/internal/subagent"
+	"github.com/emaharmony/prism/internal/tool"
+	v2 "github.com/emaharmony/prism/internal/workflow/v2"
+	"github.com/nats-io/nats.go"
+)
+
+// subagent_worker.go wires the generic sub-agent worker (internal/subagent) into
+// serve: it subscribes to the delegation subject, runs each TaskPacket through a
+// bounded tool-loop backed by the real provider registry + tool executor, and
+// publishes the TaskCompletion back. This is what makes delegated sub-agents
+// genuinely autonomous (V58). Feature-flagged via PRISM_SUBAGENT_WORKER so it is
+// inert — zero behavior change — until explicitly enabled.
+
+const (
+	subAgentDelegationSubject = "prism.agent.openclaw"
+	subAgentCompletionSubject = "prism.workflow.task.complete"
+)
+
+// subAgentResolver resolves an agent id to its runtime from the loaded config.
+type subAgentResolver struct{ agents map[string]subagent.AgentRuntime }
+
+func newSubAgentResolver(cfg *orchestrator.Config) *subAgentResolver {
+	m := make(map[string]subagent.AgentRuntime, len(cfg.Agents))
+	for _, a := range cfg.Agents {
+		m[a.ID] = subagent.AgentRuntime{
+			AgentID:      a.ID,
+			Provider:     a.Provider,
+			Model:        a.Model,
+			Capabilities: append([]string(nil), a.Capabilities...),
+		}
+	}
+	return &subAgentResolver{agents: m}
+}
+
+func (r *subAgentResolver) Resolve(id string) (subagent.AgentRuntime, bool) {
+	rt, ok := r.agents[id]
+	return rt, ok
+}
+
+// subAgentBackend binds an agent runtime to live provider + tool execution
+// callbacks, reusing the same text-generation + JSON-contract parsing the gated
+// loop uses.
+type subAgentBackend struct {
+	providers *provider.ProviderRegistry
+	exec      *tool.Executor
+}
+
+func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, subagent.Parser, subagent.ToolExec, error) {
+	prov, err := b.providers.Get(rt.Model)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	llm := func(ctx stdcontext.Context, msgs []v2.Message) (subagent.Turn, error) {
+		var sb strings.Builder
+		for _, m := range msgs {
+			sb.WriteString(m.Content)
+			sb.WriteString("\n\n")
+		}
+		resp, gerr := prov.Generate(ctx, provider.GenerateRequest{
+			Agent: rt.AgentID, Model: rt.Model, Prompt: sb.String(),
+			Temperature: 0.7, MaxTokens: 4096,
+		})
+		if gerr != nil {
+			return subagent.Turn{}, gerr
+		}
+		return subagent.Turn{Text: resp.Text, PromptTokens: resp.PromptTokens, CompletionTokens: resp.OutputTokens}, nil
+	}
+
+	parse := func(text string) subagent.Action {
+		if content, ok := v2.ParseFinalText(text); ok {
+			return subagent.Action{Final: true, Content: content}
+		}
+		if toolName, input, ok := v2.ParseToolRequestText(text); ok {
+			return subagent.Action{Tool: toolName, Input: input}
+		}
+		return subagent.Action{}
+	}
+
+	execFn := func(ctx stdcontext.Context, toolName string, input map[string]any) (string, error) {
+		res, xerr := b.exec.ExecuteWithPolicy(ctx, toolName, rt.AgentID, "subagent", rt.AgentID, input)
+		if xerr != nil {
+			return "", xerr
+		}
+		if !res.Success {
+			if res.Error != "" {
+				return "", fmt.Errorf("%s", res.Error)
+			}
+			return "", fmt.Errorf("tool %s failed", toolName)
+		}
+		return fmt.Sprintf("%v", res.Output), nil
+	}
+
+	return llm, parse, execFn, nil
+}
+
+// subAgentPublisher publishes completions back onto the completion subject.
+type subAgentPublisher struct {
+	nc      *nats.Conn
+	subject string
+}
+
+func (p *subAgentPublisher) PublishCompletion(c v2.TaskCompletion) error {
+	data, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	return p.nc.Publish(p.subject, data)
+}
+
+// startSubAgentWorker subscribes the generic sub-agent worker to the delegation
+// subject. Feature-flagged via PRISM_SUBAGENT_WORKER (empty = off) so it is a
+// no-op until explicitly enabled — no behavior change to existing deployments.
+func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, exec *tool.Executor, toolReg *tool.Registry, cfg *orchestrator.Config) {
+	if os.Getenv("PRISM_SUBAGENT_WORKER") == "" {
+		return
+	}
+	if nc == nil || exec == nil || cfg == nil {
+		log.Printf("[SUBAGENT] worker not started: missing NATS, executor, or config")
+		return
+	}
+
+	var toolInfos []tool.ToolInfo
+	if toolReg != nil {
+		toolInfos = toolReg.ListWithDescriptions()
+	}
+
+	resolver := newSubAgentResolver(cfg)
+	backend := &subAgentBackend{providers: providers, exec: exec}
+	runner := subagent.NewLoopRunner(subagent.LoopRunnerConfig{
+		Backend: backend,
+		SystemPrompt: func(_ v2.TaskPacket, rt subagent.AgentRuntime) string {
+			// Charter + the tool JSON contract so the model emits the
+			// {"type":"tool_request"|"final"} format the parser expects.
+			charter := fmt.Sprintf("You are agent %q running a single delegated task autonomously. Complete the task with your tools, then return a final answer.", rt.AgentID)
+			workspace := cfg.Prism.Workspace
+			if workspace == "" {
+				workspace = "."
+			}
+			return charter + agent.BuildToolPromptSuffix(toolInfos, workspace, workspace)
+		},
+	})
+	worker := subagent.NewWorker(resolver, runner, 0)
+	pub := &subAgentPublisher{nc: nc, subject: subAgentCompletionSubject}
+
+	_, err := nc.Subscribe(subAgentDelegationSubject, func(msg *nats.Msg) {
+		var packet v2.TaskPacket
+		if err := json.Unmarshal(msg.Data, &packet); err != nil {
+			return
+		}
+		// The subject also carries inter-agent chat; only act on task packets.
+		if packet.Type != "task_delegation" || packet.TargetAgent == "" || packet.TaskID == "" {
+			return
+		}
+		go func() {
+			completion, herr := worker.HandleAndPublish(stdcontext.Background(), packet, pub)
+			if herr != nil {
+				log.Printf("[SUBAGENT] task %s publish error: %v", packet.TaskID, herr)
+			} else {
+				log.Printf("[SUBAGENT] task %s → %s (agent %s)", packet.TaskID, completion.Status, packet.TargetAgent)
+			}
+		}()
+	})
+	if err != nil {
+		log.Printf("[SUBAGENT] subscribe to %s failed: %v", subAgentDelegationSubject, err)
+		return
+	}
+	log.Printf("[SUBAGENT] worker started: %s → %s", subAgentDelegationSubject, subAgentCompletionSubject)
+}
