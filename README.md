@@ -391,6 +391,118 @@ Windows notes:
 
 ---
 
+## Setting Up a Project Loop
+
+Prism can autonomously work on a project in a scheduled loop — reading a state file for tasks, implementing changes, self-reviewing, and pushing branches. Here's how to set it up:
+
+### 1. Add a project to `prism.yaml`
+
+```yaml
+projects:
+  - id: my-project
+    repo_path: "/path/to/your/repo"
+    state_file: "PROJECT_STATE.md"        # task assignment file (relative to repo_path)
+    default_branch: "main"               # protected branch (writes blocked here)
+    channel: "1234567890123456789"       # Discord channel ID for feedback/reports
+    workflow_config: "examples/workflows/fast-loop.yaml"  # optional per-project workflow
+    worktree_isolation: false             # V56: per-run git worktree (parallel runs)
+    default: true                         # used when no --project is specified
+```
+
+### 2. Create a `PROJECT_STATE.md` in the repo
+
+```markdown
+# Project State
+
+## FEATURE PRIORITY — DO THESE IN ORDER
+
+- [ ] Task 1: Brief description (risk: low)
+- [ ] Task 2: Brief description (risk: medium)
+- [x] Task 3: Completed task (strikethrough for done items)
+```
+
+Prism reads this file at the start of each cycle, picks the topmost unchecked task, and works on it. When done, she marks it `[x]`.
+
+### 3. Configure the scheduler job
+
+```yaml
+scheduler:
+  enabled: true
+  jobs:
+    - name: "project-work"
+      schedule: "*/10 * * * *"          # every 10 minutes (cron expression)
+      event: "prism.task.scheduled"
+      payload:
+        action: "project_work"
+      enabled: true
+
+    - name: "status-report"
+      schedule: "0 */2 * * *"           # every 2 hours
+      event: "prism.task.scheduled"
+      payload:
+        action: "status_report"
+      enabled: true
+```
+
+- **project-work**: Runs the gated loop — discovers tasks, implements, reviews, pushes
+- **status-report**: Reads recent run summaries + PROJECT_STATE.md, posts a report to Discord
+
+### 4. Choose a workflow config
+
+| Config | Best for | Key settings |
+|---|---|---|
+| `gated-loop.yaml` (default) | Human-in-the-loop | 60m budget, approval gates, full iteration caps |
+| `fast-loop.yaml` | Autonomous loops | 15m budget, `auto_approve: true`, reduced iteration caps |
+
+Point your project at either one via `workflow_config`. Or omit it to use the built-in default.
+
+### 5. Workflow config options
+
+```yaml
+global:
+  auto_approve: true          # skip FEEDBACK_PRE/FEEDBACK_POST gates (no human needed)
+  auto_rollback: false         # V57: auto git revert on failed verification
+  max_total_time: "15m"       # hard time budget per run
+  max_total_tokens: 500000    # token ceiling
+  max_repeated_tool_calls: 3  # stuck-loop detection
+
+phases:
+  - name: PROBE
+    max_iterations: 8         # how many LLM calls before forcing phase advance
+    gate:
+      type: assumption_threshold
+      threshold: 1.0
+    fallback:
+      on_max_iterations: proceed_with_open_assumptions  # don't block
+      blocks: false
+```
+
+### 6. Start immediately (optional)
+
+Don't want to wait for the next cron tick?
+
+```bash
+./prism workflow start --project my-project --prompt "Work on the next task in PROJECT_STATE.md"
+```
+
+Or via the API:
+
+```bash
+curl -X POST http://localhost:8322/api/v1/workflows/start \
+  -H "Content-Type: application/json" \
+  -d '{"project":"my-project","prompt":"Work on the next task in PROJECT_STATE.md"}'
+```
+
+### 7. Discord approval buttons
+
+When a workflow pauses at a feedback gate, Prism posts a message with interactive buttons to the configured channel:
+
+- **Approve** — resume the workflow
+- **Request changes** — loop back to EXECUTION
+- **Reject** — end the run (FEEDBACK_PRE only)
+
+Buttons are automatically disabled after one is clicked. With `auto_approve: true`, feedback gates are skipped entirely and no buttons are sent.
+
 ## API Surface
 
 Serve mode exposes the live API on `port + 1`, so the default is `8322`.
