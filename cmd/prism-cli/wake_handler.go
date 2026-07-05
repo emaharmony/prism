@@ -553,6 +553,27 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 	// Build the system prompt with state context
 	systemPrompt := actionDef.Prompt
 
+	// Inject scheduler context so the LLM knows about its own cron jobs.
+	if wh.cfg != nil && wh.cfg.Prism.Scheduler.Enabled {
+		systemPrompt += "\n\n## Your Scheduled Jobs (Cron)\n"
+		systemPrompt += "You run on an automated schedule. Here are your cron jobs:\n"
+		for _, job := range wh.cfg.Prism.Scheduler.Jobs {
+			if !job.Enabled {
+				continue
+			}
+			actionName := ""
+			if a, ok := job.Payload["action"]; ok {
+				actionName = fmt.Sprintf("%v", a)
+			}
+			systemPrompt += fmt.Sprintf("- **%s**: schedule=%s, action=%s", job.Name, job.Schedule, actionName)
+			if actionName == action {
+				systemPrompt += " ← (this is the current job)"
+			}
+			systemPrompt += "\n"
+		}
+		systemPrompt += "\nWhen Ema or another agent references these jobs by name, you now know what they are.\n"
+	}
+
 	// Inject working state if available
 	if wh.stateMgr != nil {
 		if statePrompt := wh.stateMgr.FormatStateForPrompt(); statePrompt != "" {
