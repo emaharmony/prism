@@ -895,11 +895,15 @@ func (wh *WakeHandler) statusReport() string {
 	} else {
 		sb.WriteString("### Project State\n")
 		// Extract task lines (lines starting with - [ ] or - [x])
+		// Stop at "Completed Work" section to avoid mentioning old tasks.
 		lines := strings.Split(string(stateContent), "\n")
 		done := 0
 		pending := 0
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "Completed Work") {
+				break // stop reading completed tasks
+			}
 			if strings.HasPrefix(trimmed, "- [x]") {
 				done++
 				sb.WriteString("✅ " + trimmed + "\n")
