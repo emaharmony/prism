@@ -42,6 +42,10 @@ type GlobalConfig struct {
 	// commits on the run branch are NOT force-removed; branch review stays the
 	// remote safety net. Default false.
 	AutoRollback bool `json:"auto_rollback,omitempty"`
+	// AutoApprove skips FEEDBACK_PRE and FEEDBACK_POST gates entirely. The phases
+	// still enter and exit for state tracking, but never pause for external input.
+	// Useful for fully autonomous loops where no human approval is needed.
+	AutoApprove bool `json:"auto_approve,omitempty"`
 	// MaxVerificationAttempts caps how many times a blocking verification may
 	// fail before AutoRollback triggers mid-run. 0 = default (3). Only
 	// meaningful when AutoRollback is true — without it, a blocking failure

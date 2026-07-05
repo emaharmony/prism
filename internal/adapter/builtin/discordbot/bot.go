@@ -164,9 +164,27 @@ func (b *BotAdapter) onInteractionCreate(s *discordgo.Session, ic *discordgo.Int
 		userID, userName = ic.User.ID, ic.User.Username
 	}
 	log.Printf("[DISCORD] interaction: customID=%q user=%q(%s) channel=%s", customID, userName, userID, ic.ChannelID)
+
+	// Disable all buttons on the message immediately so the user can't double-click
+	if ic.ChannelID != "" && ic.Message.ID != "" {
+		empty := []discordgo.MessageComponent{}
+		_, _ = s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+			ID:         ic.Message.ID,
+			Channel:    ic.ChannelID,
+			Components: &empty,
+		})
+	}
+
+	// Respond with a ephemeral confirmation showing which button was clicked
+	action := decodeButtonAction(customID)
 	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredMessageUpdate,
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf("✅ **%s** — processing your decision...", action),
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
 	})
+
 	b.mu.RLock()
 	hs := append([]ButtonHandler(nil), b.buttonHandlers...)
 	b.mu.RUnlock()
@@ -174,6 +192,23 @@ func (b *BotAdapter) onInteractionCreate(s *discordgo.Session, ic *discordgo.Int
 	for _, h := range hs {
 		h(customID, userID, userName)
 	}
+}
+
+// decodeButtonAction extracts the action (approve/changes/reject) from a custom ID
+// for display purposes. Returns "button" if parsing fails.
+func decodeButtonAction(customID string) string {
+	parts := strings.SplitN(customID, ":", 4)
+	if len(parts) >= 3 {
+		switch parts[2] {
+		case "approve":
+			return "Approved"
+		case "changes":
+			return "Changes requested"
+		case "reject":
+			return "Rejected"
+		}
+	}
+	return "Button clicked"
 }
 
 // Send sends a message to a Discord channel.
