@@ -91,7 +91,20 @@ Design principles for production/long-term:
   over real embedded NATS (packet → worker → LoopRunner → completion, incl.
   fail-closed), plus a full-system boot with `PRISM_SUBAGENT_WORKER=1` targeting
   the Eggventura project (agents + worker + health up). No writes.
-- [~] **5b — Implementation run (Eggventura): PREREQS VERIFIED, trigger gated.**
+- [x] **5b — Implementation run (Eggventura): DONE (2026-07-05).** Full complete-
+  system run proven end-to-end. External NATS bus + serve (claude_code
+  orchestrator, Factory→Eggventura) + signed cross-Prism `task_request` →
+  Prism Factory adapter queued it → Python Factory processed it.
+  **Report-only run** first: returned an accurate, project-specific multi-agent
+  audit (Planner + Reviewer + Luau safety) of the real Eggventura Rojo project
+  (exit 0). Gate met → **implementation run** (`approval_mode: implementation`,
+  `run_codex: true`): Codex created `src/ReplicatedStorage/tools/BuildInfo.luau`
+  (correct idiomatic Luau via `DateTime.now():ToIsoDate()`), purely additive —
+  no existing file modified, HEAD unchanged at baseline `0092d6b`. The new file
+  is left untracked for the user to keep (commit) or discard (delete). Test
+  harness (`cmd/factory-trigger`) was throwaway and removed.
+
+  Historical note (pre-run):
   User authorized; verified: Factory Python running, Eggventura is a real Rojo
   git repo (baseline `0092d6b`, clean), claude CLI authed, and the dedicated
   Eggventura serve **boots write-enabled** (astraea+atlas on claude_code,
