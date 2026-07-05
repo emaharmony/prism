@@ -555,6 +555,7 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 
 	// Inject scheduler context so the LLM knows about its own cron jobs.
 	if wh.cfg != nil && wh.cfg.Prism.Scheduler.Enabled {
+		log.Printf("[WAKE] injecting scheduler context (%d jobs) into system prompt", len(wh.cfg.Prism.Scheduler.Jobs))
 		systemPrompt += "\n\n## Your Scheduled Jobs (Cron)\n"
 		systemPrompt += "You run on an automated schedule. Here are your cron jobs:\n"
 		for _, job := range wh.cfg.Prism.Scheduler.Jobs {
