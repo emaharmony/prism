@@ -3,6 +3,7 @@ package subagent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,43 @@ func TestHandle_UnknownAgentFailsClosed(t *testing.T) {
 	}
 	if c.OutputSummary == "" {
 		t.Error("expected a reason for the failure")
+	}
+}
+
+func TestHandle_MissingRequiredCapabilityFailsClosed(t *testing.T) {
+	res := mapResolver{"scout": {AgentID: "scout", Capabilities: []string{"search", "report"}}}
+	w := NewWorker(res, funcRunner(func(context.Context, v2.TaskPacket, AgentRuntime) (RunResult, error) {
+		t.Fatal("runner must not run when the agent lacks the required capability")
+		return RunResult{}, nil
+	}), 0)
+
+	p := packet("scout", "TC")
+	p.RequiredCapability = "code" // scout has no "code"
+	c := w.Handle(context.Background(), p)
+	if c.Status != "failed" {
+		t.Fatalf("status = %q, want failed", c.Status)
+	}
+	if !strings.Contains(c.OutputSummary, "capability") {
+		t.Errorf("reason should mention capability: %q", c.OutputSummary)
+	}
+}
+
+func TestHandle_RequiredCapabilitySatisfiedRuns(t *testing.T) {
+	res := mapResolver{"atlas": {AgentID: "atlas", Capabilities: []string{"code", "report"}}}
+	ran := false
+	w := NewWorker(res, funcRunner(func(context.Context, v2.TaskPacket, AgentRuntime) (RunResult, error) {
+		ran = true
+		return RunResult{Summary: "did it"}, nil
+	}), 0)
+
+	p := packet("atlas", "TC2")
+	p.RequiredCapability = "code"
+	c := w.Handle(context.Background(), p)
+	if !ran {
+		t.Fatal("runner should run when capability is satisfied")
+	}
+	if c.Status != "completed" {
+		t.Fatalf("status = %q, want completed", c.Status)
 	}
 }
 

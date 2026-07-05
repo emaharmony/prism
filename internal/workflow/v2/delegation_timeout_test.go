@@ -68,3 +68,15 @@ func TestBuildTaskPacketUsesConfiguredTimeout(t *testing.T) {
 		t.Fatalf("deadline not ~1h: %v", d)
 	}
 }
+
+func TestBuildTaskPacketCarriesCapability(t *testing.T) {
+	dm := NewDelegationManager("s", "s.complete")
+	pkt := dm.BuildTaskPacket(PlanTask{ID: "T1", Agent: "atlas", Capability: "code"})
+	if pkt.RequiredCapability != "code" {
+		t.Fatalf("RequiredCapability = %q, want code", pkt.RequiredCapability)
+	}
+	// Empty capability stays empty (no requirement, backward compatible).
+	if p2 := dm.BuildTaskPacket(PlanTask{ID: "T2", Agent: "scout"}); p2.RequiredCapability != "" {
+		t.Fatalf("expected empty RequiredCapability, got %q", p2.RequiredCapability)
+	}
+}
