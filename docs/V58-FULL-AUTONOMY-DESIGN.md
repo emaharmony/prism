@@ -83,9 +83,10 @@ Design principles for production/long-term:
   per-task worktree on branch `subagent/<task>` for code-capable agents only,
   threads its dir into the runtime, and releases it on completion; serve points
   git tools at it via `repo_path`. Non-mutating agents skip isolation.
-  *Known limit (→ 4d): `write_file`/`create_directory` tools are bound to the
-  executor's fixed root, so full write isolation needs a per-run executor rooted
-  at the worktree; git operations are isolated today.*
+  (git isolated at this stage; full write isolation completed in 4d.)
+- [x] **4d — Full write isolation:** per-run executor rooted at the worktree so
+  `write_file`/`create_directory` are isolated too (see change report). Closes
+  the 4c limitation.
 - [x] **5a — Report-only / safe run (Eggventura):** end-to-end delegation smoke
   over real embedded NATS (packet → worker → LoopRunner → completion, incl.
   fail-closed), plus a full-system boot with `PRISM_SUBAGENT_WORKER=1` targeting
@@ -150,6 +151,13 @@ To resume: reply "proceed with 5b" (Factory up) for the real run, or re-run
   serve injects it as git `repo_path`. 5 tests incl. a real gitx temp-repo
   acquire/release and non-code-skips-isolation. Green build. (write-tool full
   isolation → 4d.)
+- **Iteration 4d (2026-07-05):** Full write isolation. `subAgentBackend.executorFor`
+  builds a per-run tool executor rooted at the task's worktree (builtins + write
+  + git tools rooted there; shared root-agnostic tools — research/image/skill/
+  MCP/state/plan — copied from the main registry, same instances so MCP clients
+  stay live). Now `write_file`/`create_directory` are isolated to the worktree,
+  not just git. Empty worktree → shared executor (unchanged). Test proves
+  `list_dir` on the per-run executor sees the worktree, not the shared root.
 - **Iteration 5a (2026-07-05):** End-to-end smoke over real embedded NATS
   (`bus.StartEmbeddedBus`): a delegation packet round-trips packet → worker →
   LoopRunner → completion, plus a fail-closed (unknown-agent) case. Verified the

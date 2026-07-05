@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 func TestSubAgentResolver_MapsAgents(t *testing.T) {
@@ -33,5 +39,44 @@ func TestSubAgentResolver_MapsAgents(t *testing.T) {
 
 	if _, ok := r.Resolve("ghost"); ok {
 		t.Error("unknown agent should not resolve")
+	}
+}
+
+// executorFor must root the file/builtin tools at the worktree (V58 4d), so a
+// sub-agent's reads/writes are isolated to its own worktree, not the shared root.
+func TestSubAgentBackend_ExecutorRootedAtWorktree(t *testing.T) {
+	// Shared executor rooted at a DIFFERENT dir.
+	sharedRoot := t.TempDir()
+	sharedReg := tool.NewRegistry()
+	tool.RegisterBuiltinsWithRoots(sharedReg, sharedRoot, subAgentWorktreeMaxFileSize, []string{sharedRoot}, []string{sharedRoot})
+	sharedExec := tool.NewExecutor(sharedReg, tool.DefaultPolicyConfig())
+	b := &subAgentBackend{exec: sharedExec, toolReg: sharedReg}
+
+	// A worktree with a marker file only it contains.
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "MARKER.txt"), []byte("in-worktree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ex := b.executorFor(workDir)
+	if ex == sharedExec {
+		t.Fatal("expected a distinct per-worktree executor")
+	}
+	// list_dir "." on the worktree executor must see the worktree's file.
+	res, err := ex.ExecuteWithPolicy(context.Background(), "list_dir", "scout", "subagent", "T", map[string]any{"path": "."})
+	if err != nil {
+		t.Fatalf("list_dir: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("list_dir failed: %s", res.Error)
+	}
+	out := fmt.Sprintf("%v", res.Output)
+	if !strings.Contains(out, "MARKER.txt") {
+		t.Errorf("worktree executor not rooted at worktree; listing = %s", out)
+	}
+
+	// Empty workDir → shared executor (no isolation).
+	if b.executorFor("") != sharedExec {
+		t.Error("empty workDir should return the shared executor")
 	}
 }
