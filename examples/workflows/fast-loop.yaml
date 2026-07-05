@@ -10,7 +10,7 @@ global:
   max_total_iterations: 100
   max_total_time: "15m"
   max_total_tokens: 2000000
-  max_repeated_tool_calls: 3
+  max_repeated_tool_calls: 6
   # V57: auto-rollback on failure
   auto_rollback: false
   max_verification_attempts: 2

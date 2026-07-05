@@ -369,6 +369,11 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 					continue
 				}
 				toolMsg := truncate(fmt.Sprintf("Tool %q result:\n%s", req.Tool, result), 3000)
+				// Mid-EXECUTION commit nudge: if files were written but not committed
+				// after 8 tool calls, remind the model to commit.
+				if phaseName == "EXECUTION" && hasWritten && !hasCommitted && totalIter >= 8 && totalIter%4 == 0 {
+					toolMsg += "\n\n⚠️ **COMMIT REMINDER**: You have written files but have not committed. Call git_commit NOW, then git_push. Then continue working or emit EXECUTION_COMPLETE."
+				}
 				if phaseName == "EXECUTION" && req.Tool == "git_checkout" && !hasWritten {
 					toolMsg += "\n\n**NEXT STEP: You MUST call write_file now to implement your changes. Do not read more files. Write the code, then git_add, git_commit, git_push, then EXECUTION_COMPLETE.**"
 				}
