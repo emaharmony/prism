@@ -50,14 +50,19 @@ type GlobalConfig struct {
 }
 
 type PhaseConfig struct {
-	Name          string              `json:"name"`
-	Type          string              `json:"type"`
-	Description   string              `json:"description"`
-	MaxIterations int                 `json:"max_iterations"`
-	AllowedTools  []string            `json:"allowed_tools"`
-	Gate          GateConfig          `json:"gate"`
-	Fallback      FallbackConfig      `json:"fallback"`
-	Verification  *VerificationConfig `json:"verification,omitempty"`
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`
+	Description   string   `json:"description"`
+	MaxIterations int      `json:"max_iterations"`
+	AllowedTools  []string `json:"allowed_tools"`
+	// MaxTokens caps this phase's prompt+completion tokens. When exceeded the
+	// phase stops iterating (phase.budget_exhausted) and falls through to its
+	// fallback handling — softer than the run-wide global.max_total_tokens,
+	// which ends the whole run. 0 = no per-phase cap.
+	MaxTokens    int                 `json:"max_tokens,omitempty"`
+	Gate         GateConfig          `json:"gate"`
+	Fallback     FallbackConfig      `json:"fallback"`
+	Verification *VerificationConfig `json:"verification,omitempty"`
 }
 
 // VerificationConfig attaches an objective build/test check to a phase. After the
@@ -271,6 +276,9 @@ func ValidateConfig(cfg *WorkflowConfig) []string {
 		}
 		if p.MaxIterations < 0 {
 			errs = append(errs, fmt.Sprintf("phase %q: max_iterations must be >= 0", p.Name))
+		}
+		if p.MaxTokens < 0 {
+			errs = append(errs, fmt.Sprintf("phase %q: max_tokens must be >= 0", p.Name))
 		}
 		if p.Verification != nil && strings.TrimSpace(p.Verification.Profile) == "" {
 			errs = append(errs, fmt.Sprintf("phase %q: verification.profile is required when verification is set", p.Name))

@@ -219,6 +219,16 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				log.Printf("[V2] budget exhausted in %s: %s", phaseName, reason)
 				break iterLoop
 			}
+			// Per-phase token cap: softer than the run-wide budget — the phase
+			// stops iterating and falls through to its fallback handling while
+			// the run continues.
+			if max := e.phaseMaxTokens(phaseName); max > 0 && e.state.GetPhaseTokens(phaseName) >= max {
+				e.emitEvent("phase.budget_exhausted", map[string]any{
+					"phase": phaseName, "tokens": e.state.GetPhaseTokens(phaseName), "max": max,
+				})
+				log.Printf("[V2] phase %s token budget exhausted (%d >= %d)", phaseName, e.state.GetPhaseTokens(phaseName), max)
+				break iterLoop
+			}
 			totalIter++
 			e.state.IncrementPhaseIteration(phaseName)
 
@@ -263,14 +273,17 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 
 			text, pt, ct, err := llm(ctx, messages)
 			e.state.AddTokens(pt, ct)
+			e.state.AddPhaseTokens(phaseName, pt, ct)
 			// Per-iteration token telemetry so live observers (e.g. `prism watch`)
 			// can render a budget burn-down. Purely observational.
 			e.emitEvent("phase.tokens", map[string]any{
-				"phase":      phaseName,
-				"prompt":     e.state.GetTotalPromptTokens(),
-				"completion": e.state.GetTotalCompletionTokens(),
-				"total":      e.state.GetTotalPromptTokens() + e.state.GetTotalCompletionTokens(),
-				"max":        e.config.Global.MaxTotalTokens,
+				"phase":       phaseName,
+				"prompt":      e.state.GetTotalPromptTokens(),
+				"completion":  e.state.GetTotalCompletionTokens(),
+				"total":       e.state.GetTotalPromptTokens() + e.state.GetTotalCompletionTokens(),
+				"max":         e.config.Global.MaxTotalTokens,
+				"phase_total": e.state.GetPhaseTokens(phaseName),
+				"phase_max":   e.phaseMaxTokens(phaseName),
 			})
 			if err != nil {
 				return e.state, fmt.Errorf("llm call in %s: %w", phaseName, err)
@@ -493,6 +506,14 @@ func (e *Engine) injectGateReason(phaseName string, messages *[]Message) {
 			*messages = append(*messages, Message{Role: "system", Content: "GATE NOT MET: " + result.Reason})
 		}
 	}
+}
+
+// phaseMaxTokens returns a phase's configured token cap (0 = none).
+func (e *Engine) phaseMaxTokens(phaseName string) int {
+	if cfg := e.config.GetPhase(phaseName); cfg != nil {
+		return cfg.MaxTokens
+	}
+	return 0
 }
 
 // doRollback fires the injected V57 rollback runner (if any), emits the
