@@ -346,10 +346,12 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 					continue
 				}
 				result, terr := e.executeTool(ctx, phaseName, req, tool)
+				log.Printf("[V2] tool %s in %s: err=%v result_len=%d hasWritten=%v hasCommitted=%v", req.Tool, phaseName, terr != nil, len(result), hasWritten, hasCommitted)
 				switch req.Tool {
 				case "write_file", "create_directory":
 					if terr == nil {
 						hasWritten = true
+						log.Printf("[V2] hasWritten=true after %s", req.Tool)
 					}
 				case "git_commit":
 					if terr == nil {
