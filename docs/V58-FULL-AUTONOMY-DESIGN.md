@@ -59,8 +59,10 @@ Design principles for production/long-term:
 - [x] **1 — Foundation:** `internal/subagent` package: `Worker`, the three
   interfaces, `Handle` with resolve/run/timeout/failure paths, and a mock-based
   smoke test. No serve wiring. (this fire)
-- [ ] **2 — Real runner:** `TaskRunner` backed by a bounded single-agent
-  tool-loop (provider + tool executor + policy), producing real artifacts.
+- [x] **2 — Real runner:** `LoopRunner` (a `TaskRunner`) — bounded single-agent
+  tool loop with iteration + token budgets, tool-failure feedback, artifact
+  capture, and context-deadline honoring. Model/tool specifics injected via a
+  `Backend` (mock in tests; provider registry + tool executor in iteration 3).
 - [ ] **3 — Serve wiring:** subscribe the worker to the delegation subject in
   `cmd_serve.go` (replace the M3.1d stub), publish completions; feature-flagged.
 - [ ] **4 — Capability routing + concurrency:** worktree-isolated parallel runs,
@@ -72,6 +74,10 @@ Design principles for production/long-term:
 
 - **Iteration 1 (2026-07-05):** Added `internal/subagent` (worker + interfaces +
   smoke tests). Transport/runtime-agnostic; green build, no serve behavior change.
+- **Iteration 2 (2026-07-05):** Added `LoopRunner` — the real bounded tool-loop
+  `TaskRunner` (iteration + token budgets, tool-failure feedback, artifact
+  capture, deadline honoring) with a `Backend` seam. 8 runner tests incl. an
+  end-to-end Worker+LoopRunner path. Still no serve wiring; green build.
 
 ## Verification
 `go build ./... && go vet ./... && go test ./...` green each iteration. Smoke
