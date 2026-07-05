@@ -961,8 +961,8 @@ func (c *Config) Validate() error {
 		c.Autopatch.WorktreeRoot = filepath.Join(".prism", "worktrees")
 	}
 	if c.Autopatch.Enabled {
-		if c.Autopatch.Mode != "propose" {
-			return fmt.Errorf("config: autopatch.mode must be 'propose'")
+		if c.Autopatch.Mode != "propose" && c.Autopatch.Mode != "pr" {
+			return fmt.Errorf("config: autopatch.mode must be 'propose' or 'pr'")
 		}
 		if c.Autopatch.MaxAttempts < 1 {
 			return fmt.Errorf("config: autopatch.max_attempts must be >= 1")

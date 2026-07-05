@@ -2,7 +2,7 @@
 //
 // V2 adds: entity management, graph traversal, dream cycle, hybrid search,
 // and context building. The client communicates with Remembrance's REST API
-// (default: http://localhost:8788).
+// (default: DefaultBaseURL).
 //
 // All V1 endpoints are preserved. V2 adds new endpoints for the knowledge
 // graph, fact store, dream cycle, and hybrid search.
@@ -176,6 +176,11 @@ const DefaultTimeout = 60 * time.Second
 
 // DefaultContextMaxTokens is the default Remembrance context-pack token budget.
 const DefaultContextMaxTokens = 2500
+
+// DefaultBaseURL is the default Remembrance service URL. It matches the
+// orchestrator config default — every code path that needs a fallback URL
+// must use this constant so defaults can't drift apart again.
+const DefaultBaseURL = "http://localhost:18790"
 
 // NewClient creates a new Remembrance client with default timeout.
 func NewClient(baseURL string) *Client {
