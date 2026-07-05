@@ -496,6 +496,16 @@ func executeServe(args []string) {
 			}
 			tool.RegisterResearchTools(toolReg, memSearcher, tool.WebSearchConfig{})
 
+			// Researcher reference-image tools: fetch/generate/analyze. Images
+			// are saved under <workspace>/references so they sit within the
+			// agent's roots; endpoints/vision model resolve from env (see
+			// docs/ROBLOX-TEAM.md). All degrade to "not configured" cleanly.
+			imgDir := "references"
+			if workspaceRoot != "" {
+				imgDir = filepath.Join(workspaceRoot, "references")
+			}
+			tool.RegisterImageTools(toolReg, tool.ImageToolsConfig{ReferencesDir: imgDir})
+
 			// V34: Cross-Prism bridge tool — send messages to remote Prism instances
 			if crossSvc != nil {
 				toolReg.Register(tool.NewSendCrossMessageTool(crossSvc))
