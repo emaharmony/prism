@@ -779,10 +779,10 @@ func (e *Engine) enforceExecution(phaseName string, req *ToolRequest, opts Drive
 			return fmt.Sprintf("BRANCH PROTECTION: you are on %q. Create a feature branch (git_checkout create=true) before writing or committing.", branch)
 		}
 	}
-	if req.Tool == "read_file" || req.Tool == "list_dir" || req.Tool == "search_files" {
+	if req.Tool == "read_file" || req.Tool == "list_dir" || req.Tool == "search_files" || req.Tool == "git_diff" || req.Tool == "git_status" || req.Tool == "git_log" || req.Tool == "git_branch_list" {
 		*readsInPhase++
 		if *readsInPhase > 3 && !*hasWritten {
-			return "READ BUDGET EXCEEDED: you have read enough. Use write_file or create_directory to make changes now."
+			return "READ BUDGET EXCEEDED: You have read enough. You MUST call write_file NOW to implement your changes. After writing, call git_add, git_commit, git_push, then emit EXECUTION_COMPLETE. Do NOT call any more read/search/status/diff tools."
 		}
 	}
 	return ""
