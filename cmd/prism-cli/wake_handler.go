@@ -961,6 +961,41 @@ func (wh *WakeHandler) statusReport() string {
 	sb.WriteString("### Recent Activity (last 2h)\n")
 	sb.WriteString(fmt.Sprintf("- **Runs:** %d total, %d completed, %d failed/other\n", recentRuns, successRuns, failedRuns))
 
+	// Show recent git commits (last 2 hours)
+	bassBookRepo := "/Users/ema/projects/repos/BassBook"
+	cmd := exec.Command("git", "-C", bassBookRepo, "log", "--oneline", "--since=2 hours ago", "--all")
+	if commitOut, err := cmd.Output(); err == nil {
+		commitLines := strings.Split(strings.TrimSpace(string(commitOut)), "\n")
+		if len(commitLines) > 0 && commitLines[0] != "" {
+			sb.WriteString("\n### Recent Commits\n")
+			for _, line := range commitLines {
+				if line == "" {
+					continue
+				}
+				sb.WriteString("• `" + line + "`\n")
+			}
+		}
+	}
+	// Show current branch
+	branchCmd := exec.Command("git", "-C", bassBookRepo, "branch", "--show-current")
+	if branchOut, err := branchCmd.Output(); err == nil {
+		branch := strings.TrimSpace(string(branchOut))
+		if branch != "" {
+			sb.WriteString(fmt.Sprintf("\n**Branch:** %s\n", branch))
+		}
+	}
+	// Show working tree status
+	statusCmd := exec.Command("git", "-C", bassBookRepo, "status", "--short")
+	if statusOut, err := statusCmd.Output(); err == nil {
+		statusLines := strings.Split(strings.TrimSpace(string(statusOut)), "\n")
+		clean := len(statusLines) == 1 && statusLines[0] == ""
+		if clean {
+			sb.WriteString("**Working tree:** clean ✅\n")
+		} else {
+			sb.WriteString(fmt.Sprintf("**Working tree:** %d uncommitted changes\n", len(statusLines)))
+		}
+	}
+
 	// List run summaries
 	if entries, err := os.ReadDir(runsDir); err == nil {
 		for _, entry := range entries {
