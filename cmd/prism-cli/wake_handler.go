@@ -1287,6 +1287,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 					Role: "user",
 					Content: fmt.Sprintf("Tool %q is not allowed in the %s phase. You should be: %s", parsed.ToolName, phase.Name, phase.Description),
 				})
+				iterInPhase++
 				continue
 			}
 
@@ -1315,6 +1316,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 						Role: "user",
 						Content: fmt.Sprintf("BRANCH PROTECTION: You are on '%s'. Mutations are blocked. Create a feature branch first. The system cannot proceed until you are on a feature branch.", branch),
 					})
+					iterInPhase++
 					continue
 				}
 			}
