@@ -69,10 +69,18 @@ Design principles for production/long-term:
   completion publisher, and a subscription on the delegation subject that runs
   task packets through the worker. Feature-flagged via `PRISM_SUBAGENT_WORKER`
   (off by default → no behavior change; verified on/off in serve).
-- [ ] **4 — Capability routing + concurrency:** worktree-isolated parallel runs,
-  per-agent tool scoping, capability-aware assignment.
-- [ ] **5 — Full system run:** one proper end-to-end run against the Eggventura
-  project (D:/Projects/Roblox/Eggventura), report-only first, then gated.
+- [x] **4 — Tool scoping + concurrency:** `ToolScope` (capability-based per-agent
+  tool gating — only "code"-capable agents may mutate/git-write/use MCP build
+  tools; researchers/planners stay read-only), enforced in the runner (denied
+  tools are fed back, never executed) and wired in serve; bounded concurrent
+  runs (semaphore, cap 4). Denials are non-fatal so the agent adapts.
+- [ ] **4b — (deferred) Capability routing + worktree-per-subagent:** add
+  `RequiredCapability` to `TaskPacket` for capability-aware assignment, and give
+  file-mutating sub-agents their own V56 worktree for true parallel isolation.
+- [ ] **5 — Full system run (Eggventura):** one proper end-to-end run against
+  D:/Projects/Roblox/Eggventura. **(a)** report-only first (safe, no writes),
+  then **(b)** a non-report / implementation run (write-enabled) — per user
+  request. Confirm the worker flag + Factory approval_mode before (b).
 
 ## Report of changes (append per iteration)
 
@@ -90,6 +98,11 @@ Design principles for production/long-term:
   task_delegation packets (ignores inter-agent chat on the same subject).
   Verified the flag on/off in a live serve boot; resolver + parser unit tests
   added. Green build.
+- **Iteration 4 (2026-07-05):** Added per-agent tool scoping (`ToolScope` /
+  `CapabilityToolScope`) — role-gated tools (mutation, git-write, mcp_*) require
+  the "code" capability; enforced in the runner (denied → fed back, not
+  executed) and wired in serve. Bounded concurrent sub-agent runs (semaphore).
+  4 scope tests incl. deny/allow-in-role runner paths. Green build.
 
 ## Verification
 `go build ./... && go vet ./... && go test ./...` green each iteration. Smoke
