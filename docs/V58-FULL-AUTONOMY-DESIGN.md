@@ -96,6 +96,29 @@ Design principles for production/long-term:
   Factory running and user confirmation to flip write access to the real
   project. The cron re-firing the same prompt is NOT treated as authorization.
 
+## Loop conclusion (2026-07-05)
+
+The autonomous builder loop delivered the complete, tested, feature-flagged
+autonomy stack (iterations 1–5a). It then **stopped deliberately** rather than
+force the two remaining items under a 3-minute timer:
+
+- **4d (full write isolation)** is a real refactor, not a quick slice: the write
+  tools (`write_file*`, `create_directory*`) are bound to the executor's fixed
+  `WorkspaceRoot`/`AllowedPaths` at registration. Correct fix = build a **per-run
+  tool executor rooted at the acquired worktree** (reusing `RegisterBuiltinsWithRoots`
+  with read/write roots = the worktree path) and run that task's tools through it,
+  while sharing the process-wide MCP clients. This touches path-jailing security
+  and MCP-client lifetime, so it warrants careful (non-rushed) design + tests —
+  not a timed autocommit. Until then, **git operations are worktree-isolated;
+  `write_file` uses the shared root.** Note this is low-risk in practice: the
+  worker is off by default, and real Roblox code-writing flows through the
+  Factory/Codex path, which has its own autopatch worktree isolation.
+- **5b (write-enabled Eggventura run)** is gated on explicit user authorization
+  + the Python Factory running (see the iteration list).
+
+To resume: reply "proceed with 5b" (Factory up) for the real run, or re-run
+`/loop` to build 4d as its own carefully-scoped change.
+
 ## Report of changes (append per iteration)
 
 - **Iteration 1 (2026-07-05):** Added `internal/subagent` (worker + interfaces +
