@@ -48,6 +48,7 @@ import (
 	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/crossprism"
+	"github.com/emaharmony/prism/internal/dashboard"
 	"github.com/emaharmony/prism/internal/debounce"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/factory"
@@ -638,6 +639,14 @@ func executeServe(args []string) {
 	}
 
 	apiPort := servePort + 1 // API on port+1 (default 8322)
+	// Serve the dashboard UI from the API server so config/cron editing is
+	// same-origin (no separate `prism dashboard` process, no CORS).
+	var staticUI http.Handler
+	if h, uiErr := dashboard.StaticFileServer(); uiErr != nil {
+		log.Printf("[WARN] dashboard UI unavailable: %v", uiErr)
+	} else {
+		staticUI = h
+	}
 	apiServer := api.NewServer(api.Config{
 		Addr:               cfg.BindAddr(apiPort),
 		Orch:               orch,
@@ -652,6 +661,9 @@ func executeServe(args []string) {
 		AllowedOrigins:     cfg.API.AllowedOrigins,
 		ConfigDir:          filepath.Dir(*configPath),
 		WorkflowConfigPath: cfg.Prism.WorkflowConfig,
+		ConfigPath:         *configPath,
+		SchedulerActions:   schedulerActionList(),
+		StaticUI:           staticUI,
 	})
 	go func() {
 		if err := apiServer.Start(); err != nil {
@@ -663,6 +675,9 @@ func executeServe(args []string) {
 		displayHost = "127.0.0.1"
 	}
 	fmt.Printf("  API:    http://%s:%d/api/v1/status\n", displayHost, apiPort)
+	if staticUI != nil {
+		fmt.Printf("  Dashboard: http://%s:%d/  (config, cron, editors)\n", displayHost, apiPort)
+	}
 
 	// 11. Start health check server
 	go startHealthServer(servePort, cfg, agentReg, sessMgr, discordBots)

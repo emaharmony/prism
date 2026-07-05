@@ -27,6 +27,12 @@
 //	DELETE /api/v1/editor/edges/{id} — Delete an edge
 //	POST /api/v1/editor/save     — Validate + generate YAML
 //	GET /api/v1/costs             — Cost summary
+//	GET /api/v1/config            — Curated prism.yaml settings + scheduler jobs
+//	PUT /api/v1/config/settings   — Surgically edit curated prism.yaml settings
+//	PUT /api/v1/config/scheduler  — Surgically edit prism.scheduler jobs
+//	POST /api/v1/config/cron/validate — Validate a cron expression
+//	GET /api/v1/config/actions    — Known wake actions (cron presets)
+//	GET /                          — Embedded dashboard UI (when folded into serve)
 package api
 
 import (
@@ -83,6 +89,21 @@ type Server struct {
 	// workflowConfigPath is the gated-loop workflow definition file the
 	// dashboard workflow editor reads and writes. Empty → read-only default.
 	workflowConfigPath string
+	// configPath is the prism.yaml file the config/scheduler editors read and
+	// surgically write. Empty → config editing disabled (endpoints 400).
+	configPath string
+	// schedulerActions are the known wake actions offered as cron-job presets.
+	schedulerActions []SchedulerAction
+	// staticUI serves the embedded dashboard pages at / when non-nil (folded
+	// into `prism serve`).
+	staticUI http.Handler
+}
+
+// SchedulerAction describes a wake action a cron job can trigger. Presented in
+// the dashboard cron editor's action dropdown.
+type SchedulerAction struct {
+	Key     string `json:"key"`
+	SkipLLM bool   `json:"skip_llm"`
 }
 
 // Config holds API server configuration.
@@ -105,6 +126,12 @@ type Config struct {
 	ConfigDir string
 	// WorkflowConfigPath is the gated-loop workflow definition file path.
 	WorkflowConfigPath string
+	// ConfigPath is the prism.yaml path the config/scheduler editors read/write.
+	ConfigPath string
+	// SchedulerActions are the known wake actions offered as cron-job presets.
+	SchedulerActions []SchedulerAction
+	// StaticUI, when non-nil, serves the embedded dashboard pages at /.
+	StaticUI http.Handler
 }
 
 // AutoPatchStarter is the API surface needed from the autopatch service.
@@ -129,6 +156,9 @@ func NewServer(cfg Config) *Server {
 		allowedOrigins:     cfg.AllowedOrigins,
 		configDir:          cfg.ConfigDir,
 		workflowConfigPath: cfg.WorkflowConfigPath,
+		configPath:         cfg.ConfigPath,
+		schedulerActions:   cfg.SchedulerActions,
+		staticUI:           cfg.StaticUI,
 		mux:                http.NewServeMux(),
 	}
 	s.routes()
@@ -162,6 +192,20 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/editor/edges/", s.handleEditorEdgeCRUD)
 	s.mux.HandleFunc("/api/v1/editor/save", s.handleEditorSave)
 	s.mux.HandleFunc("/api/v1/costs", s.handleCosts)
+
+	// Config + scheduler editors (write prism.yaml surgically).
+	s.mux.HandleFunc("/api/v1/config", s.handleConfig)
+	s.mux.HandleFunc("/api/v1/config/settings", s.handleConfigSettings)
+	s.mux.HandleFunc("/api/v1/config/scheduler", s.handleConfigScheduler)
+	s.mux.HandleFunc("/api/v1/config/cron/validate", s.handleCronValidate)
+	s.mux.HandleFunc("/api/v1/config/actions", s.handleSchedulerActions)
+
+	// Serve the embedded dashboard UI at / when wired (folded into `prism
+	// serve`). Specific /api/v1/... patterns above win under ServeMux
+	// longest-match, so this only catches UI/static paths.
+	if s.staticUI != nil {
+		s.mux.Handle("/", s.staticUI)
+	}
 }
 
 // Start starts the API server with timeouts and panic recovery.

@@ -96,8 +96,17 @@ Default serve-mode URLs:
 - Health: `http://localhost:8321/health`
 - API status: `http://localhost:8322/api/v1/status`
 - SSE events: `http://localhost:8322/api/v1/events/stream`
+- **Dashboard: `http://localhost:8322/`** — served by `prism serve` itself (no separate process, no CORS setup)
 
-`prism serve` starts an embedded NATS server when `prism.nats_url` is empty.
+The dashboard pages (all same-origin on the API port):
+
+| Page | Purpose |
+|---|---|
+| `/config.html` | **Settings** editor — instance/paths, feature toggles, autopatch, remembrance, workflow run-behavior |
+| `/scheduler.html` | **Cron Jobs** editor — add/edit jobs with live cron validation + action presets |
+| `/index.html` | Runs browser · `/v2.html` Status · `/editor.html` Agent graph · `/workflow-editor.html` Workflow |
+
+Settings and cron edits are written back to `prism.yaml` surgically (comments and untouched sections preserved) and **apply on the next `prism serve` restart**. `prism serve` starts an embedded NATS server when `prism.nats_url` is empty.
 
 ### Start Remembrance
 
@@ -232,7 +241,7 @@ Start a task with `POST /api/v1/autopatch` using `{"description":"tests are fail
 prism serve [--config prism.yaml] [--port 8321]
 prism chat [--config prism.yaml] [--agent <id>]
 prism status [--config prism.yaml]
-prism dashboard [--port 8080] [--run-dir ./runs] [--policy-dir policies]
+prism dashboard [--port 8080] [--run-dir ./runs] [--policy-dir policies]  # optional; serve already hosts the UI on the API port
 ```
 
 ### One-Shot Runs

@@ -30,6 +30,18 @@ import (
 //go:embed static
 var staticFS embed.FS
 
+// StaticFileServer returns an http.Handler that serves the embedded dashboard
+// UI (the static/ HTML, CSS pages). It lets other servers — notably the API
+// server started by `prism serve` — host the UI same-origin, so the editors no
+// longer require a separate `prism dashboard` process plus CORS.
+func StaticFileServer() (http.Handler, error) {
+	subFS, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("dashboard: sub filesystem: %w", err)
+	}
+	return http.FileServer(http.FS(subFS)), nil
+}
+
 // Server serves the Prism dashboard over HTTP.
 //
 // The server binds to localhost and serves:
