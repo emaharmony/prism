@@ -190,6 +190,12 @@ func main() {
 				}
 				workspaceRoot = filepath.Join(home, ".openclaw", "workspace")
 			}
+			// Same check as `prism context show`: a missing workspace is a
+			// loud error, not silently-empty context.
+			if _, err := os.Stat(workspaceRoot); os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Error: workspace directory not found: %s\n", workspaceRoot)
+				os.Exit(1)
+			}
 			var namedContexts []string
 			if *runContextFlag != "" {
 				namedContexts = strings.Split(*runContextFlag, ",")
