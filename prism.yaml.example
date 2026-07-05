@@ -52,9 +52,19 @@ prism:
   # the network — this REQUIRES api.auth_token (or api.auth_token_env) below,
   # or the config is rejected at startup.
   bind_host: "127.0.0.1"
+  # Built-in cron scheduler. Each job fires a NATS event on a schedule; the wake
+  # handler runs the mapped payload.action. Full guide: docs/SCHEDULER.md
   scheduler:
     enabled: false
     jobs:
+      # 2-hour status report: project state, recent runs, git activity.
+      - name: "status-report"
+        schedule: "0 */2 * * *"          # every 2 hours, on the hour
+        event: "prism.task.scheduled"
+        payload:
+          action: "status_report"
+        enabled: true
+      # Roblox Factory queue digest (needs factory_monitor.enabled).
       - name: "factory-status-digest"
         schedule: "*/15 * * * *"
         event: "prism.task.scheduled"

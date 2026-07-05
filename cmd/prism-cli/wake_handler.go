@@ -160,8 +160,8 @@ Be thorough, proactive, and fast. You are not just a reporter — you are a deve
 		MaxTokens: 2048,
 	},
 	"status_report": {
-		Prompt:    `Generate a 2-hour status report for BassBook autonomous development.`,
-		ChannelID: "1491622581348864162", // manager-room
+		Prompt:    `Generate a 2-hour status report (project state, recent runs, git activity).`,
+		ChannelID: "1496591599940010055", // manager-room (configured in prism.yaml)
 		MaxTokens: 1024,
 		SkipLLM:   true, // Reads run summaries + PROJECT_STATE.md directly
 	},
@@ -901,18 +901,37 @@ func (wh *WakeHandler) factoryStatusDigest() string {
 	return ""
 }
 
-// statusReport generates a 2-hour status report by reading recent run summaries
-// and PROJECT_STATE.md. No LLM needed — pure file reading + formatting.
-func (wh *WakeHandler) statusReport() string {
-	var sb strings.Builder
-	sb.WriteString("<@1512994928769237002>\n\n") // Tag OpenClaw Lumi
-	sb.WriteString("📊 **2-Hour Status Report — BassBook**\n\n")
+// statusReportRepoPath resolves the git repository the status report describes:
+// the default project's repo_path when configured, otherwise the current working
+// directory (the Prism repo when serve runs from the repo root). Keeping this in
+// config rather than hardcoded means the report works on any machine.
+func (wh *WakeHandler) statusReportRepoPath() string {
+	if wh.cfg != nil {
+		if p := wh.cfg.DefaultProject(); p != nil && p.RepoPath != "" {
+			return p.RepoPath
+		}
+	}
+	return "."
+}
 
-	// Read PROJECT_STATE.md
-	statePath := "/Users/ema/projects/repos/BassBook/PROJECT_STATE.md"
+// statusReport generates a 2-hour status report by reading recent run summaries,
+// PROJECT_STATE.md, and git activity for the resolved repo. No LLM needed — pure
+// file reading + formatting.
+func (wh *WakeHandler) statusReport() string {
+	repoPath := wh.statusReportRepoPath()
+
+	var sb strings.Builder
+	title := "Prism"
+	if wh.cfg != nil && wh.cfg.Prism.InstanceID != "" {
+		title = wh.cfg.Prism.InstanceID
+	}
+	sb.WriteString(fmt.Sprintf("📊 **2-Hour Status Report — %s**\n\n", title))
+
+	// Read PROJECT_STATE.md from the resolved repo (optional).
+	statePath := filepath.Join(repoPath, "PROJECT_STATE.md")
 	stateContent, err := os.ReadFile(statePath)
 	if err != nil {
-		sb.WriteString("⚠️ Could not read PROJECT_STATE.md\n\n")
+		sb.WriteString("_No PROJECT_STATE.md — skipping project state._\n\n")
 	} else {
 		sb.WriteString("### Project State\n")
 		// Extract task lines (lines starting with - [ ] or - [x])
@@ -935,11 +954,8 @@ func (wh *WakeHandler) statusReport() string {
 		sb.WriteString(fmt.Sprintf("\n**Progress:** %d done, %d pending\n\n", done, pending))
 	}
 
-	// Read recent run summaries (last 2 hours)
-	runsDir := filepath.Join(wh.cfg.Prism.Workspace, "runs")
-	if wh.cfg.Prism.Workspace == "" {
-		runsDir = "runs"
-	}
+	// Read recent run summaries (last 2 hours) from the repo's runs/ dir.
+	runsDir := filepath.Join(repoPath, "runs")
 	cutoff := time.Now().Add(-2 * time.Hour)
 	recentRuns := 0
 	successRuns := 0
@@ -957,6 +973,9 @@ func (wh *WakeHandler) statusReport() string {
 			}
 			if info.ModTime().Before(cutoff) {
 				continue
+			}
+			if entry.Name() == "gated-loop" {
+				continue // container for gated-loop runs, not a run itself
 			}
 			recentRuns++
 
@@ -983,8 +1002,8 @@ func (wh *WakeHandler) statusReport() string {
 	sb.WriteString(fmt.Sprintf("- **Runs:** %d total, %d completed, %d failed/other\n", recentRuns, successRuns, failedRuns))
 
 	// Show recent git commits (last 2 hours)
-	bassBookRepo := "/Users/ema/projects/repos/BassBook"
-	cmd := exec.Command("git", "-C", bassBookRepo, "log", "--oneline", "--since=2 hours ago", "--all")
+	reportRepo := repoPath
+	cmd := exec.Command("git", "-C", reportRepo, "log", "--oneline", "--since=2 hours ago", "--all")
 	if commitOut, err := cmd.Output(); err == nil {
 		commitLines := strings.Split(strings.TrimSpace(string(commitOut)), "\n")
 		if len(commitLines) > 0 && commitLines[0] != "" {
@@ -998,7 +1017,7 @@ func (wh *WakeHandler) statusReport() string {
 		}
 	}
 	// Show current branch
-	branchCmd := exec.Command("git", "-C", bassBookRepo, "branch", "--show-current")
+	branchCmd := exec.Command("git", "-C", reportRepo, "branch", "--show-current")
 	if branchOut, err := branchCmd.Output(); err == nil {
 		branch := strings.TrimSpace(string(branchOut))
 		if branch != "" {
@@ -1006,7 +1025,7 @@ func (wh *WakeHandler) statusReport() string {
 		}
 	}
 	// Show working tree status
-	statusCmd := exec.Command("git", "-C", bassBookRepo, "status", "--short")
+	statusCmd := exec.Command("git", "-C", reportRepo, "status", "--short")
 	if statusOut, err := statusCmd.Output(); err == nil {
 		statusLines := strings.Split(strings.TrimSpace(string(statusOut)), "\n")
 		clean := len(statusLines) == 1 && statusLines[0] == ""

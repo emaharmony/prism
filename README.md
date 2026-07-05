@@ -299,7 +299,7 @@ prism:
     - "D:/_projects_"
     - "D:/Projects"
   allowed_paths: []                  # legacy alias if split roots are omitted
-  scheduler:
+  scheduler:                         # built-in cron; see docs/SCHEDULER.md
     enabled: false
     jobs: []
 
@@ -446,6 +446,8 @@ scheduler:
 
 - **project-work**: Runs the gated loop — discovers tasks, implements, reviews, pushes
 - **status-report**: Reads recent run summaries + PROJECT_STATE.md, posts a report to Discord
+
+Full cron reference (all fields, actions, examples): [docs/SCHEDULER.md](./docs/SCHEDULER.md).
 
 ### 4. Choose a workflow config
 
