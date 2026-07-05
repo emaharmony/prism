@@ -104,6 +104,7 @@ func startWorkflowFeedbackNotifier(nc *nats.Conn, bot discordBotClient, cfg *orc
 		return nil
 	}
 	_, err := nc.Subscribe("prism.workflow.feedback.requested", func(msg *nats.Msg) {
+		log.Printf("[WORKFLOW-NOTIFY] received feedback.requested event")
 		var evt struct {
 			Type      string         `json:"type"`
 			Payload   map[string]any `json:"payload"`
@@ -155,6 +156,8 @@ func startWorkflowFeedbackNotifier(nc *nats.Conn, bot discordBotClient, cfg *orc
 		}
 		if err := bot.Send(out); err != nil {
 			log.Printf("[WORKFLOW-NOTIFY] send failed: %v", err)
+		} else {
+			log.Printf("[WORKFLOW-NOTIFY] sent feedback card to channel %s (run=%s, phase=%s, buttons=%d)", channelID, runID, phase, len(out.Buttons))
 		}
 	})
 	if err != nil {
