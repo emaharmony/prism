@@ -378,7 +378,7 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				log.Printf("[V2] %s phase action=%d in %s hasWritten=%v hasCommitted=%v hasPushed=%v GetBranch=%v", phaseName, action.Type, phaseName, hasWritten, hasCommitted, hasPushed, opts.GetBranch != nil)
 				// Block completion if no writes were made during EXECUTION
 				if phaseName == "EXECUTION" && !hasWritten && opts.GetBranch != nil {
-					messages = append(messages, Message{Role: "system", Content: "WRITE REQUIRED: You cannot complete EXECUTION without writing any code. Call write_file NOW to implement your changes. After writing, call git_add, git_commit, git_push, then emit EXECUTION_COMPLETE."})
+					messages = append(messages, Message{Role: "system", Content: "WRITE REQUIRED: You MUST call write_file NOW. Respond with PURE JSON:\n{\"type\":\"tool_request\",\"tool\":\"write_file\",\"input\":{\"path\":\"<filepath>\",\"content\":\"<file content>\"}}\nAfter writing, call git_add, git_commit, git_push with the same JSON format. Then include EXECUTION_COMPLETE."})
 					iter-- // don't burn budget
 					continue
 				}
@@ -445,11 +445,11 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				// In EXECUTION, block gate pass until code is written AND committed.
 				if phaseName == "EXECUTION" {
 					if !hasWritten {
-						messages = append(messages, Message{Role: "system", Content: "WRITE REQUIRED: You are in EXECUTION. Call write_file NOW to implement your changes. Then git_add, git_commit, git_push. Do not finish without writing code."})
+						messages = append(messages, Message{Role: "system", Content: "WRITE REQUIRED: You MUST call write_file NOW. Respond with PURE JSON:\n{\"type\":\"tool_request\",\"tool\":\"write_file\",\"input\":{\"path\":\"<filepath>\",\"content\":\"<file content>\"}}\nAfter writing, call git_add, git_commit, git_push with the same JSON format. Then include EXECUTION_COMPLETE."})
 						continue
 					}
 					if hasWritten && !hasCommitted {
-						messages = append(messages, Message{Role: "system", Content: "COMMIT REQUIRED: You wrote files but have not committed. Call git_add (if not done), git_commit, then git_push. Then emit EXECUTION_COMPLETE."})
+						messages = append(messages, Message{Role: "system", Content: "COMMIT REQUIRED: You wrote files but have not committed. Respond with PURE JSON:\n{\"type\":\"tool_request\",\"tool\":\"git_commit\",\"input\":{\"message\":\"<commit message>\"}}\nThen call git_push with JSON. Then include EXECUTION_COMPLETE."})
 						continue
 					}
 				}
@@ -802,7 +802,7 @@ func (e *Engine) enforceExecution(phaseName string, req *ToolRequest, opts Drive
 	if req.Tool == "read_file" || req.Tool == "list_dir" || req.Tool == "search_files" || req.Tool == "git_diff" || req.Tool == "git_status" || req.Tool == "git_log" || req.Tool == "git_branch_list" {
 		*readsInPhase++
 		if *readsInPhase > 3 && !*hasWritten {
-			return "READ BUDGET EXCEEDED: You have read enough. You MUST call write_file NOW to implement your changes. After writing, call git_add, git_commit, git_push, then emit EXECUTION_COMPLETE. Do NOT call any more read/search/status/diff tools."
+			return "READ BUDGET EXCEEDED: You have read enough. You MUST call write_file NOW. Respond with PURE JSON:\n{\"type\":\"tool_request\",\"tool\":\"write_file\",\"input\":{\"path\":\"<filepath>\",\"content\":\"<file content>\"}}\nAfter writing, call git_add, git_commit, git_push with the same JSON format. Then include EXECUTION_COMPLETE."
 		}
 	}
 	return ""
