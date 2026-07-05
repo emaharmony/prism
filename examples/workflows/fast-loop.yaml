@@ -1,0 +1,103 @@
+# Fast Loop — optimized for 10-minute cycles.
+# Reduced iteration caps so phases complete quickly within the time budget.
+# PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT
+
+name: fast-loop
+version: 2
+description: "Fast gated loop for 10-minute autonomous cycles — reduced iteration caps"
+
+global:
+  max_total_iterations: 100
+  max_total_time: "9m"
+  max_total_tokens: 500000
+  max_repeated_tool_calls: 3
+  # V57: auto-rollback on failure
+  auto_rollback: false
+  max_verification_attempts: 2
+
+confidence_domains:
+  - codebase_understanding
+  - requirements_clarity
+  - approach_viability
+  - tool_capability
+
+phases:
+  - name: PROBE
+    type: probe
+    description: "Quickly assess the task. Read PROJECT_STATE.md. Identify the topmost unchecked task."
+    max_iterations: 5
+    allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log, git_branch_list]
+    gate:
+      type: assumption_threshold
+      threshold: 1.0
+    fallback:
+      on_max_iterations: proceed_with_open_assumptions
+      blocks: false
+
+  - name: RESEARCH
+    type: research
+    description: "Brief research — check the specific files you need to modify. 1-2 file reads max."
+    max_iterations: 5
+    allowed_tools: [read_file, list_dir, search_files, project_overview, git_status, git_log]
+    gate:
+      type: confidence_threshold
+      threshold: 0.3
+    fallback:
+      on_max_iterations: proceed_with_partial_confidence
+      blocks: false
+
+  - name: PLAN
+    type: plan
+    description: "Create a minimal plan — what files to change, what to add. Be brief."
+    max_iterations: 5
+    allowed_tools: [read_file, write_file, list_dir, search_files, git_status]
+    gate:
+      type: plan_completeness
+    fallback:
+      on_max_iterations: proceed_with_partial_plan
+      blocks: false
+
+  - name: FEEDBACK_PRE
+    type: feedback_pre
+    description: "Auto-approve — no human needed for fast loop."
+    max_iterations: 1
+    allowed_tools: []
+    gate:
+      type: ""
+    fallback:
+      on_max_iterations: proceed
+      blocks: false
+
+  - name: EXECUTION
+    type: execution
+    description: "Implement the change. Write code, create directories, run git operations."
+    max_iterations: 40
+    allowed_tools: [read_file, write_file, create_directory, list_dir, search_files, git_status, git_log, git_diff, git_add, git_commit, git_push, git_branch_list, git_checkout, project_overview]
+    gate:
+      type: task_completion
+      mode: partial_allowed
+    fallback:
+      on_max_iterations: proceed_with_partial_completion
+      blocks: false
+
+  - name: FEEDBACK_POST
+    type: feedback_post
+    description: "Self-review — check git_diff, fix obvious errors. Respond REVIEW_PASSED when done."
+    max_iterations: 3
+    allowed_tools: [read_file, write_file, git_diff, git_status]
+    gate:
+      type: ""
+    fallback:
+      on_max_iterations: accept
+      blocks: false
+
+  - name: REPORT
+    type: report
+    description: "Emit a brief summary of what was done."
+    max_iterations: 2
+    allowed_tools: []
+    gate:
+      type: report_completeness
+    fallback:
+      on_max_iterations: accept
+      blocks: false
