@@ -592,13 +592,22 @@ func executeServe(args []string) {
 			if natsConn != nil {
 				nc := natsConn
 				bot.OnButton(func(customID, userID, userName string) {
+					log.Printf("[BUTTON] clicked: customID=%q user=%q(%s)", customID, userName, userID)
 					payload, ok := feedbackButtonPayload(customID, firstNonEmptyCommandArg(userName, userID, "discord"))
 					if !ok {
+						log.Printf("[BUTTON] payload decode failed for customID=%q", customID)
 						return
 					}
-					if data, mErr := json.Marshal(payload); mErr == nil {
-						_ = nc.Publish("prism.workflow.feedback.response", data)
+					data, mErr := json.Marshal(payload)
+					if mErr != nil {
+						log.Printf("[BUTTON] marshal failed: %v", mErr)
+						return
 					}
+					if pErr := nc.Publish("prism.workflow.feedback.response", data); pErr != nil {
+						log.Printf("[BUTTON] NATS publish failed: %v", pErr)
+						return
+					}
+					log.Printf("[BUTTON] published feedback response for workflow %s: decision=%s", payload["workflow_id"], payload["decision"])
 				})
 			}
 

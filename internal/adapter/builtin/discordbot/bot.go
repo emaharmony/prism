@@ -163,12 +163,14 @@ func (b *BotAdapter) onInteractionCreate(s *discordgo.Session, ic *discordgo.Int
 	} else if ic.User != nil {
 		userID, userName = ic.User.ID, ic.User.Username
 	}
+	log.Printf("[DISCORD] interaction: customID=%q user=%q(%s) channel=%s", customID, userName, userID, ic.ChannelID)
 	_ = s.InteractionRespond(ic.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
 	b.mu.RLock()
 	hs := append([]ButtonHandler(nil), b.buttonHandlers...)
 	b.mu.RUnlock()
+	log.Printf("[DISCORD] dispatching to %d button handlers", len(hs))
 	for _, h := range hs {
 		h(customID, userID, userName)
 	}
