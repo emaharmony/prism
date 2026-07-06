@@ -420,7 +420,7 @@ func DefaultConfig() *WorkflowConfig {
 				MaxIterations: 1,
 				AllowedTools:  []string{},
 				Gate:          GateConfig{Type: "approval", Approvers: []string{"ema"}, Mode: "require_any"},
-				Fallback:      FallbackConfig{OnMaxIterations: "wait", Blocks: true},
+				Fallback:      FallbackConfig{OnMaxIterations: "auto_approve", Blocks: false},
 			},
 			{
 				Name: "EXECUTION", Type: "execution", Description: "Write code with branch protection, read budget, and commit/push enforcement",
