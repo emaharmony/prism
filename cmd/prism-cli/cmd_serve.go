@@ -62,6 +62,7 @@ import (
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/provider/anthropic"
 	"github.com/emaharmony/prism/internal/provider/claudecode"
+	"github.com/emaharmony/prism/internal/provider/codexcli"
 	"github.com/emaharmony/prism/internal/provider/gemini"
 	"github.com/emaharmony/prism/internal/provider/ollama"
 	"github.com/emaharmony/prism/internal/provider/openai"
@@ -1725,8 +1726,17 @@ func createProvider(agentCfg orchestrator.AgentConfig, cfg *orchestrator.Config)
 		}
 		return p, info, nil
 
+	case "codex":
+		// Codex subscription: shells out to the `codex` CLI (codex exec).
+		// Reuses the top-level codex: block for executable/model/sandbox.
+		p, err := createCodexProvider(agentCfg, cfg.Codex, cfg)
+		if err != nil {
+			return nil, info, fmt.Errorf("codex provider: %w", err)
+		}
+		return p, info, nil
+
 	default:
-		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini, claude_code)", agentCfg.Provider)
+		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini, claude_code, codex)", agentCfg.Provider)
 	}
 }
 
@@ -1749,6 +1759,30 @@ func createClaudeCodeProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestra
 		TimeoutMinutes: ccCfg.TimeoutMinutes,
 		ExtraArgs:      ccCfg.ExtraArgs,
 	}), nil
+}
+
+// createCodexProvider builds a Codex CLI provider. Auth comes from the installed
+// `codex` binary's subscription session — no API key required. Executable,
+// model, sandbox, and profile come from the top-level codex: config block; the
+// agent's Model field is only the provider-registry label. The --cd workspace
+// resolves from codex.workspace → prism.workspace → cwd so `codex exec` always
+// gets a valid directory.
+func createCodexProvider(agentCfg orchestrator.AgentConfig, cxCfg orchestrator.CodexConfig, cfg *orchestrator.Config) (provider.Provider, error) {
+	c := codexcli.Config{
+		Executable:     cxCfg.Executable,
+		Model:          cxCfg.Model,
+		Profile:        cxCfg.Profile,
+		Sandbox:        cxCfg.Sandbox,
+		ApprovalPolicy: cxCfg.ApprovalPolicy,
+		TimeoutMinutes: cxCfg.TimeoutMinutes,
+		ExtraArgs:      cxCfg.ExtraArgs,
+		Workspace:      codexcli.ResolveWorkspace(cxCfg.Workspace, cfg.Prism.Workspace),
+	}
+	c = codexcli.Normalize(c)
+	if _, err := exec.LookPath(c.Executable); err != nil {
+		return nil, fmt.Errorf("Codex CLI executable %q not found (install Codex or set codex.executable): %w", c.Executable, err)
+	}
+	return codexcli.New(c), nil
 }
 
 func factoryConfigFromBridge(cfg orchestrator.FactoryBridgeConfig) factory.Config {
