@@ -1432,6 +1432,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		assignedTask   string
 		lastToolHashes []string
 		lastRespHashes []string
+		orientFoundWork bool   // V37: ORIENT phase must find actual work before BRANCH is allowed
 	}
 	state := RunState{}
 
@@ -1440,6 +1441,12 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 	// V36: Parse PROJECT_STATE.md to assign a task
 	state.assignedTask = wh.parseProjectStateTask()
+
+	// V37: If a task was assigned from PROJECT_STATE.md, ORIENT has work to do
+	if state.assignedTask != "" {
+		state.orientFoundWork = true
+		log.Printf("[WAKE-TOOL] task assigned from PROJECT_STATE.md — ORIENT has work")
+	}
 
 	// V36: Inject task assignment into messages if found
 	if state.assignedTask != "" {
@@ -1498,6 +1505,23 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			})
 			log.Printf("[WAKE-TOOL] phase transition: %s → %s", phase.Name, nextPhase.Name)
 			continue
+		}
+
+		// V37: Branch gate — when transitioning from ORIENT to BRANCH, check if ORIENT found work.
+		// If no task was assigned AND ORIENT didn't find issues, skip BRANCH and go straight to REPORT.
+		if phase.Name == "ORIENT" && phaseIdx+1 < len(phases) {
+			if state.assignedTask == "" && !state.orientFoundWork {
+				log.Printf("[WAKE-TOOL] ORIENT found no work and no task assigned — skipping to REPORT")
+				// Skip to REPORT phase (last phase)
+				phaseIdx = len(phases) - 1
+				iterInPhase = 0
+				state.readsInPhase = 0
+				messages = append(messages, provider.ChatMessage{
+					Role:    "system",
+					Content: "No issues found and no task assigned. Skip to REPORT and emit final summary. No branch creation needed.",
+				})
+				continue
+			}
 		}
 
 		// V36: Phase-specific nudges
@@ -1730,6 +1754,17 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				if newBranch != state.branchName {
 					state.branchName = newBranch
 					log.Printf("[WAKE-TOOL] branch changed to %s", newBranch)
+				}
+				// V37: If git_status shows uncommitted changes, ORIENT found work
+				if phase.Name == "ORIENT" && (strings.Contains(resultStr, "modified") || strings.Contains(resultStr, "untracked") || strings.Contains(resultStr, "Changes") || strings.Contains(resultStr, "ahead")) {
+					state.orientFoundWork = true
+					log.Printf("[WAKE-TOOL] ORIENT found work via git_status")
+				}
+			case "read_file":
+				// V37: If read_file in ORIENT reads PROJECT_STATE.md and finds incomplete tasks
+				if phase.Name == "ORIENT" && strings.Contains(resultStr, "[ ]") {
+					state.orientFoundWork = true
+					log.Printf("[WAKE-TOOL] ORIENT found incomplete tasks in PROJECT_STATE.md")
 				}
 			}
 
