@@ -227,7 +227,7 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: "git_checkout is a git mutation, requires approval"}
 
 	// V28: Git mutation tools — require approval
-	case "git_add", "git_commit", "git_push":
+	case "git_add", "git_commit", "git_push", "create_pr":
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
 			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose git mutations; route write requests through the orchestrator", agentID)}
 		}

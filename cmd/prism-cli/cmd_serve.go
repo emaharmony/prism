@@ -479,6 +479,7 @@ func executeServe(args []string) {
 			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+			toolReg.Register(&tool.GitCreatePRTool{})
 			// V32: State management tools
 			stateMgr = state.NewManager(workspaceRoot)
 			stateMgr.EnsureDir()
@@ -2001,6 +2002,7 @@ var mutationProposalTools = map[string]bool{
 	"git_add":                   true,
 	"git_commit":                true,
 	"git_push":                  true,
+	"create_pr":                true,
 }
 
 // ToolMode represents the tool access level for a channel.
