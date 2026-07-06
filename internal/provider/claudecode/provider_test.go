@@ -86,8 +86,8 @@ func TestGenerateErrorEnvelope(t *testing.T) {
 
 func TestNormalizeDefaults(t *testing.T) {
 	cfg := Normalize(Config{})
-	if cfg.Executable == "" {
-		t.Error("Executable should default per-OS")
+	if cfg.Executable != "claude" {
+		t.Errorf("Executable = %q, want claude", cfg.Executable)
 	}
 	if cfg.TimeoutMinutes != DefaultTimeoutMinutes {
 		t.Errorf("TimeoutMinutes = %d, want %d", cfg.TimeoutMinutes, DefaultTimeoutMinutes)

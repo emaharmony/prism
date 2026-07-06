@@ -17,10 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
+	"github.com/emaharmony/prism/internal/claudecli"
 	"github.com/emaharmony/prism/internal/provider"
 )
 
@@ -64,15 +64,9 @@ func NewWithRunner(cfg Config, runner Runner) *Provider {
 	return &Provider{cfg: cfg, runner: runner}
 }
 
-// Normalize applies stable defaults (per-OS executable, timeout).
+// Normalize applies stable defaults (executable, timeout).
 func Normalize(cfg Config) Config {
-	if cfg.Executable == "" {
-		if runtime.GOOS == "windows" {
-			cfg.Executable = "claude.cmd"
-		} else {
-			cfg.Executable = "claude"
-		}
-	}
+	cfg.Executable = claudecli.NormalizeExecutable(cfg.Executable)
 	if cfg.TimeoutMinutes <= 0 {
 		cfg.TimeoutMinutes = DefaultTimeoutMinutes
 	}

@@ -223,7 +223,7 @@ codex:
 # executable / timeout_minutes here are reused by the orchestrator provider.
 claude_code:
   enabled: false
-  executable: ""          # empty = claude.cmd on Windows, claude elsewhere
+  executable: ""          # empty = resolve claude from PATH
   model: ""               # empty = CLI default; e.g. claude-opus-4-8
   reviewer_name: "claude" # gate approver/reviewer name this fulfills
   timeout_minutes: 10

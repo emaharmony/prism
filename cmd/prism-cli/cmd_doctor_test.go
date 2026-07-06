@@ -51,6 +51,51 @@ func TestCheckProviderAuth(t *testing.T) {
 	}
 }
 
+func TestCheckClaudeCodeNotConfigured(t *testing.T) {
+	c := checkClaudeCode(orchestrator.ClaudeCodeConfig{}, nil, func(string) (string, error) {
+		return "", errInjectedDoctor
+	})
+	if c.status != statusOK || !strings.Contains(c.detail, "not configured") {
+		t.Fatalf("not configured should be OK, got %s: %s", c.status, c.detail)
+	}
+}
+
+func TestCheckClaudeCodeAgentRequiresExecutable(t *testing.T) {
+	c := checkClaudeCode(orchestrator.ClaudeCodeConfig{}, []orchestrator.AgentConfig{
+		{ID: "astraea", Provider: "claude_code"},
+	}, func(string) (string, error) {
+		return "", errInjectedDoctor
+	})
+	if c.status != statusFail || !strings.Contains(c.detail, "Claude Code CLI not found") {
+		t.Fatalf("missing claude should FAIL, got %s: %s", c.status, c.detail)
+	}
+}
+
+func TestCheckClaudeCodeEnabledUsesExplicitExecutable(t *testing.T) {
+	calls := []string{}
+	c := checkClaudeCode(orchestrator.ClaudeCodeConfig{
+		Enabled:    true,
+		Executable: "C:/Tools/claude.exe",
+	}, []orchestrator.AgentConfig{
+		{ID: "astraea", Provider: "claude_code"},
+	}, func(name string) (string, error) {
+		calls = append(calls, name)
+		if name == "C:/Tools/claude.exe" {
+			return "C:/Tools/claude.exe", nil
+		}
+		return "", errInjectedDoctor
+	})
+	if c.status != statusOK {
+		t.Fatalf("explicit claude executable should be OK, got %s: %s", c.status, c.detail)
+	}
+	if len(calls) != 1 || calls[0] != "C:/Tools/claude.exe" {
+		t.Fatalf("expected only explicit executable lookup, got %v", calls)
+	}
+	if !strings.Contains(c.detail, "reviewer enabled") || !strings.Contains(c.detail, "astraea") {
+		t.Fatalf("detail should describe uses, got %q", c.detail)
+	}
+}
+
 func TestCheckValidationProfile(t *testing.T) {
 	reg := validation.NewRegistry() // has go_test_all
 	if c := checkValidationProfile(reg, "go_test_all"); c.status != statusOK {
