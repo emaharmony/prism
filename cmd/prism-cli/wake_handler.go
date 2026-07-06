@@ -698,6 +698,17 @@ You have access to the following tools. Use them proactively to investigate and 
 You can create branches, commit changes, push to remote, and open PRs. You are not just a reporter — you are an active developer. If you find a bug, fix it. If you see a UX issue, improve it. If you have an idea to make something more effective, propose it.
 `
 
+	// V37: Use scout (local qwen3:8b) to gather codebase context before cloud model runs.
+	// This saves cloud tokens on the "read and understand" phase.
+	if action == "auto_patch" || action == "project_work" {
+		scoutContext := wh.gatherScoutContext(stdcontext.Background())
+		if scoutContext != "" {
+			systemPrompt += "\n\n## Local Context Summary (gathered by scout on qwen3:8b, zero cloud tokens)\n"
+			systemPrompt += scoutContext
+			systemPrompt += "\n--- End of local context ---\n"
+		}
+	}
+
 	// Get the primary agent config
 	var agentCfg *orchestrator.AgentConfig
 	for i := range wh.cfg.Agents {
@@ -1964,6 +1975,61 @@ func simpleHash(s string) string {
 		h = h*31 + int(c)
 	}
 	return fmt.Sprintf("%d", h)
+}
+
+// gatherScoutContext uses the local scout agent (qwen3:8b on Ollama) to gather
+// codebase context before the cloud model runs. This saves cloud tokens on the
+// "read and understand" phase — scout reads git status, git log, and PROJECT_STATE.md
+// locally and returns a concise summary that gets injected into the cloud model's prompt.
+func (wh *WakeHandler) gatherScoutContext(ctx stdcontext.Context) string {
+	repoPath := wh.defaultRepoPath()
+
+	// Gather raw context using git commands (zero token cost)
+	gitStatus := exec_command("git", []string{"status", "--short"}, repoPath)
+	gitLog := exec_command("git", []string{"log", "--oneline", "-10"}, repoPath)
+
+	// Read PROJECT_STATE.md
+	statePath := wh.projectStatePath(wh.cfg.DefaultProject())
+	stateContent := ""
+	if statePath != "" {
+		if data, err := os.ReadFile(statePath); err == nil {
+			stateContent = string(data)
+			if len(stateContent) > 2000 {
+				stateContent = stateContent[:2000] + "..."
+			}
+		}
+	}
+
+	// If nothing to report, skip scout
+	if gitStatus == "" && gitLog == "" && stateContent == "" {
+		return ""
+	}
+
+	// Build a prompt for scout to summarize
+	scoutPrompt := fmt.Sprintf("Summarize the current project state concisely. Focus on: what work is in progress, what files changed, and what the next incomplete task is. Be brief — 5 bullet points max.\n\n## Git Status\n%s\n\n## Recent Commits\n%s\n\n## PROJECT_STATE.md (excerpt)\n%s", gitStatus, gitLog, stateContent)
+
+	// Call scout via the local Ollama provider (qwen3:8b — zero cloud tokens)
+	prov, err := wh.providers.Get("qwen3:8b")
+	if err != nil {
+		log.Printf("[SCOUT] qwen3:8b not available: %v — skipping local context", err)
+		return ""
+	}
+
+	resp, err := prov.Generate(ctx, provider.GenerateRequest{
+		RunID:       fmt.Sprintf("scout-context-%d", time.Now().Unix()),
+		Agent:       "scout",
+		Model:       "qwen3:8b",
+		Prompt:      scoutPrompt,
+		Temperature: 0.3,
+		MaxTokens:   512,
+	})
+	if err != nil {
+		log.Printf("[SCOUT] local context gather failed: %v", err)
+		return ""
+	}
+
+	log.Printf("[SCOUT] local context gathered (%d chars, 0 cloud tokens)", len(resp.Text))
+	return resp.Text
 }
 
 // loadWorkflowConfig resolves the gated-loop workflow definition: a project
