@@ -9,6 +9,7 @@ package tool
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -513,5 +514,60 @@ func (t *GitPushTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 	return ToolResult{
 		Success: true,
 		Output:  map[string]any{"output": out, "remote": remote},
+	}, nil
+}
+
+// GitCreatePRTool creates a pull request using the gh CLI.
+type GitCreatePRTool struct{}
+
+func (t *GitCreatePRTool) Name() string { return "create_pr" }
+func (t *GitCreatePRTool) Description() string {
+	return "Create a GitHub pull request using the gh CLI. Requires a title and body. The base branch defaults to main."
+}
+func (t *GitCreatePRTool) Schema() ToolSchema {
+	return ToolSchema{
+		Input: map[string]ParamSpec{
+			"repo_path":  {Type: "string", Required: true, Description: "Absolute path to the git repository"},
+			"title":      {Type: "string", Required: true, Description: "PR title"},
+			"body":       {Type: "string", Required: false, Description: "PR description (markdown)"},
+			"base":       {Type: "string", Required: false, Description: "Base branch (default: main)"},
+			"head":       {Type: "string", Required: false, Description: "Head branch (default: current branch)"},
+		},
+	}
+}
+func (t *GitCreatePRTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
+	repoDir, _ := input["repo_path"].(string)
+	if repoDir == "" {
+		return ToolResult{Success: false, Error: "repo_path is required"}, nil
+	}
+
+	title, _ := input["title"].(string)
+	if title == "" {
+		return ToolResult{Success: false, Error: "title is required"}, nil
+	}
+
+	body, _ := input["body"].(string)
+	base, _ := input["base"].(string)
+	if base == "" {
+		base = "main"
+	}
+	head, _ := input["head"].(string)
+
+	// Build gh pr create command
+	args := []string{"pr", "create", "--title", title, "--body", body, "--base", base}
+	if head != "" {
+		args = append(args, "--head", head)
+	}
+
+	cmd := exec.Command("gh", args...)
+	cmd.Dir = repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ToolResult{Success: false, Error: fmt.Sprintf("gh pr create failed: %v: %s", err, string(out))}, nil
+	}
+
+	return ToolResult{
+		Success: true,
+		Output:  map[string]any{"output": string(out), "url": strings.TrimSpace(string(out))},
 	}, nil
 }

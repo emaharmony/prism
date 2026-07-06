@@ -502,11 +502,13 @@ func parseAssumptions(text string, state *WorkflowState) {
 // parseConfidence extracts CONFIDENCE declarations from LLM response.
 func parseConfidence(text string, state *WorkflowState) {
 	lines := strings.Split(text, "\n")
+	hadConfidence := false
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "CONFIDENCE:") {
 			continue
 		}
+		hadConfidence = true
 		// Parse: CONFIDENCE: {domain} | {0.0-1.0} | reason: {why}
 		parts := strings.Split(line, "|")
 		if len(parts) < 2 {
@@ -526,6 +528,25 @@ func parseConfidence(text string, state *WorkflowState) {
 		}
 
 		state.SetConfidence(domain, score, reason, "llm")
+	}
+
+	// Auto-inject confidence when LLM doesn't emit CONFIDENCE declarations.
+	// If the LLM did useful work (tool calls, research) but didn't score itself,
+	// assign reasonable defaults so gates don't block on 0%.
+	if !hadConfidence {
+		hasToolCalls := strings.Contains(text, "\"type\": \"tool_request\"") ||
+			strings.Contains(text, "\"type\":\"tool_request\"") ||
+			strings.Contains(text, "tool_request")
+		hasContent := len(strings.TrimSpace(text)) > 50
+
+		if hasToolCalls || hasContent {
+			for _, domain := range []string{"codebase_understanding", "requirements_clarity", "approach_viability", "tool_capability"} {
+				cd := state.ConfidenceMatrix[domain]
+				if cd != nil && cd.Score == 0.0 {
+					state.SetConfidence(domain, 0.5, "auto-injected: LLM did useful work but didn't emit CONFIDENCE declaration", "system")
+				}
+			}
+		}
 	}
 }
 
