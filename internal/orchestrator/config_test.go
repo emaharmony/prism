@@ -540,6 +540,20 @@ factory_monitor:
 	}
 }
 
+func TestResolveEnvExpandsClaudeCodeExecutable(t *testing.T) {
+	t.Setenv("PRISM_TEST_CLAUDE_EXE", "C:/Users/test/.local/bin/claude.exe")
+	cfg, err := LoadConfigFromBytes([]byte(`
+claude_code:
+  executable: "${PRISM_TEST_CLAUDE_EXE}"
+`))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.ClaudeCode.Executable != "C:/Users/test/.local/bin/claude.exe" {
+		t.Fatalf("claude executable = %q", cfg.ClaudeCode.Executable)
+	}
+}
+
 func TestEffectiveRootsPreferSplitConfig(t *testing.T) {
 	cfg, err := LoadConfigFromBytes([]byte(`
 prism:

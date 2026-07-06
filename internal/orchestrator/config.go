@@ -279,7 +279,7 @@ type CodexConfig struct {
 // an approve / changes_requested verdict automatically.
 type ClaudeCodeConfig struct {
 	Enabled        bool     `yaml:"enabled"`
-	Executable     string   `yaml:"executable"`      // CLI binary (default: claude / claude.cmd)
+	Executable     string   `yaml:"executable"`      // CLI binary (default: claude)
 	Model          string   `yaml:"model"`           // optional --model override
 	ReviewerName   string   `yaml:"reviewer_name"`   // gate approver/reviewer name this fulfills (default: claude)
 	TimeoutMinutes int      `yaml:"timeout_minutes"` // per-review timeout (default: 10)
@@ -1128,6 +1128,7 @@ func (c *Config) ResolveEnv() {
 	c.Bridge.Secret = os.ExpandEnv(c.Bridge.Secret)
 	c.Codex.Executable = os.ExpandEnv(c.Codex.Executable)
 	c.Codex.Workspace = os.ExpandEnv(c.Codex.Workspace)
+	c.ClaudeCode.Executable = os.ExpandEnv(c.ClaudeCode.Executable)
 	c.FactoryMonitor.Root = os.ExpandEnv(c.FactoryMonitor.Root)
 	expandList(c.Prism.AllowedPaths)
 	expandList(c.Prism.ReadRoots)

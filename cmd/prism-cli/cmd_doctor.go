@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emaharmony/prism/internal/claudecli"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/validation"
@@ -105,6 +106,51 @@ func checkProviderAuth(agents []orchestrator.AgentConfig, getenv func(string) st
 	}
 	c.status, c.detail = statusOK, "all configured providers have credentials"
 	return c
+}
+
+// checkClaudeCode verifies the local Claude Code CLI is available when either
+// the reviewer is enabled or at least one agent uses provider: claude_code.
+func checkClaudeCode(cfg orchestrator.ClaudeCodeConfig, agents []orchestrator.AgentConfig, lookPath claudecli.LookPathFunc) doctorCheck {
+	c := doctorCheck{name: "claude code"}
+	agentIDs := claudeCodeAgentIDs(agents)
+	if !cfg.Enabled && len(agentIDs) == 0 {
+		c.status, c.detail = statusOK, "not configured"
+		return c
+	}
+
+	path, err := claudecli.ResolveExecutable(cfg.Executable, lookPath)
+	if err != nil {
+		c.status, c.detail = statusFail, err.Error()
+		return c
+	}
+
+	var refs []string
+	if cfg.Enabled {
+		refs = append(refs, "reviewer enabled")
+	}
+	if len(agentIDs) > 0 {
+		refs = append(refs, "agents: "+strings.Join(agentIDs, ", "))
+	}
+	detail := path
+	if len(refs) > 0 {
+		detail = fmt.Sprintf("%s (%s)", path, strings.Join(refs, "; "))
+	}
+	c.status, c.detail = statusOK, detail
+	return c
+}
+
+func claudeCodeAgentIDs(agents []orchestrator.AgentConfig) []string {
+	var ids []string
+	for _, a := range agents {
+		if strings.EqualFold(a.Provider, "claude_code") {
+			if a.ID != "" {
+				ids = append(ids, a.ID)
+			} else {
+				ids = append(ids, "(unnamed)")
+			}
+		}
+	}
+	return ids
 }
 
 // checkValidationProfile verifies a verification profile is registered, so the
@@ -395,6 +441,7 @@ func executeDoctor(args []string) {
 	checks := []doctorCheck{
 		checkWorkspace(cfg.Prism.Workspace),
 		checkProviderAuth(cfg.Agents, os.Getenv),
+		checkClaudeCode(cfg.ClaudeCode, cfg.Agents, exec.LookPath),
 		checkValidationProfile(validation.NewRegistry(), ""),
 		checkGitRemote(repoPath, repoHasRemote),
 		checkNATS(cfg.Prism.NATSURL),

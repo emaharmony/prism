@@ -29,6 +29,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/bus"
+	"github.com/emaharmony/prism/internal/claudecli"
 	"github.com/emaharmony/prism/internal/claudeworker"
 	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/codexworker"
@@ -781,17 +783,22 @@ func executeServe(args []string) {
 	// Claude Code sub-agent reviewer — fulfills gated-loop feedback gates that
 	// require the configured reviewer name. Independent of the scheduler.
 	if cfg.ClaudeCode.Enabled && natsConn != nil {
-		reviewer := claudeworker.New(claudeworker.Config{
-			Enabled:        true,
-			Executable:     cfg.ClaudeCode.Executable,
-			Model:          cfg.ClaudeCode.Model,
-			ReviewerName:   cfg.ClaudeCode.ReviewerName,
-			TimeoutMinutes: cfg.ClaudeCode.TimeoutMinutes,
-			AllowedTools:   cfg.ClaudeCode.AllowedTools,
-			ExtraArgs:      cfg.ClaudeCode.ExtraArgs,
-		})
-		if err := startClaudeReviewer(natsConn, reviewer, cfg); err != nil {
-			log.Printf("[CLAUDE-REVIEW] WARN failed to start: %v", err)
+		claudeExe, err := claudecli.ResolveExecutable(cfg.ClaudeCode.Executable, exec.LookPath)
+		if err != nil {
+			log.Printf("[CLAUDE-REVIEW] WARN disabled: %v", err)
+		} else {
+			reviewer := claudeworker.New(claudeworker.Config{
+				Enabled:        true,
+				Executable:     claudeExe,
+				Model:          cfg.ClaudeCode.Model,
+				ReviewerName:   cfg.ClaudeCode.ReviewerName,
+				TimeoutMinutes: cfg.ClaudeCode.TimeoutMinutes,
+				AllowedTools:   cfg.ClaudeCode.AllowedTools,
+				ExtraArgs:      cfg.ClaudeCode.ExtraArgs,
+			})
+			if err := startClaudeReviewer(natsConn, reviewer, cfg); err != nil {
+				log.Printf("[CLAUDE-REVIEW] WARN failed to start: %v", err)
+			}
 		}
 	}
 
@@ -1711,7 +1718,11 @@ func createProvider(agentCfg orchestrator.AgentConfig, cfg *orchestrator.Config)
 	case "claude_code":
 		// Claude Code subscription brain: shells out to the `claude` CLI.
 		// Reuses the top-level claude_code: block for executable/timeout.
-		return createClaudeCodeProvider(agentCfg, cfg.ClaudeCode), info, nil
+		p, err := createClaudeCodeProvider(agentCfg, cfg.ClaudeCode)
+		if err != nil {
+			return nil, info, fmt.Errorf("claude_code provider: %w", err)
+		}
+		return p, info, nil
 
 	default:
 		return nil, info, fmt.Errorf("unsupported provider: %s (supported: ollama, openai, openai_responses, anthropic, gemini, claude_code)", agentCfg.Provider)
@@ -1722,17 +1733,21 @@ func createProvider(agentCfg orchestrator.AgentConfig, cfg *orchestrator.Config)
 // installed `claude` binary's subscription session — no API key required. The
 // executable and timeout are taken from the top-level claude_code: config block;
 // the model from the agent config (falling back to the block's model).
-func createClaudeCodeProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.ClaudeCodeConfig) provider.Provider {
+func createClaudeCodeProvider(agentCfg orchestrator.AgentConfig, ccCfg orchestrator.ClaudeCodeConfig) (provider.Provider, error) {
 	model := agentCfg.Model
 	if model == "" {
 		model = ccCfg.Model
 	}
+	executable, err := claudecli.ResolveExecutable(ccCfg.Executable, exec.LookPath)
+	if err != nil {
+		return nil, err
+	}
 	return claudecode.New(claudecode.Config{
-		Executable:     ccCfg.Executable,
+		Executable:     executable,
 		Model:          model,
 		TimeoutMinutes: ccCfg.TimeoutMinutes,
 		ExtraArgs:      ccCfg.ExtraArgs,
-	})
+	}), nil
 }
 
 func factoryConfigFromBridge(cfg orchestrator.FactoryBridgeConfig) factory.Config {

@@ -82,6 +82,9 @@ func TestReviewInvokesPrintMode(t *testing.T) {
 
 func TestReviewDefaultsReadOnly(t *testing.T) {
 	cfg := Normalize(Config{})
+	if cfg.Executable != "claude" {
+		t.Fatalf("default executable = %q, want claude", cfg.Executable)
+	}
 	if !strings.Contains(cfg.AllowedTools, "Read") || strings.Contains(cfg.AllowedTools, "Edit") || strings.Contains(cfg.AllowedTools, "Write") {
 		t.Fatalf("default allowed tools should be read-only: %q", cfg.AllowedTools)
 	}
