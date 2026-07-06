@@ -13,8 +13,9 @@
 //   - create_directory_proposal: Proposes directory creation for human approval
 //
 // Commands:
-//   prism tool list                    — Show all tools and their input schemas
-//   prism tool run <name> --input '{}' — Execute a tool directly (for testing)
+//
+//	prism tool list                    — Show all tools and their input schemas
+//	prism tool run <name> --input '{}' — Execute a tool directly (for testing)
 package main
 
 import (
@@ -32,6 +33,8 @@ import (
 func executeToolList() {
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltinsV4(registry, ".", 1024*1024)
+	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
+	tool.RegisterImageTools(registry, imageToolsConfigFromPrismConfig(nil, ".", nil))
 
 	names := registry.List()
 	fmt.Println("═══════════════════════════════════════════")
@@ -64,8 +67,9 @@ func executeToolList() {
 // a tool as a standalone operation. Policy is still enforced.
 //
 // Example:
-//   prism tool run echo --input '{"text": "hello"}'
-//   prism tool run read_file --input '{"path": "README.md"}' --workspace .
+//
+//	prism tool run echo --input '{"text": "hello"}'
+//	prism tool run read_file --input '{"path": "README.md"}' --workspace .
 func executeToolRun(toolName, inputJSON, project, workspace string, maxFileSize int64) {
 	// Parse the JSON input
 	var input map[string]any
@@ -77,6 +81,8 @@ func executeToolRun(toolName, inputJSON, project, workspace string, maxFileSize 
 	// Set up the tool registry and policy config
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltinsV4(registry, workspace, maxFileSize)
+	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
+	tool.RegisterImageTools(registry, imageToolsConfigFromPrismConfig(nil, workspace, nil))
 	policyConfig := tool.PolicyConfig{
 		WorkspaceRoot: workspace,
 		MaxFileSize:   maxFileSize,

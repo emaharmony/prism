@@ -52,6 +52,7 @@ var DefaultIncludeKeywords = []string{
 	"project", "file", "directory", "folder", "path", "code", "repo",
 	"overview", "structure", "contents", "config", "source",
 	"workspace", "scan", "inspect", "analyze",
+	"image", "images", "reference", "references", "download", "generate", "caption", "collect", "asset", "assets",
 }
 
 // DefaultGitKeywords are words that signal git-only tool needs.
@@ -64,11 +65,11 @@ var DefaultGitKeywords = []string{
 var defaultExcludePatterns = []string{
 	`^(hey|hi|hello|yo|sup|hola|howdy|greetings)\b`,           // Greetings
 	`^(thanks|thank you|thx|ty|cheers|bye|goodbye|cya)\b`,     // Farewells
-	`^(lol|lmao|rofl|haha|😊|😂|❤️|✨|💜|💛)$`,                  // Pure emoji/reaction
+	`^(lol|lmao|rofl|haha|😊|😂|❤️|✨|💜|💛)$`,                     // Pure emoji/reaction
 	`^(yes|no|ok|okay|sure|right|got it|cool|nice|wow|omg)\b`, // Acknowledgments
-	`^(say|tell me) (hello|hi|hey|goodbye|thanks)`,             // Conversational commands
-	`what do you think about`,                                  // Opinion questions
-	`^(what's up|how are you|how's it going)\b`,              // Social check-ins
+	`^(say|tell me) (hello|hi|hey|goodbye|thanks)`,            // Conversational commands
+	`what do you think about`,                                 // Opinion questions
+	`^(what's up|how are you|how's it going)\b`,               // Social check-ins
 }
 
 // NewToolRelevanceGate creates a gate with default settings.

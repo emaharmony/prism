@@ -17,6 +17,12 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		{Function: provider.FunctionDef{Name: "git_push"}},
 		{Function: provider.FunctionDef{Name: "plan_create"}},
 		{Function: provider.FunctionDef{Name: "state_get"}},
+		{Function: provider.FunctionDef{Name: "web_search"}},
+		{Function: provider.FunctionDef{Name: "memory_search"}},
+		{Function: provider.FunctionDef{Name: "fetch_image"}},
+		{Function: provider.FunctionDef{Name: "generate_image"}},
+		{Function: provider.FunctionDef{Name: "analyze_image"}},
+		{Function: provider.FunctionDef{Name: "collect_reference_images"}},
 	}
 
 	tests := []struct {
@@ -28,17 +34,17 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		{
 			name:        "nil role returns all tools",
 			role:        nil,
-			expectCount: 7,
+			expectCount: 13,
 		},
 		{
 			name:        "all tools returns all",
 			role:        &orchestrator.ChannelRole{Role: "manager-room", Tools: "all"},
-			expectCount: 7,
+			expectCount: 13,
 		},
 		{
 			name:        "empty tools returns all",
 			role:        &orchestrator.ChannelRole{Role: "manager-room", Tools: ""},
-			expectCount: 7,
+			expectCount: 13,
 		},
 		{
 			name:        "none returns no tools",
@@ -48,8 +54,8 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		{
 			name:        "read-only returns only read tools",
 			role:        &orchestrator.ChannelRole{Role: "casual", Tools: "read-only"},
-			expectCount: 4, // read_project, search_files, git_status, state_get
-			expectNames: []string{"read_project", "search_files", "git_status", "state_get"},
+			expectCount: 10,
+			expectNames: []string{"read_project", "search_files", "git_status", "state_get", "web_search", "memory_search", "fetch_image", "generate_image", "analyze_image", "collect_reference_images"},
 		},
 	}
 
@@ -73,7 +79,6 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		})
 	}
 }
-
 func TestFilterToolInfosByChannelRole(t *testing.T) {
 	allInfos := []tool.ToolInfo{
 		{Name: "read_project", Description: "Read project files"},
@@ -81,6 +86,8 @@ func TestFilterToolInfosByChannelRole(t *testing.T) {
 		{Name: "git_status", Description: "Check git status"},
 		{Name: "git_commit", Description: "Git commit"},
 		{Name: "git_push", Description: "Git push"},
+		{Name: "web_search", Description: "Search web"},
+		{Name: "collect_reference_images", Description: "Collect images"},
 	}
 
 	tests := []struct {
@@ -91,12 +98,12 @@ func TestFilterToolInfosByChannelRole(t *testing.T) {
 		{
 			name:        "nil role returns all",
 			role:        nil,
-			expectCount: 5,
+			expectCount: 7,
 		},
 		{
 			name:        "all returns all",
 			role:        &orchestrator.ChannelRole{Role: "manager-room", Tools: "all"},
-			expectCount: 5,
+			expectCount: 7,
 		},
 		{
 			name:        "none returns nil",
@@ -106,7 +113,7 @@ func TestFilterToolInfosByChannelRole(t *testing.T) {
 		{
 			name:        "read-only returns only read tools",
 			role:        &orchestrator.ChannelRole{Role: "casual", Tools: "read-only"},
-			expectCount: 3, // read_project, search_files, git_status
+			expectCount: 5,
 		},
 	}
 
@@ -119,7 +126,6 @@ func TestFilterToolInfosByChannelRole(t *testing.T) {
 		})
 	}
 }
-
 func TestResolveToolMode(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -30,23 +30,30 @@ idea ──► rubric score ──► plan ──► references ──► assets
 ## Reference-image tools (the Researcher)
 
 Native Prism tools in `internal/tool/image_tools.go`, auto-approved (read-only
-w.r.t. code; they write only into `references/`):
+w.r.t. code; they write only into safe reference/output folders):
 
 | Tool | What it does | Config (env) |
 |---|---|---|
-| `fetch_image` | Download an image URL into `references/` | — (uses `PRISM_IMAGE_DIR`, default `<workspace>/references`) |
-| `generate_image` | Text→image via a generic endpoint, saved to `references/` | `PRISM_IMAGEGEN_URL`, `PRISM_IMAGEGEN_KEY` |
+| `collect_reference_images` | Scout reference collector: probes local Codex image output, then falls back to configured image/web search and downloads images | `PRISM_IMAGE_SEARCH_URL`, `PRISM_IMAGE_SEARCH_KEY`, fallback `PRISM_WEBSEARCH_URL`/`PRISM_WEBSEARCH_KEY`; optional Codex CLI |
+| `fetch_image` | Download an image URL into `references/` or a safe `output_dir` | uses `PRISM_IMAGE_DIR`, default `<workspace>/references` |
+| `generate_image` | Text->image via a generic endpoint, saved to `references/` or a safe `output_dir` | `PRISM_IMAGEGEN_URL`, `PRISM_IMAGEGEN_KEY` |
 | `analyze_image` | Vision-caption a path/URL for the reference brief | `PRISM_VISION_MODEL` (default `llama3.2-vision:11b`), `PRISM_VISION_URL`/`OLLAMA_BASE_URL` |
 
 Each degrades to a clear "not configured" result when its endpoint/model is
-unset — nothing hard-fails. Web research uses the existing `web_search` tool
-(`PRISM_WEBSEARCH_URL` / `PRISM_WEBSEARCH_KEY`).
+unset. `collect_reference_images` treats Codex as optional: it only uses the
+CLI when the executable resolves, `codex login status` succeeds, and
+`codex exec` returns image base64 or image URLs in the expected JSON contract.
+If Codex is missing, closed, unauthenticated, blocked, or returns no usable
+image data, Scout falls back to the configured search endpoint. All image save
+locations are checked against the workspace/write roots; delegators may pass a
+safe `output_dir`.
 
 Setup:
 ```bash
 ollama pull llama3.2-vision:11b      # vision model for analyze_image
-export PRISM_WEBSEARCH_URL=...        # a JSON search endpoint (Brave/Serper/SearXNG)
-export PRISM_IMAGEGEN_URL=...         # optional: a text→image endpoint
+export PRISM_IMAGE_SEARCH_URL=...    # preferred JSON image-search endpoint
+export PRISM_WEBSEARCH_URL=...       # fallback JSON search endpoint (Brave/Serper/SearXNG)
+export PRISM_IMAGEGEN_URL=...        # optional: a text->image endpoint
 ```
 
 > **Vision model / Ollama version:** `llama3.2-vision` uses the `mllama`
@@ -55,7 +62,6 @@ export PRISM_IMAGEGEN_URL=...         # optional: a text→image endpoint
 > error, either upgrade Ollama, or use a broadly-compatible VLM instead:
 > `ollama pull llava` then `export PRISM_VISION_MODEL=llava`. The default is
 > `llama3.2-vision:11b`; override it anytime with `PRISM_VISION_MODEL`.
-
 ## Asset pipeline (the Asset Maker → Blender → Factory)
 
 `chisel` drives Blender through MCP (`mcp_blender_*` tools), building models from

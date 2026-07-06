@@ -163,3 +163,12 @@ func TestToolRelevanceGate_ExcludeAck(t *testing.T) {
 		t.Errorf("expected Exclude for acknowledgment, got %v (reason: %s)", result.Decision, result.Reason)
 	}
 }
+func TestToolRelevanceGate_IncludeReferenceImageRequest(t *testing.T) {
+	gate := NewToolRelevanceGate(true)
+	tools := []string{"collect_reference_images", "web_search"}
+
+	result := gate.Evaluate("collect reference images for a neon city", tools)
+	if result.Decision != ToolDecisionInclude {
+		t.Errorf("expected Include for reference image request, got %v (reason: %s)", result.Decision, result.Reason)
+	}
+}

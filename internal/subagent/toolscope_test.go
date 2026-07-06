@@ -14,7 +14,7 @@ func TestCapabilityToolScope(t *testing.T) {
 	scope := DefaultToolScope()
 
 	// Read-only / research tools: allowed for everyone.
-	for _, tool := range []string{"read_file", "web_search", "fetch_image", "analyze_image", "git_status", "memory_search"} {
+	for _, tool := range []string{"read_file", "web_search", "fetch_image", "generate_image", "analyze_image", "collect_reference_images", "git_status", "memory_search"} {
 		if !scope.Allowed(researcher, tool) {
 			t.Errorf("researcher should be allowed %q", tool)
 		}

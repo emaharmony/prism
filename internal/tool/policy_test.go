@@ -16,6 +16,15 @@ func TestPolicyEchoApproved(t *testing.T) {
 	}
 }
 
+func TestPolicyReferenceImageToolsApproved(t *testing.T) {
+	cfg := DefaultPolicyConfig()
+	for _, name := range []string{"fetch_image", "generate_image", "analyze_image", "collect_reference_images"} {
+		result := EvaluatePolicy(cfg, name, map[string]any{})
+		if result.Decision != PolicyApproved {
+			t.Fatalf("%s should be approved research, got %s: %s", name, result.Decision, result.Reason)
+		}
+	}
+}
 func TestPolicyWriteFileDryRunApproved(t *testing.T) {
 	cfg := DefaultPolicyConfig()
 	result := EvaluatePolicy(cfg, "write_file_dry_run", map[string]any{

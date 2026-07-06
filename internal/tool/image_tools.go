@@ -25,22 +25,47 @@ const (
 	defaultReferencesDir = "references"
 	defaultVisionModel   = "llama3.2-vision:11b"
 	maxImageBytes        = 25 << 20 // 25 MiB cap on any downloaded/generated image
+	maxReferenceImages   = 5
 )
 
 // ImageToolsConfig configures the reference-image tools. Empty fields fall back
 // to environment variables so deployment matches the web_search pattern.
 type ImageToolsConfig struct {
 	// ReferencesDir is where images are saved. Must sit within the agent's
-	// write roots. Empty → PRISM_IMAGE_DIR, then "references".
+	// write roots. Empty -> PRISM_IMAGE_DIR, then "references".
 	ReferencesDir string
-	// ImageGenEndpoint is a text→image HTTP endpoint. Empty → PRISM_IMAGEGEN_URL.
+	// WorkspaceRoot is the primary workspace root for safe output_dir resolution.
+	// Empty disables containment checks.
+	WorkspaceRoot string
+	// AllowedPaths are extra write roots that output_dir may target.
+	AllowedPaths []string
+	// ImageSearchEndpoint is a JSON image-search endpoint. Empty -> PRISM_IMAGE_SEARCH_URL.
+	ImageSearchEndpoint string
+	// ImageSearchKey is an optional bearer token. Empty -> PRISM_IMAGE_SEARCH_KEY.
+	ImageSearchKey string
+	// ImageSearchQueryParam is the query parameter name for image search. Empty -> q.
+	ImageSearchQueryParam string
+	// CodexExecutable is the optional Codex CLI executable for collect_reference_images.
+	CodexExecutable string
+	// CodexModel optionally overrides the Codex model for the image probe.
+	CodexModel string
+	// CodexProfile optionally selects a Codex profile for the image probe.
+	CodexProfile string
+	// CodexWorkspace is the directory passed to codex exec/login status.
+	CodexWorkspace string
+	// CodexTimeout bounds the optional Codex probe. Empty -> a short safe timeout.
+	CodexTimeout time.Duration
+	// CodexRunner and CodexLookPath are injectable seams for tests.
+	CodexRunner   ImageCommandRunner
+	CodexLookPath imageLookPathFunc
+	// ImageGenEndpoint is a text->image HTTP endpoint. Empty -> PRISM_IMAGEGEN_URL.
 	ImageGenEndpoint string
-	// ImageGenKey is an optional bearer token. Empty → PRISM_IMAGEGEN_KEY.
+	// ImageGenKey is an optional bearer token. Empty -> PRISM_IMAGEGEN_KEY.
 	ImageGenKey string
-	// VisionBaseURL is the Ollama base URL for analyze_image. Empty →
+	// VisionBaseURL is the Ollama base URL for analyze_image. Empty ->
 	// PRISM_VISION_URL, then OLLAMA_BASE_URL, then http://localhost:11434.
 	VisionBaseURL string
-	// VisionModel is the vision-capable model tag. Empty → PRISM_VISION_MODEL,
+	// VisionModel is the vision-capable model tag. Empty -> PRISM_VISION_MODEL,
 	// then the default VLM.
 	VisionModel string
 }
@@ -115,8 +140,9 @@ func (t *FetchImageTool) Description() string {
 func (t *FetchImageTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"url":      {Type: "string", Description: "The image URL to download", Required: true},
-			"filename": {Type: "string", Description: "Optional filename to save as (extension inferred if omitted)", Required: false},
+			"url":        {Type: "string", Description: "The image URL to download", Required: true},
+			"filename":   {Type: "string", Description: "Optional filename to save as (extension inferred if omitted)", Required: false},
+			"output_dir": {Type: "string", Description: "Optional output directory within the workspace/write roots", Required: false},
 		},
 		Output: ParamSpec{Type: "object", Description: "Saved path, size, and content type"},
 	}
@@ -134,7 +160,11 @@ func (t *FetchImageTool) Execute(ctx context.Context, input map[string]any) (Too
 	if strings.TrimSpace(name) == "" {
 		name = filenameFromURL(rawURL, contentType)
 	}
-	path, err := saveToReferences(t.Config.referencesDir(), name, contentType, data)
+	dir, err := resolveImageOutputDir(t.Config, input)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
+	}
+	path, err := saveToReferences(dir, name, contentType, data)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
@@ -159,8 +189,9 @@ func (t *GenerateImageTool) Description() string {
 func (t *GenerateImageTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"prompt":   {Type: "string", Description: "Text description of the image to generate", Required: true},
-			"filename": {Type: "string", Description: "Optional filename to save as", Required: false},
+			"prompt":     {Type: "string", Description: "Text description of the image to generate", Required: true},
+			"filename":   {Type: "string", Description: "Optional filename to save as", Required: false},
+			"output_dir": {Type: "string", Description: "Optional output directory within the workspace/write roots", Required: false},
 		},
 		Output: ParamSpec{Type: "object", Description: "Saved path of the generated image"},
 	}
@@ -205,7 +236,11 @@ func (t *GenerateImageTool) Execute(ctx context.Context, input map[string]any) (
 	if strings.TrimSpace(name) == "" {
 		name = "generated-" + safeSlug(prompt, 40)
 	}
-	path, err := saveToReferences(t.Config.referencesDir(), name, "image/png", data)
+	dir, err := resolveImageOutputDir(t.Config, input)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}, nil
+	}
+	path, err := saveToReferences(dir, name, "image/png", data)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error()}, nil
 	}
@@ -292,11 +327,12 @@ func (t *AnalyzeImageTool) Execute(ctx context.Context, input map[string]any) (T
 
 // --- registration + helpers --------------------------------------------------
 
-// RegisterImageTools adds fetch_image, generate_image, and analyze_image.
+// RegisterImageTools adds fetch_image, generate_image, analyze_image, and collect_reference_images.
 func RegisterImageTools(registry *Registry, cfg ImageToolsConfig) *Registry {
 	registry.Register(&FetchImageTool{Config: cfg})
 	registry.Register(&GenerateImageTool{Config: cfg})
 	registry.Register(&AnalyzeImageTool{Config: cfg})
+	registry.Register(&CollectReferenceImagesTool{Config: cfg})
 	return registry
 }
 
@@ -384,13 +420,13 @@ func saveToReferences(dir, name, contentType string, data []byte) (string, error
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create references dir: %w", err)
 	}
-	name = safeSlug(strings.TrimSuffix(name, filepath.Ext(name)), 60)
-	ext := filepath.Ext(name)
-	if ext == "" {
-		ext = extFromContentType(contentType)
-		name += ext
+	rawExt := filepath.Ext(name)
+	base := safeSlug(strings.TrimSuffix(filepath.Base(name), rawExt), 60)
+	ext := safeImageExt(rawExt, contentType)
+	path := filepath.Join(dir, base+ext)
+	for i := 2; fileExists(path); i++ {
+		path = filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, i, ext))
 	}
-	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("write image: %w", err)
 	}
@@ -399,6 +435,10 @@ func saveToReferences(dir, name, contentType string, data []byte) (string, error
 		return path, nil
 	}
 	return abs, nil
+}
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func filenameFromURL(rawURL, contentType string) string {
@@ -417,6 +457,16 @@ func filenameFromURL(rawURL, contentType string) string {
 		base += extFromContentType(contentType)
 	}
 	return base
+}
+
+func safeImageExt(ext, contentType string) string {
+	ext = strings.ToLower(ext)
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return ext
+	default:
+		return extFromContentType(contentType)
+	}
 }
 
 func extFromContentType(ct string) string {
