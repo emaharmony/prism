@@ -127,36 +127,35 @@ Be concise — this is a status report, not a novel.`,
 	"auto_patch": {
 		Prompt: `You are the auto-patch agent. You are an active developer, not just a reporter. Your job is to find and fix bugs, improve user experience, and increase effectiveness across the codebase.
 
+## CRITICAL: JSON Only
+You MUST respond with JSON tool calls, not prose. Every response must be either:
+- {"type": "tool_request", "tool": "tool_name", "input": {"key": "value"}}
+- {"type": "final", "content": "summary text"}
+
+DO NOT write prose like "I'll start by checking..." or "Let me look at...". That text is discarded and wastes your turn. Instead, immediately emit a tool_request JSON to do the action.
+
 ## Your Capabilities
 You can: create git branches, write code, commit, push, and open PRs. You have git_status, git_log, git_diff, file_read, file_write, and file_list tools. Use them.
 
 ## Workflow
-1. Check improvement proposals in workspace state
-2. For each auto-PR-eligible proposal (bug fixes, error patterns, test coverage, doc updates):
-   a. Create a plan using plan_create if one doesn't exist
-   b. Set the plan status to auto_proceed
-   c. Create a git branch with a descriptive name
-   d. Write the fix
-   e. Commit and push
-   f. Open a pull request with a clear description
-3. For proposals that need approval (architecture, process), notify Ema with a clear summary
-4. After creating any PR, update the improvement status to in_progress
-5. If a tool fails or doesn't exist, mention <@1512994928769237002> (OpenClaw Lumi) with the error so she can verify and respond
+1. First, call git_status to check the current state
+2. Then call git_log to see recent commits
+3. For each issue found: create a git branch, write the fix, commit, push, and open a PR
+4. If a tool fails, mention <@1512994928769237002> (OpenClaw Lumi) with the error
 
 ## Active Bug Hunting
-Don't just wait for proposals. Actively look for:
-- **Bugs**: Run git_status and git_diff to find uncommitted issues. Check recent test runs for failures.
-- **UX issues**: Read through error messages, user-facing text, and logs. If something is confusing or unclear, fix it.
-- **Effectiveness**: Look for redundant code, missing error handling, incomplete implementations. Fix them.
-- **Test gaps**: If a function has no test coverage, add one.
+Look for:
+- Bugs: uncommitted issues, failing tests, error messages
+- UX issues: confusing text, missing error handling
+- Effectiveness: redundant code, incomplete implementations
+- Test gaps: add tests for untested functions
 
 ## Quality Standards
 - Every fix should include or update a test if applicable
 - Commit messages should be clear and descriptive
-- PR descriptions should explain what was fixed and why
-- If you're unsure about a change, propose it as an improvement rather than auto-PR
+- If unsure about a change, propose it as an improvement rather than auto-PR
 
-Be thorough, proactive, and fast. You are not just a reporter — you are a developer.`,
+Be thorough, proactive, and fast. START WITH A TOOL CALL, not prose.`,
 		ChannelID: "1491622581348864162", // manager-room
 		MaxTokens: 2048,
 	},
@@ -1433,6 +1432,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		assignedTask   string
 		lastToolHashes []string
 		lastRespHashes []string
+		orientFoundWork bool   // V37: ORIENT phase must find actual work before BRANCH is allowed
 	}
 	state := RunState{}
 
@@ -1441,6 +1441,12 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 	// V36: Parse PROJECT_STATE.md to assign a task
 	state.assignedTask = wh.parseProjectStateTask()
+
+	// V37: If a task was assigned from PROJECT_STATE.md, ORIENT has work to do
+	if state.assignedTask != "" {
+		state.orientFoundWork = true
+		log.Printf("[WAKE-TOOL] task assigned from PROJECT_STATE.md — ORIENT has work")
+	}
 
 	// V36: Inject task assignment into messages if found
 	if state.assignedTask != "" {
@@ -1471,7 +1477,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 		{Name: "BRANCH", MaxIterations: 10, AllowedTools: map[string]bool{"git_branch_list": true, "git_status": true, "read_file": true, "git_checkout": true}, Description: "If on main/master, you MUST create a feature branch (feature/bb-{task-slug}). The system blocks all writes on main. If already on a feature branch, proceed."},
 		{Name: "IMPLEMENT", MaxIterations: 80, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "create_directory": true, "list_dir": true, "search_files": true, "git_status": true, "git_diff": true}, Description: "Write code for your assigned task. After 3 read_file calls, the system forces you to mutate files or directories. You MUST produce at least one write_file or create_directory."},
 		{Name: "SELF_REVIEW", MaxIterations: 20, AllowedTools: map[string]bool{"read_file": true, "write_file": true, "create_directory": true, "git_diff": true, "git_status": true}, Description: "Review your changes via git_diff. Fix obvious errors. Respond REVIEW_PASSED when clean."},
-		{Name: "COMMIT_PUSH", MaxIterations: 10, AllowedTools: map[string]bool{"git_add": true, "git_commit": true, "git_push": true, "git_status": true}, Description: "Stage, commit, and push your changes. All three must complete."},
+		{Name: "COMMIT_PUSH", MaxIterations: 10, AllowedTools: map[string]bool{"git_add": true, "git_commit": true, "git_push": true, "create_pr": true, "git_status": true}, Description: "Stage, commit, and push your changes. All three must complete."},
 		{Name: "UPDATE_STATE", MaxIterations: 10, AllowedTools: map[string]bool{"write_file": true, "read_file": true}, Description: "Update PROJECT_STATE.md to mark your task complete with [x]."},
 		{Name: "REPORT", MaxIterations: 5, AllowedTools: map[string]bool{}, Description: "Emit final summary. No tools allowed."},
 	}
@@ -1499,6 +1505,23 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			})
 			log.Printf("[WAKE-TOOL] phase transition: %s → %s", phase.Name, nextPhase.Name)
 			continue
+		}
+
+		// V37: Branch gate — when transitioning from ORIENT to BRANCH, check if ORIENT found work.
+		// If no task was assigned AND ORIENT didn't find issues, skip BRANCH and go straight to REPORT.
+		if phase.Name == "ORIENT" && phaseIdx+1 < len(phases) {
+			if state.assignedTask == "" && !state.orientFoundWork {
+				log.Printf("[WAKE-TOOL] ORIENT found no work and no task assigned — skipping to REPORT")
+				// Skip to REPORT phase (last phase)
+				phaseIdx = len(phases) - 1
+				iterInPhase = 0
+				state.readsInPhase = 0
+				messages = append(messages, provider.ChatMessage{
+					Role:    "system",
+					Content: "No issues found and no task assigned. Skip to REPORT and emit final summary. No branch creation needed.",
+				})
+				continue
+			}
 		}
 
 		// V36: Phase-specific nudges
@@ -1731,6 +1754,17 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				if newBranch != state.branchName {
 					state.branchName = newBranch
 					log.Printf("[WAKE-TOOL] branch changed to %s", newBranch)
+				}
+				// V37: If git_status shows uncommitted changes, ORIENT found work
+				if phase.Name == "ORIENT" && (strings.Contains(resultStr, "modified") || strings.Contains(resultStr, "untracked") || strings.Contains(resultStr, "Changes") || strings.Contains(resultStr, "ahead")) {
+					state.orientFoundWork = true
+					log.Printf("[WAKE-TOOL] ORIENT found work via git_status")
+				}
+			case "read_file":
+				// V37: If read_file in ORIENT reads PROJECT_STATE.md and finds incomplete tasks
+				if phase.Name == "ORIENT" && strings.Contains(resultStr, "[ ]") {
+					state.orientFoundWork = true
+					log.Printf("[WAKE-TOOL] ORIENT found incomplete tasks in PROJECT_STATE.md")
 				}
 			}
 
