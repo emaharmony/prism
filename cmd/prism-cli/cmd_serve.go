@@ -500,15 +500,10 @@ func executeServe(args []string) {
 			}
 			tool.RegisterResearchTools(toolReg, memSearcher, tool.WebSearchConfig{})
 
-			// Researcher reference-image tools: fetch/generate/analyze. Images
-			// are saved under <workspace>/references so they sit within the
-			// agent's roots; endpoints/vision model resolve from env (see
-			// docs/ROBLOX-TEAM.md). All degrade to "not configured" cleanly.
-			imgDir := "references"
-			if workspaceRoot != "" {
-				imgDir = filepath.Join(workspaceRoot, "references")
-			}
-			tool.RegisterImageTools(toolReg, tool.ImageToolsConfig{ReferencesDir: imgDir})
+			// Researcher reference-image tools: fetch/generate/analyze/collect.
+			// Images save under <workspace>/references by default and may target
+			// configured write roots via output_dir.
+			tool.RegisterImageTools(toolReg, imageToolsConfigFromPrismConfig(cfg, workspaceRoot, writeRoots))
 
 			// V34: Cross-Prism bridge tool — send messages to remote Prism instances
 			if crossSvc != nil {
@@ -2014,18 +2009,24 @@ func filterChatTools(tools []provider.ChatTool, filter []string) []provider.Chat
 
 // readOnlyTools is the set of tool names that are safe for read-only channels.
 var readOnlyTools = map[string]bool{
-	"echo":             true,
-	"list_dir":         true,
-	"read_file":        true,
-	"read_project":     true,
-	"search_files":     true,
-	"project_overview": true,
-	"git_status":       true,
-	"git_log":          true,
-	"git_diff":         true,
-	"git_branch_list":  true,
-	"plan_list":        true,
-	"state_get":        true,
+	"echo":                     true,
+	"list_dir":                 true,
+	"read_file":                true,
+	"read_project":             true,
+	"search_files":             true,
+	"project_overview":         true,
+	"git_status":               true,
+	"git_log":                  true,
+	"git_diff":                 true,
+	"git_branch_list":          true,
+	"web_search":               true,
+	"memory_search":            true,
+	"fetch_image":              true,
+	"generate_image":           true,
+	"analyze_image":            true,
+	"collect_reference_images": true,
+	"plan_list":                true,
+	"state_get":                true,
 }
 
 var mutationProposalTools = map[string]bool{
@@ -2036,7 +2037,7 @@ var mutationProposalTools = map[string]bool{
 	"git_add":                   true,
 	"git_commit":                true,
 	"git_push":                  true,
-	"create_pr":                true,
+	"create_pr":                 true,
 }
 
 // ToolMode represents the tool access level for a channel.

@@ -153,7 +153,7 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	// RESEARCH-phase read-only tools — no code mutation, always approved. The
 	// image tools write only into the configured references directory (not the
 	// codebase), so the Researcher can gather reference art autonomously.
-	case "web_search", "memory_search", "fetch_image", "generate_image", "analyze_image":
+	case "web_search", "memory_search", "fetch_image", "generate_image", "analyze_image", "collect_reference_images":
 		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is read-only research, always approved", toolName)}
 
 	// use_skill only returns a skill's instructions (no mutation) — always approved.

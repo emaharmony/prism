@@ -82,3 +82,23 @@ func TestValidateConfigCatchesErrors(t *testing.T) {
 		t.Fatalf("DefaultConfig should be valid, got: %v", errs)
 	}
 }
+
+func TestDefaultConfigAllowsReferenceImageCollection(t *testing.T) {
+	cfg := DefaultConfig()
+	for _, phaseName := range []string{"PROBE", "RESEARCH"} {
+		phase := cfg.GetPhase(phaseName)
+		if phase == nil {
+			t.Fatalf("phase %s missing", phaseName)
+		}
+		found := false
+		for _, tool := range phase.AllowedTools {
+			if tool == "collect_reference_images" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%s should allow collect_reference_images: %v", phaseName, phase.AllowedTools)
+		}
+	}
+}

@@ -222,6 +222,8 @@ func executeChat(args []string) {
 	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
+	tool.RegisterImageTools(registry, imageToolsConfigFromPrismConfig(cfg, workspaceRoot, writeRoots))
 	// V32: State management tools
 	chatStateMgr := state.NewManager(workspaceRoot)
 	chatStateMgr.EnsureDir()

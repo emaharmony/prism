@@ -381,9 +381,9 @@ func DefaultConfig() *WorkflowConfig {
 		Version:     2,
 		Description: "7-phase gated loop: PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:   600,  // 10x default for autonomous loops
-			MaxTotalTime:         "30m",  // increased from 60m for autonomous loops
-			MaxTotalTokens:       2_000_000,  // increased from 1M for autonomous loops
+			MaxTotalIterations:   600,       // 10x default for autonomous loops
+			MaxTotalTime:         "30m",     // increased from 60m for autonomous loops
+			MaxTotalTokens:       2_000_000, // increased from 1M for autonomous loops
 			MaxRepeatedToolCalls: 6,
 			StatePersistenceDir:  "runs/gated-loop",
 			EventEmission:        true,
@@ -396,14 +396,14 @@ func DefaultConfig() *WorkflowConfig {
 			{
 				Name: "PROBE", Type: "probe", Description: "Reduce assumptions by asking questions and searching",
 				MaxIterations: 8,
-				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "web_search", "memory_search"},
+				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "git_branch_list", "web_search", "memory_search", "collect_reference_images"},
 				Gate:          GateConfig{Type: "assumption_threshold", Threshold: 2.0},
 				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_open_assumptions", Blocks: false},
 			},
 			{
 				Name: "RESEARCH", Type: "research", Description: "Increase confidence by searching the web, memory, and the codebase",
 				MaxIterations: 8,
-				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "web_search", "memory_search"},
+				AllowedTools:  []string{"read_file", "list_dir", "search_files", "project_overview", "git_status", "git_log", "web_search", "memory_search", "collect_reference_images"},
 				Gate:          GateConfig{Type: "confidence_threshold", Threshold: 0.7},
 				Fallback:      FallbackConfig{OnMaxIterations: "proceed_with_partial_confidence", Blocks: false},
 			},
