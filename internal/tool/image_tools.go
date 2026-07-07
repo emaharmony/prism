@@ -342,6 +342,10 @@ func downloadImage(ctx context.Context, client *http.Client, rawURL, bearer stri
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid url: %w", err)
 	}
+	// Browser-like headers so hotlink-protected image hosts (Pinterest, news
+	// sites, CDNs) serve the actual image instead of an anti-bot HTML wall.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "image/avif,image/webp,image/png,image/jpeg,*/*")
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
@@ -357,9 +361,15 @@ func downloadImage(ctx context.Context, client *http.Client, rawURL, bearer stri
 	if err != nil {
 		return nil, "", fmt.Errorf("read body: %w", err)
 	}
+	// Validate the payload is really an image — many hosts return an HTML
+	// consent/anti-bot page with a 200. Reject those so we don't save junk.
 	ct := resp.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "image/png"
+	if ct == "" || !strings.HasPrefix(strings.ToLower(ct), "image/") {
+		sniff := http.DetectContentType(data)
+		if !strings.HasPrefix(sniff, "image/") {
+			return nil, "", fmt.Errorf("url did not return an image (content-type %q)", firstNonEmptyImage(ct, sniff))
+		}
+		ct = sniff
 	}
 	return data, ct, nil
 }
