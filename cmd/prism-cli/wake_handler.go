@@ -560,6 +560,15 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 		return
 	}
 
+	// V37: Idle Guard — check locally (zero cloud tokens) whether there's actual work.
+	// If nothing to do, skip the cloud LLM entirely.
+	if action == "project_work" || action == "auto_patch" || action == "daily_review" || action == "review_improvements" {
+		if !wh.hasWorkToDo(action) {
+			log.Printf("[WAKE] idle guard: no work for %q — skipping cloud LLM (0 tokens spent)", action)
+			return
+		}
+	}
+
 	// Build the system prompt with state context
 	systemPrompt := actionDef.Prompt
 
@@ -1975,6 +1984,86 @@ func simpleHash(s string) string {
 		h = h*31 + int(c)
 	}
 	return fmt.Sprintf("%d", h)
+}
+
+// hasWorkToDo checks locally (zero cloud tokens) whether there is actual work
+// to do for the given action. This is the idle guard — it prevents the cloud
+// LLM from being called when there's nothing to work on.
+func (wh *WakeHandler) hasWorkToDo(action string) bool {
+	repoPath := wh.defaultRepoPath()
+
+	switch action {
+	case "project_work":
+		// Check for incomplete tasks in PROJECT_STATE.md
+		statePath := wh.projectStatePath(wh.cfg.DefaultProject())
+		if statePath != "" {
+			if data, err := os.ReadFile(statePath); err == nil {
+				content := string(data)
+				// Look for incomplete task markers: "- [ ]" or "### Task N:" without ✅
+				lines := strings.Split(content, "\n")
+				for _, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, "- [ ]") {
+						return true // Found incomplete task
+					}
+					if strings.HasPrefix(trimmed, "### Task ") && !strings.Contains(trimmed, "✅") {
+						return true // Found incomplete task header
+					}
+				}
+			}
+		}
+		// Check for uncommitted changes
+		gitStatus := exec_command("git", []string{"status", "--short"}, repoPath)
+		if gitStatus != "" {
+			return true // Uncommitted changes need attention
+		}
+		// No work found
+		return false
+
+	case "auto_patch":
+		// Check for uncommitted changes (potential bugs to fix)
+		gitStatus := exec_command("git", []string{"status", "--short"}, repoPath)
+		if gitStatus != "" {
+			return true
+		}
+		// Check for failing tests
+		testOutput := exec_command("go", []string{"test", "./...", "-count=1"}, repoPath)
+		if strings.Contains(testOutput, "FAIL") {
+			return true // Failing tests need fixing
+		}
+		// Check for open PRs that might need attention
+		prList := exec_command("gh", []string{"pr", "list", "--state", "open", "--repo", wh.cfg.DefaultProject().RepoPath}, "")
+		if prList != "" && !strings.Contains(prList, "No pull requests") {
+			return true // Open PRs to review
+		}
+		// Check Remembrance for any assigned tasks
+		if wh.remClient != nil {
+			results, err := wh.remClient.Search("assigned task pending fix", "hybrid", "", "", 3)
+			if err == nil && results != nil {
+				if hits, ok := results["results"].([]any); ok && len(hits) > 0 {
+					return true
+				}
+			}
+		}
+		return false
+
+	case "daily_review":
+		// Always run daily review — it's once per day and checks state
+		return true
+
+	case "review_improvements":
+		// Check if there are any active improvement proposals
+		if wh.improveMgr != nil {
+			active := wh.improveMgr.GetActiveImprovements()
+			if len(active) > 0 {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Default: allow the action to run
+	return true
 }
 
 // gatherScoutContext uses the local scout agent (qwen3:8b on Ollama) to gather
