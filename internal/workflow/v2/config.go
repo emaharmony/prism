@@ -22,10 +22,12 @@ type WorkflowConfig struct {
 	FastPath          *FastPathConfig `json:"fast_path,omitempty"`
 }
 
+const DefaultMaxTotalTokens = 2_000_000
+
 type GlobalConfig struct {
 	MaxTotalIterations   int    `json:"max_total_iterations"`
 	MaxTotalTime         string `json:"max_total_time"`
-	MaxTotalTokens       int    `json:"max_total_tokens,omitempty"`        // hard ceiling on prompt+completion tokens; 0 = unlimited
+	MaxTotalTokens       int    `json:"max_total_tokens,omitempty"`        // hard ceiling on prompt+completion tokens; 0 = DefaultMaxTotalTokens
 	MaxRepeatedToolCalls int    `json:"max_repeated_tool_calls,omitempty"` // abort a phase after this many identical tool calls; 0 = default (6)
 	StatePersistenceDir  string `json:"state_persistence_dir"`
 	EventEmission        bool   `json:"event_emission"`
@@ -153,12 +155,26 @@ func parseConfigBytes(data []byte, path string) (*WorkflowConfig, error) {
 		if err := json.Unmarshal(jsonData, &config); err != nil {
 			return nil, fmt.Errorf("decode yaml %s: %w", path, err)
 		}
+		NormalizeTokenBudgets(&config)
 		return &config, nil
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("decode json %s: %w", path, err)
 	}
+	NormalizeTokenBudgets(&config)
 	return &config, nil
+}
+
+// NormalizeTokenBudgets applies finite token defaults to loaded workflow configs.
+// A zero global cap previously meant unlimited; for autonomous/project workflows
+// it now means "use the built-in default cap" so omitted fields do not run open-ended.
+func NormalizeTokenBudgets(cfg *WorkflowConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.Global.MaxTotalTokens == 0 {
+		cfg.Global.MaxTotalTokens = DefaultMaxTotalTokens
+	}
 }
 
 // normalizeYAML converts yaml.v3's map[interface{}]interface{} values into
@@ -381,9 +397,9 @@ func DefaultConfig() *WorkflowConfig {
 		Version:     2,
 		Description: "7-phase gated loop: PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:   600,       // 10x default for autonomous loops
-			MaxTotalTime:         "30m",     // increased from 60m for autonomous loops
-			MaxTotalTokens:       2_000_000, // increased from 1M for autonomous loops
+			MaxTotalIterations:   600,                   // 10x default for autonomous loops
+			MaxTotalTime:         "30m",                 // increased from 60m for autonomous loops
+			MaxTotalTokens:       DefaultMaxTotalTokens, // increased from 1M for autonomous loops
 			MaxRepeatedToolCalls: 6,
 			StatePersistenceDir:  "runs/gated-loop",
 			EventEmission:        true,
