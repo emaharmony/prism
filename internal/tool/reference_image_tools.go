@@ -469,18 +469,38 @@ func jsonReason(v any) string {
 	return ""
 }
 
-func searchImageCandidates(ctx context.Context, client *http.Client, source imageSearchSource, prompt string) ([]imageCandidate, error) {
-	u, err := url.Parse(source.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("invalid image search url: %w", err)
-	}
-	q := u.Query()
-	q.Set(firstNonEmptyImage(source.QueryParam, "q"), prompt)
-	u.RawQuery = q.Encode()
+func isFirecrawlEndpoint(endpoint string) bool {
+	return strings.Contains(strings.ToLower(endpoint), "firecrawl.dev")
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
+func searchImageCandidates(ctx context.Context, client *http.Client, source imageSearchSource, prompt string) ([]imageCandidate, error) {
+	var req *http.Request
+	var err error
+	if isFirecrawlEndpoint(source.Endpoint) {
+		// Firecrawl search API is a POST with a JSON body; request the "images"
+		// source so results carry imageUrl fields the JSON walker recognizes.
+		body, _ := json.Marshal(map[string]any{
+			"query":   prompt,
+			"sources": []string{"images"},
+			"limit":   10,
+		})
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, source.Endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+	} else {
+		u, perr := url.Parse(source.Endpoint)
+		if perr != nil {
+			return nil, fmt.Errorf("invalid image search url: %w", perr)
+		}
+		q := u.Query()
+		q.Set(firstNonEmptyImage(source.QueryParam, "q"), prompt)
+		u.RawQuery = q.Encode()
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 	req.Header.Set("Accept", "application/json")
 	if strings.TrimSpace(source.APIKey) != "" {
