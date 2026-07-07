@@ -20,6 +20,7 @@ package tool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -648,7 +649,12 @@ type ReadProjectTool struct {
 	WorkspaceRoot string
 	AllowedPaths  []string
 	MaxFileSize   int64
+	MaxTokens     int
 }
+
+const DefaultReadProjectTokenBudget = 50_000
+
+var errReadProjectTokenBudget = errors.New("read_project token budget exhausted")
 
 func (t *ReadProjectTool) Name() string { return "read_project" }
 func (t *ReadProjectTool) Description() string {
@@ -657,10 +663,11 @@ func (t *ReadProjectTool) Description() string {
 func (t *ReadProjectTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path":      {Type: "string", Description: "Root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (use '.' for entire workspace)", Required: true},
-			"max_files": {Type: "integer", Description: "Maximum number of files to read (default 50)", Required: false},
+			"path":       {Type: "string", Description: "Root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (use '.' for entire workspace)", Required: true},
+			"max_files":  {Type: "integer", Description: "Maximum number of files to read (default 50)", Required: false},
+			"max_tokens": {Type: "integer", Description: "Maximum estimated tokens to return across file contents (default 50000)", Required: false},
 		},
-		Output: ParamSpec{Type: "object", Description: "Map of file paths to their contents, plus file count and total size"},
+		Output: ParamSpec{Type: "object", Description: "Map of file paths to their contents, plus file count, byte size, and token budget metadata"},
 	}
 }
 
@@ -725,6 +732,13 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 	if mf, ok := input["max_files"].(float64); ok && mf > 0 {
 		maxFiles = int(mf)
 	}
+	maxTokens := t.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = DefaultReadProjectTokenBudget
+	}
+	if mt, ok := input["max_tokens"].(float64); ok && mt > 0 {
+		maxTokens = int(mt)
+	}
 
 	resolvedPath, err := FuzzyResolvePath(ToolPaths{WorkspaceRoot: t.WorkspaceRoot, AllowedPaths: t.AllowedPaths}, pathVal)
 	if err != nil {
@@ -738,7 +752,9 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 
 	var files []map[string]any
 	var totalSize int
+	var totalTokens int
 	var skippedCount int
+	var tokenBudgetExhausted bool
 
 	err = filepath.Walk(resolvedPath, func(walkPath string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
@@ -782,6 +798,21 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 			skippedCount++
 			return nil
 		}
+		content := string(data)
+		fileTokens := estimateReadProjectTokens(content)
+		truncatedForBudget := false
+		if totalTokens+fileTokens > maxTokens {
+			remainingTokens := maxTokens - totalTokens
+			if remainingTokens <= 0 {
+				skippedCount++
+				tokenBudgetExhausted = true
+				return errReadProjectTokenBudget
+			}
+			content = truncateReadProjectContent(content, remainingTokens)
+			fileTokens = estimateReadProjectTokens(content)
+			truncatedForBudget = true
+			tokenBudgetExhausted = true
+		}
 
 		// Get relative path from workspace root
 		relPath, err := filepath.Rel(resolvedPath, walkPath)
@@ -790,14 +821,23 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 		}
 
 		files = append(files, map[string]any{
-			"path":    relPath,
-			"content": string(data),
-			"size":    len(data),
+			"path":      relPath,
+			"content":   content,
+			"size":      len(content),
+			"tokens":    fileTokens,
+			"truncated": truncatedForBudget,
 		})
-		totalSize += len(data)
+		totalSize += len(content)
+		totalTokens += fileTokens
+		if tokenBudgetExhausted {
+			return errReadProjectTokenBudget
+		}
 
 		return nil
 	})
+	if errors.Is(err, errReadProjectTokenBudget) {
+		err = nil
+	}
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("walk failed: %v", err)}, nil
 	}
@@ -805,15 +845,36 @@ func (t *ReadProjectTool) Execute(ctx context.Context, input map[string]any) (To
 	return ToolResult{
 		Success: true,
 		Output: map[string]any{
-			"root":          pathVal,
-			"files":         files,
-			"file_count":    len(files),
-			"total_bytes":   totalSize,
-			"skipped_count": skippedCount,
-			"max_files":     maxFiles,
-			"truncated":     skippedCount > 0 || len(files) >= maxFiles,
+			"root":                   pathVal,
+			"files":                  files,
+			"file_count":             len(files),
+			"total_bytes":            totalSize,
+			"total_tokens":           totalTokens,
+			"skipped_count":          skippedCount,
+			"max_files":              maxFiles,
+			"max_tokens":             maxTokens,
+			"token_budget_exhausted": tokenBudgetExhausted,
+			"truncated":              skippedCount > 0 || len(files) >= maxFiles || tokenBudgetExhausted,
 		},
 	}, nil
+}
+
+func estimateReadProjectTokens(content string) int {
+	if content == "" {
+		return 0
+	}
+	return (len(content) + 3) / 4
+}
+
+func truncateReadProjectContent(content string, tokenBudget int) string {
+	if tokenBudget <= 0 {
+		return ""
+	}
+	maxChars := tokenBudget * 4
+	if len(content) <= maxChars {
+		return content
+	}
+	return content[:maxChars] + "\n[... truncated by read_project token budget ...]"
 }
 
 // RegisterBuiltins adds the built-in tools to a registry, using the given
