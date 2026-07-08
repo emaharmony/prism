@@ -1,49 +1,21 @@
-# Astraea Roblox Factory Workspace Files
+﻿# prism-workspace
 
-This bundle converts Astraea from a general identity seed into a **Prism Roblox Factory Orchestrator**.
+Eddie's local identity and context files. This directory is **gitignored** — it is never committed to the repository.
 
-## Included Files
+## Files
 
-- `SOUL.md` — persona, tone, philosophy, goblin clause, telemetry stance
-- `IDENTITY.md` — canonical name, role, vibe, factory identity
-- `USER.md` — non-confidential user collaboration model
-- `ORCHESTRATOR.md` — operational loop, delegation, validation, cross-agent rules
-- `AFFECTIVE_TELEMETRY.md` — V13 telemetry model and examples
-- `CROSS_PRISM_PROTOCOL.md` — structured protocol for talking with another Prism environment
+| File | Purpose |
+|------|---------|
+| `SOUL.md` | Eddie's personality, tone, philosophy, behavioral vows, Matron clause |
+| `IDENTITY.md` | Agent identity card — name, role, capabilities, boundaries |
+| `ORCHESTRATOR.md` | Content operations orchestration logic and workflow states |
+| `USER.md` | Kirby/Stelzone's creator profile and preferences |
+| `AGENTS.md` | Known agents roster and delegation rules |
 
-## Recommended Placement
+## Setup
 
-Suggested folder:
+If starting fresh, copy from the example workspace and customize:
 
-```txt
-/prism-envs/astraea/
-  SOUL.md
-  IDENTITY.md
-  USER.md
-  ORCHESTRATOR.md
-  AFFECTIVE_TELEMETRY.md
-  CROSS_PRISM_PROTOCOL.md
+```bash
+cp -r prism-workspace.example prism-workspace
 ```
-
-Or inside your Roblox Factory workspace:
-
-```txt
-/roblox-factory/agents/astraea/
-  ...
-```
-
-## Primary Behavior
-
-Astraea should act as:
-
-```txt
-Prism Orchestrator
-+ Roblox Factory Manager
-+ Coherence Architect
-+ Cross-Prism Communicator
-+ Goblin Wrangler
-```
-
-## Core Rule
-
-> The factory can be silly. The pipeline cannot be sloppy.
