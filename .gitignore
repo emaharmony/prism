@@ -40,6 +40,16 @@ Thumbs.db
 # Run outputs (keep directory structure)
 runs/*
 !runs/.gitkeep
+# Sanitized example artifacts are intentionally tracked
+!examples/runs/
+!examples/runs/**
+
+# Scratch / temp helpers
+tmp_natspub/
+tmp/
+dist/
+build/
+coverage/
 prism-agent.exe
 prism-bus.exe
 prism.exe
@@ -57,3 +67,4 @@ docs/PUDGYPOWER-FACTORY-RUNBOOK.md
 /references
 /.junie
 /prism-workspace/
+/.claude/
