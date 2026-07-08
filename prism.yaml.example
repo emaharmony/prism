@@ -316,6 +316,26 @@ agents:
   #     - review
   #     - summarize
 
+  # Optional single-shot invocation agent for external addons (e.g. Clippy,
+  # an OBS stream-clip-detection addon — see docs/V59-AGENT-INVOCATION-API-DESIGN.md).
+  # invocable_via_api opts this agent into POST /api/v1/agents/clippy/invoke,
+  # a minimal HTTP contract for out-of-process callers that don't import
+  # Prism's internal Go packages. Requires api.auth_token or
+  # api.auth_token_env to be set — see the `api:` block above. No agent is
+  # invocable via API by default; this must be explicitly enabled per agent.
+  # - id: clippy
+  #   role: stream-clip-judge
+  #   provider: anthropic
+  #   model: "claude-3-5-haiku-20241022"
+  #   invocable_via_api: true
+  #   conversation_postfix: >
+  #     You are Clippy, judging live-stream moments for clip-worthiness from
+  #     a compact signal summary (chat velocity, audio spike, a local vision
+  #     model's description). Respond ONLY with strict JSON: {"clip_worthy":
+  #     bool, "confidence": 0-1, "title": string, "reason": string}. Be
+  #     decisive and terse. Most spikes are noise — only flag genuinely
+  #     reactive, funny, skillful, or dramatic moments.
+
 channels:
   - type: discord
     token: "${DISCORD_BOT_TOKEN}"

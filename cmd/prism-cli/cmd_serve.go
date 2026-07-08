@@ -666,6 +666,7 @@ func executeServe(args []string) {
 		Tracker:            delegTracker,
 		AutoPatch:          autopatcher,
 		NATS:               natsConn,
+		Providers:          provReg,
 		AuthToken:          cfg.API.ResolveAuthToken(),
 		AllowedOrigins:     cfg.API.AllowedOrigins,
 		ConfigDir:          filepath.Dir(*configPath),
