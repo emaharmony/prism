@@ -122,3 +122,9 @@ treat them as preview/research rather than stable surface.
 4. Remembrance remains a separate HTTP/NATS service.
 5. Local development should work with a single Go binary, SQLite, and embedded NATS in serve mode.
 6. Historical version docs are snapshots; living docs track current source behavior.
+
+## See Also
+
+- [Version History](VERSION_HISTORY.md)
+- [Capability Status](CAPABILITY_STATUS.md)
+- [Documentation Hub](README.md)

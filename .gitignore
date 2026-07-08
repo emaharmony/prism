@@ -47,26 +47,37 @@ runs/*
 # Scratch / temp helpers
 tmp_natspub/
 tmp/
+.tmp/
 dist/
 build/
 coverage/
-prism-agent.exe
-prism-bus.exe
-prism.exe
 /prism-panel
-/prism-panel.exe
 .prism/
 
 # Local config (contains secrets)
 prism.yaml
-prism.exe
 
 # Workspace — local state, never shipped
 prism-workspace/
 docs/PUDGYPOWER-FACTORY-RUNBOOK.md
-/.codex
 /campaign
 /references
-/.junie
-/prism-workspace/
+
+# AI assistant tooling — local state, chat history, and caches (not project source).
+# NOTE: CLAUDE.md, AGENTS.md, .cursorrules, and .github/copilot-instructions.md are
+# deliberately NOT ignored — those are commonly committed on purpose.
 /.claude/
+/.codex/
+/.junie/
+/.gemini/
+.cursor/
+.aider*
+.specstory/
+.continue/
+.windsurf/
+.cline/
+.roo/
+.serena/
+.codeium/
+# Remove the next line if your team commits a shared MCP config:
+.mcp.json

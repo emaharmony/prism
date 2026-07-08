@@ -6,7 +6,7 @@
 // The package is transport- and execution-agnostic: NATS wiring and the real
 // agent runner are injected as interfaces, so the core logic (resolve → run →
 // report, with fail-closed error/timeout handling) is unit-testable in
-// isolation. See docs/V58-FULL-AUTONOMY-DESIGN.md.
+// isolation. See docs/design/V58-FULL-AUTONOMY-DESIGN.md.
 package subagent
 
 import (

@@ -294,7 +294,7 @@ Serve and chat modes register read, project, git, state, and plan tools. Read-on
 
 ### Verified Gated Loop
 
-The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT`) enforces objective build/test verification in EXECUTION: after the model commits, Prism runs an allowlisted V5 validation profile (e.g. `go_test_all` → `go test ./...`). With `blocking: true` the phase cannot complete until it passes — the failing output is fed back so the model fixes the real problem and re-commits. The model can also call the `run_validation` tool to self-check before committing. The loop is bounded by run budgets (`max_total_time`, `max_total_tokens`; `-1` explicitly means unlimited, `0` uses the default token ceiling) and stuck-loop detection (`max_repeated_tool_calls`), each emitting an event and stopping gracefully. Configure it per phase under `verification` (see [docs/V35-VERIFICATION-GATE-DESIGN.md](./docs/V35-VERIFICATION-GATE-DESIGN.md)).
+The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT`) enforces objective build/test verification in EXECUTION: after the model commits, Prism runs an allowlisted V5 validation profile (e.g. `go_test_all` → `go test ./...`). With `blocking: true` the phase cannot complete until it passes — the failing output is fed back so the model fixes the real problem and re-commits. The model can also call the `run_validation` tool to self-check before committing. The loop is bounded by run budgets (`max_total_time`, `max_total_tokens`; `-1` explicitly means unlimited, `0` uses the default token ceiling) and stuck-loop detection (`max_repeated_tool_calls`), each emitting an event and stopping gracefully. Configure it per phase under `verification` (see [docs/design/V35-VERIFICATION-GATE-DESIGN.md](./docs/design/V35-VERIFICATION-GATE-DESIGN.md)).
 
 ### Scout Sub-Agent
 
@@ -302,11 +302,11 @@ A lightweight local model (e.g. qwen3:8b, gemma3:4b) gathers codebase context be
 
 ### Cross-Prism and Factory Handoff
 
-The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/CROSS-PRISM-FACTORY-SETUP.md](./docs/CROSS-PRISM-FACTORY-SETUP.md).
+The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/design/CROSS-PRISM-FACTORY-SETUP.md](./docs/design/CROSS-PRISM-FACTORY-SETUP.md).
 
 ### Roblox Game-Dev Team
 
-A multi-agent studio (orchestrator, researcher, game planner, Factory master, asset maker) that designs and builds Roblox games — with native reference-image tools, a Blender-MCP asset pipeline, and a cross-Prism rubric handshake. See [docs/ROBLOX-TEAM.md](./docs/ROBLOX-TEAM.md).
+A multi-agent studio (orchestrator, researcher, game planner, Factory master, asset maker) that designs and builds Roblox games — with native reference-image tools, a Blender-MCP asset pipeline, and a cross-Prism rubric handshake. See [docs/design/ROBLOX-TEAM.md](./docs/design/ROBLOX-TEAM.md).
 
 ### Codex Subscription Worker
 
@@ -956,7 +956,7 @@ configuration aligned; a clear golden-path demo; repo hygiene; and hardening the
 experimental sub-agent worker, idle-guard optimization, and cross-Prism/Factory
 handoff.
 
-See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/TASKS.md](./docs/TASKS.md).
+See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/design/TASKS.md](./docs/design/TASKS.md).
 
 ---
 
