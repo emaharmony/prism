@@ -232,7 +232,7 @@ func synthesize(ctx context.Context, cfg Config, ev Evidence) (string, error) {
 }
 
 func readKeyFiles(root string) map[string]string {
-	names := []string{"README.md", "go.mod", "Makefile", "Dockerfile", "docker-compose.yaml", "prism.yaml", "prism.yaml.example", "docs/TASKS.md", "docs/ROADMAP.md", "remembrance/README.md", "remembrance/pyproject.toml"}
+	names := []string{"README.md", "go.mod", "Makefile", "Dockerfile", "docker-compose.yaml", "prism.yaml", "prism.yaml.example", "docs/design/TASKS.md", "docs/ROADMAP.md", "remembrance/README.md", "remembrance/pyproject.toml"}
 	out := make(map[string]string)
 	for _, name := range names {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))

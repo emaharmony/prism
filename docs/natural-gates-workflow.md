@@ -1,7 +1,6 @@
 # Natural Gates Workflow System (V2)
 
 > **Status:** Phase 1-6 Complete
-> **Design:** [docs/natural-gates-workflow-design.json](../../docs/natural-gates-workflow-design.json)
 > **Designed by:** Mango
 > **Implemented by:** Lumi
 
@@ -95,7 +94,7 @@ Tasks in PROJECT_STATE.md can have risk levels:
 - All assumptions, confidence, delegations, and feedback preserved
 
 ## Configuration
-Default config: [examples/workflows/natural-gates-default.yaml](../../examples/workflows/natural-gates-default.yaml)
+Default config: [examples/workflows/natural-gates-default.yaml](../examples/workflows/natural-gates-default.yaml)
 
 ```yaml
 phases:
@@ -129,3 +128,9 @@ Per Ema's requirement, Mango is involved in every fix:
 - Mango is a required reviewer in FEEDBACK_POST (hardcoded)
 - If Mango finds issues, Mango reviews the fixes
 - Mango is involved end-to-end in the fix cycle
+
+## See Also
+
+- [Architecture](ARCHITECTURE.md)
+- [Version History](VERSION_HISTORY.md)
+- [Documentation Hub](README.md)

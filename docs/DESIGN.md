@@ -359,3 +359,9 @@ All existing `prism.*` events continue to work. Per-agent namespaces are dynamic
 
 - `lumi.agent.output` with `correlation_id: X` is also published as `prism.agent.output` with the same correlation ID
 - This means existing V1–V19 code (cost tracking, policy, projections) continues to work without modification
+
+## See Also
+
+- [Architecture](ARCHITECTURE.md)
+- [Version History](VERSION_HISTORY.md)
+- [Documentation Hub](README.md)

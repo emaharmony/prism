@@ -128,7 +128,7 @@ Remembrance captures agent output, extracts useful facts, and builds context for
 
 ### Cross-Prism and Factory
 
-The bridge handles signed cross-Prism subjects. The optional Factory handoff writes validated task requests into a Roblox Factory queue. See [CROSS-PRISM-FACTORY-SETUP.md](./CROSS-PRISM-FACTORY-SETUP.md).
+The bridge handles signed cross-Prism subjects. The optional Factory handoff writes validated task requests into a Roblox Factory queue. See [CROSS-PRISM-FACTORY-SETUP.md](./design/CROSS-PRISM-FACTORY-SETUP.md).
 
 ---
 
@@ -193,17 +193,23 @@ Serve mode exposes these route groups:
 
 ## Architecture Evolution
 
-See [ROADMAP.md](./ROADMAP.md) for current status and [TASKS.md](./TASKS.md) for the active tracker.
+See [ROADMAP.md](./ROADMAP.md) for current status and [TASKS.md](./design/TASKS.md) for the active tracker.
 
 Recent source-backed milestones after V26:
 
 | Version | What | Design Doc |
 |---------|------|------------|
-| V27 | Serve-mode tool executor | [V27](./V27-SERVE-TOOL-EXECUTOR-DESIGN.md) |
-| V28 | Project and git tools | [V28](./V28-PROJECT-GIT-TOOLS-DESIGN.md) |
-| V29 | Tool guidance and session awareness | [V29](./V29-TOOL-GUIDANCE-SESSION-AWARENESS-DESIGN.md) |
-| V30 | Native Ollama tool calling | [V30](./V30-NATIVE-TOOL-CALLING-DESIGN.md) |
-| V31 | Native chat streaming gap | [V31](./V31-CHAT-STREAMING-GAP.md) |
-| V32 | Operating environment | [V32](./V32-LUMI-OPERATING-ENVIRONMENT.md) |
-| V33 | Conversation awareness | [V33](./V33-CONVERSATION-AWARENESS.md) |
-| V34 | OpenAI Responses provider | [V34](./V34-OPENAI-RESPONSES-DESIGN.md) |
+| V27 | Serve-mode tool executor | [V27](./design/V27-SERVE-TOOL-EXECUTOR-DESIGN.md) |
+| V28 | Project and git tools | [V28](./design/V28-PROJECT-GIT-TOOLS-DESIGN.md) |
+| V29 | Tool guidance and session awareness | [V29](./design/V29-TOOL-GUIDANCE-SESSION-AWARENESS-DESIGN.md) |
+| V30 | Native Ollama tool calling | [V30](./design/V30-NATIVE-TOOL-CALLING-DESIGN.md) |
+| V31 | Native chat streaming gap | [V31](./design/V31-CHAT-STREAMING-GAP.md) |
+| V32 | Operating environment | [V32](./design/V32-LUMI-OPERATING-ENVIRONMENT.md) |
+| V33 | Conversation awareness | [V33](./design/V33-CONVERSATION-AWARENESS.md) |
+| V34 | OpenAI Responses provider | [V34](./design/V34-OPENAI-RESPONSES-DESIGN.md) |
+
+## See Also
+
+- [Getting Started](GETTING_STARTED.md)
+- [Architecture](ARCHITECTURE.md)
+- [Documentation Hub](README.md)

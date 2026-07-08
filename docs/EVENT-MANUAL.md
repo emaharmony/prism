@@ -434,3 +434,8 @@ Or use the CLI:
 prism db export <run_id>   # SQLite → JSONL
 prism db query --type "prism.approval.*" --limit 50
 ```
+
+## See Also
+
+- [Architecture](ARCHITECTURE.md)
+- [Documentation Hub](README.md)
