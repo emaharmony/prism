@@ -5,6 +5,8 @@
 //	GET /api/v1/status          — System status
 //	GET /api/v1/agents           — List agents
 //	GET /api/v1/agents/{id}      — Agent detail
+//	POST /api/v1/agents/{id}/invoke — Single-shot agent invocation (requires agent opt-in)
+//	GET /api/v1/agents/{id}/invocations/{invocation_id} — Poll invocation result
 //	GET /api/v1/sessions          — List sessions
 //	GET /api/v1/sessions/{id}    — Session detail
 //	GET /api/v1/tasks             — List tasks
@@ -51,10 +53,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emaharmony/prism/internal/agentns"
 	"github.com/emaharmony/prism/internal/autopatch"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/editor"
+	"github.com/emaharmony/prism/internal/invocation"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/workflow"
@@ -72,11 +77,13 @@ type Server struct {
 	engine    *delegation.Engine
 	approval  *delegation.ApprovalManager
 	tracker   *delegation.Tracker
-	autopatch AutoPatchStarter
-	nc        *nats.Conn
-	mux       *http.ServeMux
-	editorMu  sync.RWMutex
-	editorWS  *editor.EditorState
+	autopatch   AutoPatchStarter
+	nc          *nats.Conn
+	mux         *http.ServeMux
+	editorMu    sync.RWMutex
+	editorWS    *editor.EditorState
+	providers   *provider.ProviderRegistry
+	invocations *invocation.Store
 
 	// authToken, when non-empty, is the bearer token required on
 	// state-changing endpoints and the SSE stream. Empty disables auth
@@ -117,6 +124,10 @@ type Config struct {
 	Tracker   *delegation.Tracker
 	AutoPatch AutoPatchStarter
 	NATS      *nats.Conn
+	// Providers resolves an agent's configured model to an LLM provider for
+	// single-shot invocations (POST /api/v1/agents/{id}/invoke). Nil disables
+	// the invocation endpoints (503).
+	Providers *provider.ProviderRegistry
 
 	// AuthToken is the bearer token required on mutating endpoints + SSE.
 	AuthToken string
@@ -159,6 +170,8 @@ func NewServer(cfg Config) *Server {
 		configPath:         cfg.ConfigPath,
 		schedulerActions:   cfg.SchedulerActions,
 		staticUI:           cfg.StaticUI,
+		providers:          cfg.Providers,
+		invocations:        invocation.NewStore(),
 		mux:                http.NewServeMux(),
 	}
 	s.routes()
@@ -364,15 +377,31 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.orch.Config.Agents)
 }
 
+// handleAgentDetail dispatches everything under /api/v1/agents/{id}...:
+// plain agent detail, single-shot invocation, and invocation polling.
 func (s *Server) handleAgentDetail(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/agents/")
+	if rest == "" {
+		http.Error(w, "agent id required", http.StatusBadRequest)
 		return
 	}
+	parts := strings.Split(rest, "/")
 
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/agents/")
-	if id == "" {
-		http.Error(w, "agent id required", http.StatusBadRequest)
+	switch {
+	case len(parts) == 1:
+		s.handleAgentGet(w, r, parts[0])
+	case len(parts) == 2 && parts[1] == "invoke":
+		s.handleAgentInvoke(w, r, parts[0])
+	case len(parts) == 3 && parts[1] == "invocations" && parts[2] != "":
+		s.handleAgentInvocationDetail(w, r, parts[0], parts[2])
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+func (s *Server) handleAgentGet(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -388,6 +417,149 @@ func (s *Server) handleAgentDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, agent)
+}
+
+// --- Agent Invocation API ---
+//
+// A minimal, general "ask one configured agent one question, get a
+// structured result" primitive for external processes (addons) that can't
+// or shouldn't import Prism's internal Go packages. See internal/invocation
+// for the rationale and the single-shot call shape (no session, no tool
+// loop — just a resolved provider/model, one prompt in, one result out).
+
+type invokeRequest struct {
+	Prompt    string         `json:"prompt"`
+	MaxTokens int            `json:"max_tokens,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+func (s *Server) handleAgentInvoke(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.orch == nil {
+		writeJSONError(w, "orchestrator not available", http.StatusServiceUnavailable)
+		return
+	}
+	if s.providers == nil {
+		writeJSONError(w, "invocation is not configured on this server", http.StatusServiceUnavailable)
+		return
+	}
+
+	agentCfg, err := s.orch.GetAgent(agentID)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if !agentCfg.InvocableViaAPI {
+		writeJSONError(w, fmt.Sprintf("agent %q is not invocable via API", agentID), http.StatusForbidden)
+		return
+	}
+
+	var req invokeRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := invocation.ValidateRequest(req.Prompt); err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = invocation.DefaultMaxTokens
+	}
+
+	inv := s.invocations.Create(agentID)
+	go s.runInvocation(*agentCfg, inv.ID, req.Prompt, maxTokens)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	if err := json.NewEncoder(w).Encode(inv); err != nil {
+		log.Printf("[API] json encode error: %v", err)
+	}
+}
+
+// runInvocation performs the actual LLM call in the background and records
+// the outcome. Deliberately the lightest-weight LLM call path in the
+// codebase: no session, no tool loop, no approval gate — just a resolved
+// provider/model, mirroring how wake_handler.go makes its own one-off calls.
+func (s *Server) runInvocation(agentCfg orchestrator.AgentConfig, invocationID, prompt string, maxTokens int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	chatProv, err := s.providers.GetChatProvider(agentCfg.Model)
+	if err != nil {
+		s.invocations.Fail(invocationID, err.Error())
+		s.publishInvocationEvent(agentCfg.ID, invocationID, invocation.StatusFailed, nil, err.Error())
+		return
+	}
+
+	messages := make([]provider.ChatMessage, 0, 2)
+	if agentCfg.ConversationPostfix != "" {
+		messages = append(messages, provider.ChatMessage{Role: "system", Content: agentCfg.ConversationPostfix})
+	}
+	messages = append(messages, provider.ChatMessage{Role: "user", Content: prompt})
+
+	resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
+		RunID:     "invoke-" + invocationID,
+		Agent:     agentCfg.ID,
+		Model:     agentCfg.Model,
+		Messages:  messages,
+		MaxTokens: maxTokens,
+	})
+	if err != nil {
+		s.invocations.Fail(invocationID, err.Error())
+		s.publishInvocationEvent(agentCfg.ID, invocationID, invocation.StatusFailed, nil, err.Error())
+		return
+	}
+
+	result := invocation.ParseResult(resp.Content)
+	s.invocations.Complete(invocationID, result)
+	s.publishInvocationEvent(agentCfg.ID, invocationID, invocation.StatusCompleted, result, "")
+}
+
+// publishInvocationEvent re-broadcasts completion on <agent-id>.invocation.completed
+// so external callers can watch GET /api/v1/events/stream?subject=<agent-id>.invocation.>
+// instead of polling — no new streaming code needed, the SSE endpoint is
+// already a generic NATS bridge.
+func (s *Server) publishInvocationEvent(agentID, invocationID string, status invocation.Status, result map[string]any, errMsg string) {
+	if s.nc == nil {
+		return
+	}
+	payload := map[string]any{
+		"invocation_id": invocationID,
+		"status":        status,
+	}
+	if result != nil {
+		payload["result"] = result
+	}
+	if errMsg != "" {
+		payload["error"] = errMsg
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[API] marshal invocation event failed: %v", err)
+		return
+	}
+	subject := agentns.New(agentID).EventType("invocation.completed")
+	if err := s.nc.Publish(subject, data); err != nil {
+		log.Printf("[API] publish invocation event failed: %v", err)
+	}
+}
+
+func (s *Server) handleAgentInvocationDetail(w http.ResponseWriter, r *http.Request, agentID, invocationID string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	inv, ok := s.invocations.Get(invocationID)
+	if !ok || inv.AgentID != agentID {
+		writeJSONError(w, "invocation not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, inv)
 }
 
 // --- Sessions ---

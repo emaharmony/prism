@@ -372,6 +372,12 @@ type AgentConfig struct {
 	// The "inject" field is appended to the system prompt after conversation_postfix
 	// but before tool instructions.
 	StateActions map[string]StateAction `yaml:"state_actions"`
+
+	// InvocableViaAPI allows this agent to be called by external processes
+	// through POST /api/v1/agents/{id}/invoke. Defaults to false — an agent
+	// must opt in explicitly, since this is a new network-reachable surface
+	// that lets any caller with API access trigger a real (billed) LLM call.
+	InvocableViaAPI bool `yaml:"invocable_via_api"`
 }
 
 // ProjectConfig describes an assignable project the gated loop can work on.
