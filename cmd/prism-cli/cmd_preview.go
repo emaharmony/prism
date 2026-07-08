@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/tracker"
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 )
 
@@ -60,12 +61,12 @@ func renderWorkflowPreview(cfg *v2.WorkflowConfig, source string) string {
 		fmt.Fprintf(&b, "  max time:        %s\n", cfg.Global.MaxTotalTime)
 	}
 	maxTokens := cfg.Global.MaxTotalTokens
-	tokLabel := humanInt(maxTokens)
+	tokLabel := tracker.HumanInt(maxTokens)
 	switch {
 	case maxTokens == v2.UnlimitedTokens:
 		tokLabel = "unlimited"
 	case maxTokens <= 0:
-		tokLabel = humanInt(v2.DefaultRunTokenCeiling)
+		tokLabel = tracker.HumanInt(v2.DefaultRunTokenCeiling)
 	}
 	fmt.Fprintf(&b, "  max tokens:      %s\n", tokLabel)
 	repeat := cfg.Global.MaxRepeatedToolCalls

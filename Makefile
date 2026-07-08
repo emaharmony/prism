@@ -1,4 +1,4 @@
-.PHONY: dev test build build-all lint clean
+.PHONY: dev test build build-all build-panel lint clean
 
 # Development
 dev:                           ## Run in development mode
@@ -26,6 +26,10 @@ build-all:                     ## Cross-compile for all platforms
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o prism-windows-amd64.exe ./cmd/prism-cli/
 	@echo "Built: prism-linux-amd64, prism-darwin-arm64, prism-windows-amd64.exe"
 
+build-panel:                   ## Build the desktop pet panel (own module; needs cgo + a C compiler)
+	cd cmd/prism-panel && CGO_ENABLED=1 go build -o ../../prism-panel .
+	@echo "Built: prism-panel (run alongside \`prism serve\`)"
+
 # Linting
 lint:                          ## Run linters
 	go vet ./...
@@ -49,5 +53,5 @@ docker-stop:                   ## Stop Docker containers
 
 # Clean
 clean:                         ## Remove build artifacts
-	rm -f prism prism-linux-amd64 prism-darwin-arm64 prism-windows-amd64.exe coverage.out coverage.html
+	rm -f prism prism-linux-amd64 prism-darwin-arm64 prism-windows-amd64.exe prism-panel prism-panel.exe coverage.out coverage.html
 	go clean ./...

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emaharmony/prism/internal/tracker"
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 )
 
@@ -184,7 +185,7 @@ func formatRunStateSummary(st *v2.WorkflowState) string {
 		fmt.Fprintf(&b, "started: %s\n", st.StartedAt)
 	}
 	fmt.Fprintf(&b, "tokens:  %s (prompt %s / completion %s)\n",
-		humanInt(st.TotalPromptTokens+st.TotalCompletionTokens), humanInt(st.TotalPromptTokens), humanInt(st.TotalCompletionTokens))
+		tracker.HumanInt(st.TotalPromptTokens+st.TotalCompletionTokens), tracker.HumanInt(st.TotalPromptTokens), tracker.HumanInt(st.TotalCompletionTokens))
 
 	if v := st.Verification; v != nil {
 		status := "passed"
