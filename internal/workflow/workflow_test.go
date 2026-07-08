@@ -178,6 +178,48 @@ steps:
 	}
 }
 
+func TestRegistryLoadFromDirSkipsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	valid := []byte(`
+name: demo.echo_tool
+description: Demo
+version: 1
+steps:
+  - id: echo
+    type: tool.execute
+    tool: echo
+`)
+	invalid := []byte(`
+name: demo.delegate
+description: Uses an unsupported step type
+version: 1
+steps:
+  - id: plan
+    type: delegate
+    agent: planner
+`)
+	// "a-invalid.yaml" sorts before "b-valid.yaml" so we prove that a bad file
+	// early in the directory does not stop later valid files from loading.
+	if err := os.WriteFile(filepath.Join(dir, "a-invalid.yaml"), invalid, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b-valid.yaml"), valid, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := NewRegistry()
+	loaded, err := reg.LoadFromDir(dir)
+	if err == nil {
+		t.Error("expected a non-nil error describing the skipped invalid file")
+	}
+	if loaded != 1 {
+		t.Errorf("loaded = %d, want 1", loaded)
+	}
+	if _, resolveErr := reg.Resolve("demo.echo_tool"); resolveErr != nil {
+		t.Errorf("valid workflow should still load despite invalid sibling: %v", resolveErr)
+	}
+}
+
 // ── Condition Tests ─────────────────────────────────────────────────────────
 
 func TestEvaluateConditionEqualString(t *testing.T) {
