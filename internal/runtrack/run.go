@@ -22,6 +22,9 @@ import (
 // DefaultTimeout is the maximum duration for a single LLM call.
 const DefaultTimeout = 20 * time.Minute
 
+// DefaultMaxTokens is the default response token cap for a single tracked LLM call.
+const DefaultMaxTokens = 4096
+
 // Run represents a single LLM invocation within a conversation.
 type Run struct {
 	ID        string
@@ -111,7 +114,7 @@ func NewRun(agentID, sessionID, model, provider string) *Run {
 		SessionID: sessionID,
 		StartedAt: now,
 		Deadline:  now.Add(DefaultTimeout),
-		MaxTokens: 0, // 0 = unlimited (V21: enforce budget)
+		MaxTokens: DefaultMaxTokens,
 		Model:     model,
 		Provider:  provider,
 		Cancel:    cancel,
@@ -127,7 +130,7 @@ func NewRunWithContext(ctx context.Context, agentID, sessionID, model, provider 
 		SessionID: sessionID,
 		StartedAt: now,
 		Deadline:  now.Add(DefaultTimeout),
-		MaxTokens: 0,
+		MaxTokens: DefaultMaxTokens,
 		Model:     model,
 		Provider:  provider,
 		Cancel:    func() {},

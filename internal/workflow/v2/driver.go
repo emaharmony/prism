@@ -779,7 +779,8 @@ func toolSignature(req *ToolRequest) string {
 // token ceiling. Both are soft stops: the loop finalizes gracefully (after emitting
 // workflow.budget_exhausted) rather than running unbounded — the safeguard an
 // autonomous loop needs so a stuck or expensive run can't burn time or tokens
-// without limit. A zero deadline or zero MaxTotalTokens disables that dimension.
+// without limit. A zero deadline disables the time dimension; zero MaxTotalTokens
+// is normalized to the default cap when engines are constructed.
 func (e *Engine) budgetExceeded(deadline time.Time) string {
 	if !deadline.IsZero() && time.Now().After(deadline) {
 		return fmt.Sprintf("max_total_time exceeded (%s)", e.config.Global.MaxTotalTime)

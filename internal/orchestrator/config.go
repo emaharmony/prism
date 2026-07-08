@@ -398,6 +398,10 @@ type ProjectConfig struct {
 	// this project (path to a gated-loop YAML/JSON file).
 	WorkflowConfig string `yaml:"workflow_config"`
 
+	// TokenBudget optionally overrides the workflow's global max_total_tokens for
+	// this project. Zero uses the workflow/default cap.
+	TokenBudget int `yaml:"token_budget"`
+
 	// Orchestrator optionally names the agent ID whose model drives this
 	// project's gated loop. Empty falls back to the primary agent. Use this to
 	// point a project at a Claude Code (subscription) brain, e.g. an agent with
@@ -916,6 +920,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Remembrance.TimeoutSeconds < 0 {
 		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
+	}
+	for i, p := range c.Projects {
+		if p.TokenBudget < 0 {
+			return fmt.Errorf("config: projects[%d].token_budget must be >= 0", i)
+		}
 	}
 	if c.Codex.Enabled {
 		if c.Codex.Workspace == "" {

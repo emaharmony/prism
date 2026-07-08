@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/emaharmony/prism/internal/orchestrator"
 )
 
 func TestFormatPRList_Empty(t *testing.T) {
@@ -137,4 +139,12 @@ func containsStr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoadWorkflowConfigAppliesProjectTokenBudget(t *testing.T) {
+	wh := &WakeHandler{cfg: orchestrator.DefaultConfig()}
+	cfg := wh.loadWorkflowConfig(&orchestrator.ProjectConfig{ID: "example", TokenBudget: 12345})
+	if cfg.Global.MaxTotalTokens != 12345 {
+		t.Fatalf("MaxTotalTokens = %d, want 12345", cfg.Global.MaxTotalTokens)
+	}
 }

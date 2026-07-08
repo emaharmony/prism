@@ -241,6 +241,7 @@ projects:
     default_branch: "main"                 # protected branch (writes blocked here)
     channel: ""                            # messaging channel for results/feedback
     workflow_config: ""                    # optional per-project workflow override
+    token_budget: 2000000                   # optional per-project run token cap; 0 = workflow/default
     orchestrator: ""                       # optional agent ID to drive this project's
                                            # gated loop (e.g. "claude_code"); empty = primary agent
     worktree_isolation: false              # V56: run each gated loop in its own git worktree

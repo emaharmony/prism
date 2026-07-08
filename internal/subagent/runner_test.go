@@ -141,6 +141,17 @@ func TestLoopRunner_TokenBudgetExceeded(t *testing.T) {
 		t.Fatalf("expected token-budget error, got %v", err)
 	}
 }
+func TestLoopRunner_DefaultTokenBudget(t *testing.T) {
+	r := NewLoopRunner(LoopRunnerConfig{Backend: &scriptBackend{}})
+	if r.maxTokens != DefaultMaxTokens {
+		t.Fatalf("default maxTokens = %d, want %d", r.maxTokens, DefaultMaxTokens)
+	}
+
+	r = NewLoopRunner(LoopRunnerConfig{Backend: &scriptBackend{}, MaxTokens: 123})
+	if r.maxTokens != 123 {
+		t.Fatalf("explicit maxTokens = %d, want 123", r.maxTokens)
+	}
+}
 
 func TestLoopRunner_BindError(t *testing.T) {
 	r := NewLoopRunner(LoopRunnerConfig{Backend: bindErrBackend{}})

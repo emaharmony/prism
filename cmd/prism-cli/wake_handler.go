@@ -2134,13 +2134,22 @@ func (wh *WakeHandler) loadWorkflowConfig(project *orchestrator.ProjectConfig) *
 	}
 	for _, p := range paths {
 		if cfg, err := v2.LoadConfig(p); err == nil {
+			cfg = applyProjectTokenBudget(cfg, project)
 			log.Printf("[GATED-LOOP] loaded workflow config %s (%d phases)", p, len(cfg.Phases))
 			return cfg
 		} else {
 			log.Printf("[GATED-LOOP] WARN could not load workflow config %s: %v", p, err)
 		}
 	}
-	return v2.DefaultConfig()
+	return applyProjectTokenBudget(v2.DefaultConfig(), project)
+}
+
+func applyProjectTokenBudget(cfg *v2.WorkflowConfig, project *orchestrator.ProjectConfig) *v2.WorkflowConfig {
+	v2.NormalizeTokenBudgets(cfg)
+	if cfg != nil && project != nil && project.TokenBudget > 0 {
+		cfg.Global.MaxTotalTokens = project.TokenBudget
+	}
+	return cfg
 }
 
 // runNaturalGatesWorkflow is the scheduled entry point: resolve the default
