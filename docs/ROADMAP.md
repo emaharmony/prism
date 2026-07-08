@@ -79,6 +79,41 @@
 
 ---
 
+## Current Public Preview Focus
+
+- Stabilization and runtime/docs/config alignment.
+- A clear golden-path demo (echo workflow → events → artifacts).
+- Repo hygiene (no tracked IDE/generated artifacts or local workspace state).
+- Consistent status and capability claims (stable vs experimental).
+- Security hardening around secrets and run artifacts.
+
+---
+
+## Experimental Areas
+
+These are implemented but opt-in and disabled by default. Expect rough edges;
+treat them as preview/research rather than stable surface.
+
+- Self-patching / autopatch (`propose` and `pr` modes) — guarded.
+- MCP client (external tool servers).
+- Cross-Prism bridge and Roblox Factory handoff.
+- Sub-agent workers and multi-agent delegation.
+- Remembrance memory integration.
+- Scheduler / serve-mode and visual workflow editor extras.
+- External provider integrations (OpenAI, Anthropic, Gemini, Claude Code, Codex).
+
+---
+
+## Planned Next
+
+- Release tagging (e.g. `v0.1.0-public-preview`).
+- Hardened, sanitized examples and sample runs.
+- Dashboard screenshots / visual proof.
+- Additional adapter samples.
+- Packaged CLI builds.
+
+---
+
 ## Key Decisions
 
 1. Events remain the source of truth.

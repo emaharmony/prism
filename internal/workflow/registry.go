@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,7 +55,12 @@ func (r *Registry) Resolve(name string) (*Workflow, error) {
 }
 
 // LoadFromDir loads all workflow YAML files from a directory into the registry.
-// Returns the number of workflows loaded and any errors encountered.
+// Returns the number of workflows successfully loaded and a joined error
+// describing any files that could not be loaded.
+//
+// Loading is resilient: a single malformed or unsupported workflow file does
+// not stop the others from loading. This keeps valid workflows (such as the
+// demo echo workflow) available even when an experimental example is present.
 func (r *Registry) LoadFromDir(dir string) (int, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -62,6 +68,7 @@ func (r *Registry) LoadFromDir(dir string) (int, error) {
 	}
 
 	loaded := 0
+	var errs []error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -74,19 +81,22 @@ func (r *Registry) LoadFromDir(dir string) (int, error) {
 		path := filepath.Join(dir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return loaded, fmt.Errorf("workflow: failed to read %q: %w", path, err)
+			errs = append(errs, fmt.Errorf("workflow: failed to read %q: %w", path, err))
+			continue
 		}
 
 		w, err := LoadFromYAML(data)
 		if err != nil {
-			return loaded, fmt.Errorf("workflow: failed to parse %q: %w", path, err)
+			errs = append(errs, fmt.Errorf("workflow: failed to parse %q: %w", path, err))
+			continue
 		}
 
 		if err := r.Register(w); err != nil {
-			return loaded, fmt.Errorf("workflow: failed to register %q from %q: %w", w.Name, path, err)
+			errs = append(errs, fmt.Errorf("workflow: failed to register %q from %q: %w", w.Name, path, err))
+			continue
 		}
 		loaded++
 	}
 
-	return loaded, nil
+	return loaded, errors.Join(errs...)
 }
