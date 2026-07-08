@@ -101,6 +101,85 @@ func (r *chatRateLimit) Allow() bool {
 	return true
 }
 
+// thinkingSpinner shows an animated "Thinking..." indicator on the terminal
+// while the agent is working. It runs in its own goroutine and redraws the
+// same line via a carriage return; Stop halts it and clears the line.
+type thinkingSpinner struct {
+	stop chan struct{}
+	done chan struct{}
+}
+
+// startThinkingSpinner begins an animated "Thinking..." indicator and returns a
+// handle used to stop it. Frames cycle the trailing dots so the user gets live
+// feedback that the model is processing (which can take a while for local models).
+func startThinkingSpinner() *thinkingSpinner {
+	s := &thinkingSpinner{
+		stop: make(chan struct{}),
+		done: make(chan struct{}),
+	}
+	go func() {
+		defer close(s.done)
+		frames := []string{"Thinking.  ", "Thinking.. ", "Thinking..."}
+		i := 0
+		fmt.Print("\r" + frames[0])
+		ticker := time.NewTicker(400 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.stop:
+				return
+			case <-ticker.C:
+				i = (i + 1) % len(frames)
+				fmt.Print("\r" + frames[i])
+			}
+		}
+	}()
+	return s
+}
+
+// Stop halts the spinner goroutine and clears the indicator line so the next
+// output (a response, tool activity, or an error) starts on a clean line.
+func (s *thinkingSpinner) Stop() {
+	close(s.stop)
+	<-s.done
+	clearThinkingLine()
+}
+
+// clearThinkingLine erases the current terminal line. It is used both to wipe
+// the animated "Thinking..." indicator and to keep tool-activity lines from
+// merging with an in-flight spinner frame.
+func clearThinkingLine() {
+	fmt.Print("\r" + strings.Repeat(" ", 12) + "\r")
+}
+
+// isModelBackendCrash reports whether err came from the local model backend
+// (Ollama's llama-server) crashing — typically a GPU/CUDA initialization
+// failure rather than a problem in Prism itself.
+func isModelBackendCrash(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "llama-server process has terminated") ||
+		strings.Contains(msg, "CUDA error") ||
+		strings.Contains(msg, "shared object initialization failed")
+}
+
+// modelBackendCrashHint returns an actionable message for a local model backend
+// crash, pointing the user at the GPU/CUDA cause instead of a raw HTTP 500.
+func modelBackendCrashHint(agentCfg *orchestrator.AgentConfig) string {
+	return fmt.Sprintf(
+		"⚠️  The local model backend crashed while loading %q.\n"+
+			"   This is a GPU/CUDA failure inside Ollama, not a Prism bug.\n"+
+			"   Try, in order:\n"+
+			"     1. Confirm it happens outside Prism: ollama run %s \"hi\"\n"+
+			"     2. Update your NVIDIA driver and Ollama, then restart Ollama.\n"+
+			"     3. Run on CPU to rule out the GPU: set OLLAMA_NO_GPU=1 (or CUDA_VISIBLE_DEVICES=\"\") and restart Ollama.\n"+
+			"     4. Lower the context/VRAM use (e.g. OLLAMA_CONTEXT_LENGTH=8192) and retry.\n",
+		agentCfg.Model, agentCfg.Model,
+	)
+}
+
 func executeChat(args []string) {
 	chatCmd := flag.NewFlagSet("chat", flag.ExitOnError)
 	configPath := chatCmd.String("config", "prism.yaml", "Path to prism.yaml configuration file")
@@ -404,16 +483,17 @@ LOOP:
 		}
 
 		// Process through the pipeline
-		fmt.Println()            // blank line before response
-		fmt.Print("Thinking...") // Show thinking indicator
-
+		fmt.Println() // blank line before response
+		spinner := startThinkingSpinner()
 		responseText, err := cc.processMessage(ctxcontext.Background(), sess, agentCfg, sanitizedInput)
-		fmt.Print("\r") // Clear thinking indicator
+		spinner.Stop() // stop and clear the "Thinking..." indicator
 		if err != nil {
-			// User-friendly timeout message
-			if errors.Is(err, ctxcontext.DeadlineExceeded) || strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "context deadline") {
+			switch {
+			case errors.Is(err, ctxcontext.DeadlineExceeded) || strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "context deadline"):
 				fmt.Fprintf(os.Stderr, "⏱️ Request timed out. The model took too long to respond. Please try again.\n")
-			} else {
+			case isModelBackendCrash(err):
+				fmt.Fprint(os.Stderr, modelBackendCrashHint(agentCfg))
+			default:
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
 			continue
@@ -483,8 +563,6 @@ func (cc *chatContext) processWithChatProvider(
 	chatTools := cc.buildChatToolDefs()
 	chatTools = filterChatToolsByAgentPolicy(chatTools, cc.toolPolicy, agentCfg.ID)
 
-	log.Printf("[CHAT-CLI] entering native tool loop with %d tools", len(chatTools))
-
 	finalResponse, toolSummaries, toolErr := cc.runChatToolLoop(
 		ctx,
 		messages,
@@ -502,6 +580,7 @@ func (cc *chatContext) processWithChatProvider(
 		if ts.Status == "error" {
 			status = "✗"
 		}
+		clearThinkingLine()
 		fmt.Printf("  [Tool: %s] %s\n", ts.Tool, status)
 
 		// Persist tool call to session history
@@ -575,7 +654,6 @@ func (cc *chatContext) processWithTextProvider(
 	if cc.toolExec != nil {
 		parsed := agent.ParseAgentOutput(responseText)
 		if parsed.Type == agent.ResponseToolRequest {
-			log.Printf("[CHAT-CLI] LLM requested tool %q, entering text tool loop", parsed.ToolName)
 			finalResponse, toolSummaries, toolErr := cc.runTextToolLoop(
 				ctx,
 				prompt,
@@ -594,6 +672,7 @@ func (cc *chatContext) processWithTextProvider(
 				if ts.Status == "error" {
 					status = "✗"
 				}
+				clearThinkingLine()
 				fmt.Printf("  [Tool: %s] %s\n", ts.Tool, status)
 
 				toolMsg := fmt.Sprintf("[Tool: %s] %s", ts.Tool, ts.Status)
@@ -931,8 +1010,6 @@ func (cc *chatContext) runChatToolLoop(
 	var lastContent string
 
 	for i := 0; i < maxChatToolIterations; i++ {
-		log.Printf("[CHAT-CLI] iteration %d/%d", i+1, maxChatToolIterations)
-
 		if i >= 3 && !nudgeInjected {
 			currentMessages = append(currentMessages, provider.ChatMessage{
 				Role:    "system",
@@ -944,7 +1021,6 @@ func (cc *chatContext) runChatToolLoop(
 		toolsForThisIteration := chatTools
 		if i >= 6 {
 			toolsForThisIteration = []provider.ChatTool{}
-			log.Printf("[CHAT-CLI] iteration %d: removing tools to force final answer", i+1)
 		}
 
 		// Call the ChatProvider
@@ -965,11 +1041,8 @@ func (cc *chatContext) runChatToolLoop(
 		}
 
 		if !response.HasToolCalls() {
-			log.Printf("[CHAT-CLI] iteration %d: final response (%d chars)", i+1, len(response.Content))
 			return response.Content, summaries, nil
 		}
-
-		log.Printf("[CHAT-CLI] iteration %d: model requests %d tool calls", i+1, len(response.ToolCalls))
 
 		currentMessages = append(currentMessages, provider.ChatMessage{
 			Role:      "assistant",
@@ -980,6 +1053,7 @@ func (cc *chatContext) runChatToolLoop(
 		for _, tc := range response.ToolCalls {
 			// Format tool call arguments for display
 			argsJSON, _ := json.Marshal(tc.Function.Arguments)
+			clearThinkingLine()
 			fmt.Printf("  🔧 %s(%s)\n", tc.Function.Name, string(argsJSON))
 			toolResult, summary := cc.executeChatToolCLI(ctx, tc, agentCfg)
 			fmt.Printf("     → %s\n", truncateStr(toolResult, 200))
@@ -993,7 +1067,6 @@ func (cc *chatContext) runChatToolLoop(
 		}
 	}
 
-	log.Printf("[CHAT-CLI] max iterations (%d) reached", maxChatToolIterations)
 	if lastContent != "" {
 		return lastContent, summaries, nil
 	}
@@ -1056,8 +1129,6 @@ func (cc *chatContext) runTextToolLoop(
 	nudgeInjected := false
 
 	for i := 0; i < maxToolIterations; i++ {
-		log.Printf("[CHAT-CLI-TEXT] iteration %d/%d", i+1, maxToolIterations)
-
 		if i >= 3 && !nudgeInjected {
 			currentPrompt += "\n\n[System: You have already used several tools. Please provide your final answer now based on the information you have gathered. Do not call any more tools.]"
 			nudgeInjected = true
@@ -1078,8 +1149,6 @@ func (cc *chatContext) runTextToolLoop(
 		if parsed.Type != agent.ResponseToolRequest {
 			return responseText, summaries, nil
 		}
-
-		log.Printf("[CHAT-CLI-TEXT] iteration %d: tool %q requested", i+1, parsed.ToolName)
 
 		var toolInput map[string]any
 		if parsed.ToolInput != nil {
@@ -1107,6 +1176,7 @@ func (cc *chatContext) runTextToolLoop(
 			summary.Result = resultStr
 		}
 
+		clearThinkingLine()
 		fmt.Printf("  🔧 %s → %s\n", parsed.ToolName, truncateStr(resultStr, 200))
 		summaries = append(summaries, summary)
 

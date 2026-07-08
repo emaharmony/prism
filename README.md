@@ -15,6 +15,68 @@ Checked-in root binaries can lag behind source. For a fresh setup, build from `c
 
 ---
 
+## Status
+
+Prism is in **public-preview** development. It is source-available, local-first,
+and **not production-ready**.
+
+**Stable enough to explore:**
+
+- local CLI workflows and the event spine
+- workflow runtime and run artifacts
+- policy checks and tool execution
+- approvals / validation / review
+- event logging and local run inspection
+
+**Experimental (opt-in, off by default):**
+
+- multi-agent delegation and sub-agent workers
+- MCP client integration
+- self-patching / autopatch
+- cross-Prism bridge and Factory handoff
+- external provider integrations (OpenAI, Anthropic, Gemini, Claude Code, Codex)
+- Remembrance memory integration
+- scheduler / dashboard-editor features
+
+**Not production-ready / out of scope:**
+
+- high-risk unattended automation
+- live trading or financial execution
+- unattended code mutation without human review
+- enterprise multi-user deployment
+
+See the [Capability Status](./docs/CAPABILITY_STATUS.md) matrix for detail.
+
+---
+
+## Golden Path Demo
+
+The fastest way to understand Prism is to run a workflow and inspect the
+generated events and artifacts. The built-in echo workflow needs no model and
+runs fully locally:
+
+```bash
+go test ./...                                   # verify the build
+go run ./cmd/prism-cli workflow list            # see available workflows
+go run ./cmd/prism-cli workflow show demo.echo_tool
+go run ./cmd/prism-cli workflow run demo.echo_tool
+go run ./cmd/prism-cli workflow status <run_id>
+```
+
+What to expect:
+
+- workflow and tool events are emitted for the run
+- artifacts are written under `runs/<run_id>/`
+- `events.jsonl` shows the full event trail
+- `summary.json` shows the run result
+
+A sanitized sample run is checked in at
+[`examples/runs/sample-run/`](./examples/runs/sample-run). For a step-by-step
+walkthrough see [Getting Started](./docs/GETTING_STARTED.md) and
+[Examples](./docs/EXAMPLES.md).
+
+---
+
 ## Architecture
 
 ```text
@@ -58,6 +120,25 @@ Ingress/Egress
 | `vector/`, `sse/`, `cost/`, `projection/`, `validation/`, `review/` | Search, streaming helpers, cost tracking, CQRS projections, checks, review artifacts |
 | `action/`, `debounce/`, `retry/`, `checksum/`, `scheduler/` | Event actions, debounce, retry logic, checksums, cron scheduler |
 | `config/`, `sqlite/`, `integration/` | Configuration loading, SQLite persistence, integration tests |
+
+---
+
+## Documentation
+
+New to Prism? Start here:
+
+1. [Getting Started](docs/GETTING_STARTED.md) — install, build, test, and run your first workflow.
+2. [Configuration Guide](docs/CONFIGURATION.md) — where config files live and how Prism loads them.
+3. [YAML Reference](docs/YAML_REFERENCE.md) — workflow, policy, adapter, provider, and agent YAML.
+4. [Command Reference](docs/COMMANDS.md) — all major CLI commands and what they do.
+5. [Examples](docs/EXAMPLES.md) — guided demo flows.
+6. [Troubleshooting](docs/TROUBLESHOOTING.md) — common setup and runtime issues.
+7. [Architecture](docs/ARCHITECTURE.md) — how Prism works internally.
+8. [Capability Status](docs/CAPABILITY_STATUS.md) — stable vs experimental features.
+9. [Safety Model](docs/SAFETY.md) — human-in-the-loop, policy vs validators, autopatch risks.
+10. [Roadmap](docs/ROADMAP.md) — project direction.
+11. [Version History](docs/VERSION_HISTORY.md) — the full V1–V58+ development story.
+12. [Public Preview Checklist](docs/PUBLIC_PREVIEW_CHECKLIST.md) — release-prep status.
 
 ---
 
@@ -845,72 +926,35 @@ No external database requirement for local development.
 
 ## Version History
 
-| Version | What | Design Doc |
-|---------|------|------------|
-| V1 | Foundation: CLI, event bus, canonical events | [V1](./docs/V1-FOUNDATION-DESIGN.md) |
-| V2 | Real LLM execution and provider interface | [V2](./docs/V2-REAL-LLM-EXECUTION-DESIGN.md) |
-| V3 | Controlled tool execution | [V3](./docs/V3-CONTROLLED-TOOL-EXECUTION-DESIGN.md) |
-| V4 | Approval-gated mutations | [V4](./docs/V4-APPROVAL-GATED-MUTATIONS-DESIGN.md) |
-| V5 | Validation and deterministic review | [V5](./docs/V5-VALIDATION-REVIEW-DESIGN.md) |
-| V6 | Gate/trading work moved out of core Prism | [V6](./docs/V6-GATE-TRADING-MOVED.md) |
-| V7 | Workflow runtime | [V7](./docs/V7-WORKFLOW-RUNTIME-DESIGN.md) |
-| V8 | Policy engine | [V8](./docs/V8-POLICY-ENGINE-DESIGN.md) |
-| V9 | Adapter contract and SDK | [V9](./docs/V9-ADAPTER-CONTRACT-DESIGN.md) |
-| V10 | State projections | [V10](./docs/V10-STATE-PROJECTIONS-DESIGN.md) |
-| V11 | Dashboard | [V11](./docs/V11-DASHBOARD-DESIGN.md) |
-| V12 | CLI and architecture refactor | [V12](./docs/V12-ARCHITECTURAL-REFACTOR-DESIGN.md) |
-| V13 | Multi-agent orchestration | [V13](./docs/V13-MULTI-AGENT-DESIGN.md) |
-| V14a-e | Pipeline, streaming, providers, SQLite, Discord coverage | [V14a](./docs/V14a-DECOMPOSE-STREAM-DESIGN.md) |
-| V15 | Vector search | [V15](./docs/V15-VECTOR-SEARCH-DESIGN.md) |
-| V16 | Intelligence arc | [V16](./docs/V16-INTELLIGENCE-ARC-DESIGN.md) |
-| V17 | Performance | [V17](./docs/V17-PERFORMANCE-DESIGN.md) |
-| V18 | OpenClaw config transfer | [V18](./docs/V18-OPENCLAW-CONFIG-DESIGN.md) |
-| V19 | Smart context injection | [V19](./docs/V19-SMART-CONTEXT-DESIGN.md) |
-| V20 | Live orchestrator | [V20](./docs/V20-LIVE-ORCHESTRATOR-DESIGN.md) |
-| V21 | Full conversation pipeline | [V21](./docs/V21-FULL-CONVERSATION-DESIGN.md) |
-| V22 | Multi-agent delegation | [V22](./docs/V22-MULTI-AGENT-ORCHESTRATION-DESIGN.md) |
-| V23 | Platform API, bridge, dashboard, SDK | [V23](./docs/V23-PLATFORM-DESIGN.md) |
-| V24 | Visual workflow diagrams | [V24](./docs/V24-VISUAL-WORKFLOW-DESIGN.md) |
-| V25 | Visual workflow editor | [V25](./docs/V25-VISUAL-WORKFLOW-EDITOR-DESIGN.md) |
-| V26 | Remembrance integration | [V26](./docs/V26-REMEMBRANCE-INTEGRATION-DESIGN.md) |
-| V27 | Serve-mode tool executor | [V27](./docs/V27-SERVE-TOOL-EXECUTOR-DESIGN.md) |
-| V28 | Project and git tools | [V28](./docs/V28-PROJECT-GIT-TOOLS-DESIGN.md) |
-| V29 | Tool guidance and session awareness | [V29](./docs/V29-TOOL-GUIDANCE-SESSION-AWARENESS-DESIGN.md) |
-| V30 | Native Ollama tool calling | [V30](./docs/V30-NATIVE-TOOL-CALLING-DESIGN.md) |
-| V31 | Native chat streaming gap note | [V31](./docs/V31-CHAT-STREAMING-GAP.md) |
-| V32 | Operating environment: state, plans, guard, wake | [V32](./docs/V32-LUMI-OPERATING-ENVIRONMENT.md) |
-| V33 | Conversation awareness and channel context | [V33](./docs/V33-CONVERSATION-AWARENESS.md) |
-| V34 | OpenAI Responses provider | [V34](./docs/V34-OPENAI-RESPONSES-DESIGN.md) |
-| V35 | Objective verification gate in the gated loop | [V35](./docs/V35-VERIFICATION-GATE-DESIGN.md) |
-| V37 | Multi-agent delegation wired into the gated loop | [V37](./docs/V37-MULTI-AGENT-DELEGATION-DESIGN.md) |
-| V38 | `prism watch` live run visibility (SSE) | [V38](./docs/V38-LIVE-WATCH-DESIGN.md) |
-| V39 | `prism doctor` preflight health check | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
-| V40 | Durable `REPORT.md` proof-of-work artifact | [V40](./docs/V40-REPORT-ARTIFACT-DESIGN.md) |
-| V41 | Diff preview at the feedback gate | [V41](./docs/V41-DIFF-PREVIEW-DESIGN.md) |
-| V42 | Gate-needs-you @-mention notifications | [V42](./docs/V42-GATE-NOTIFICATIONS-DESIGN.md) |
-| V43 | `prism preview` static gated-loop preview | [V43](./docs/V43-WORKFLOW-PREVIEW-DESIGN.md) |
-| V44 | Rich Discord approval cards (buttons) | [V44](./docs/V44-APPROVAL-CARDS-DESIGN.md) |
-| V45 | De-hardcoded gate personas (config-driven roster) | [V45](./docs/V45-DYNAMIC-ROSTER-DESIGN.md) |
-| V46 | `prism runs` browse past runs & reports | [V46](./docs/V46-RUNS-BROWSER-DESIGN.md) |
-| V47 | `--json` inspection output (doctor, runs) | [V47](./docs/V47-JSON-OUTPUT-DESIGN.md) |
-| V48 | Actions on flows in the visual workflow editor | [V48](./docs/V48-EDGE-ACTIONS-DESIGN.md) |
-| V49 | MCP client foundation (consume external MCP tool servers) | [V49](./docs/V49-MCP-CLIENT-DESIGN.md) |
-| V50 | Self-patching PR mode (autopatch opens pull requests) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
-| V51 | Issue-discovery scanner + `prism scan` (self-directed autopatch) | [V51](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
-| V52 | `prism config` validate + summarize prism.yaml | [V52](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
-| V54 | Skill-use capabilities (Claude Code / OpenClaw SKILL.md) | [V54](./docs/V54-SKILLS-DESIGN.md) |
-| V55 | Config wizard + OpenClaw→prism.yaml import (`prism config wizard` / `import`) | [V55](./docs/V55-CONFIG-WIZARD-DESIGN.md) |
-| V56 | Gated-loop worktree isolation (`projects[].worktree_isolation`, shared `internal/gitx`) | [V56](./docs/V56-WORKTREE-ISOLATION-DESIGN.md) |
-| V57 | Auto-rollback for failed loops + per-phase token budgets | [V57](./docs/V57-AUTO-ROLLBACK-DESIGN.md) |
-| V58 | Full autonomy: generic sub-agent worker (bounded tool-loop, worktree isolation, capability routing) | [V58](./docs/V58-FULL-AUTONOMY-DESIGN.md) |
+Prism grew through many incremental versions (V1–V58+). The full development
+story — with links to each design document — lives in
+[docs/VERSION_HISTORY.md](./docs/VERSION_HISTORY.md).
+
+At a glance:
+
+- **Foundations (V1–V13):** event spine, LLM execution, tool execution,
+  approvals, validation, workflow runtime, policy engine, adapters,
+  projections, dashboard, multi-agent orchestration.
+- **Platform expansion (V14–V34):** vector search, providers, persistent serve
+  mode, Discord, sessions, Remembrance, git/project tools.
+- **Gated loop & observability (V35–V48):** verification gates, `prism watch`,
+  `prism doctor`, run artifacts, approval cards, `prism runs`.
+- **Advanced / experimental (V49–V58):** MCP client, self-patching autopatch,
+  skills, config wizard, worktree isolation, auto-rollback, sub-agent worker.
 
 ---
 
 ## Project Status
 
-Prism is source-available and active. The stable core includes serve mode, Discord integration, sessions, multi-agent orchestration, Remembrance, tool execution, API/dashboard/editor, state/plan tooling, scheduler hooks, cross-Prism bridge, provider support (including OpenAI Responses, Claude Code CLI, and Codex CLI), autonomous sub-agent workers (V58), MCP client integration, and self-patching autopatch with PR mode.
+Prism is source-available and in **public-preview** development — see the
+[Status](#status) section above and the full
+[Capability Status](./docs/CAPABILITY_STATUS.md) matrix for what is stable
+versus experimental. It is not production-ready.
 
-Current focus is keeping runtime behavior, docs, and configuration aligned while hardening the sub-agent worker pipeline, idle-guard optimization, and cross-Prism/Factory handoff.
+Current focus is stabilization: keeping runtime behavior, docs, and
+configuration aligned; a clear golden-path demo; repo hygiene; and hardening the
+experimental sub-agent worker, idle-guard optimization, and cross-Prism/Factory
+handoff.
 
 See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/TASKS.md](./docs/TASKS.md).
 
