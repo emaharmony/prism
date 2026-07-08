@@ -23,6 +23,9 @@ func TestNewRun(t *testing.T) {
 	if run.Cancel == nil {
 		t.Error("expected cancel function to be set")
 	}
+	if run.MaxTokens != DefaultMaxTokens {
+		t.Errorf("expected default max tokens %d, got %d", DefaultMaxTokens, run.MaxTokens)
+	}
 	if run.Deadline.Before(run.StartedAt) {
 		t.Error("expected deadline after start time")
 	}
@@ -36,6 +39,9 @@ func TestRunWithContext(t *testing.T) {
 	}
 	if run.SessionID != "sess-2" {
 		t.Errorf("expected session sess-2, got %s", run.SessionID)
+	}
+	if run.MaxTokens != DefaultMaxTokens {
+		t.Errorf("expected default max tokens %d, got %d", DefaultMaxTokens, run.MaxTokens)
 	}
 }
 

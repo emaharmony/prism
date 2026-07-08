@@ -9,6 +9,7 @@ description: "7-phase natural gates workflow for autonomous project work"
 global:
   max_total_iterations: 60
   max_total_time: "4h"
+  max_total_tokens: 2000000
   state_persistence_dir: "runs/natural-gates"
   event_emission: true
 

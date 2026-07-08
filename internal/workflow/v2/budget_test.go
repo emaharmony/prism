@@ -135,10 +135,14 @@ func TestBudgetExceededTokensOnly(t *testing.T) {
 	if r := e.budgetExceeded(time.Time{}); r == "" {
 		t.Fatal("expected token ceiling to trip")
 	}
-	e2 := NewEngine(execVerifyConfig(false), nil, nil)
-	e2.config.Global.MaxTotalTokens = 0 // disabled
-	e2.state.AddTokens(1000, 1000)
-	if r := e2.budgetExceeded(time.Time{}); r != "" {
-		t.Fatalf("zero token ceiling should be unlimited: %q", r)
+	cfg := execVerifyConfig(false)
+	cfg.Global.MaxTotalTokens = 0
+	e2 := NewEngine(cfg, nil, nil)
+	if e2.config.Global.MaxTotalTokens != DefaultMaxTotalTokens {
+		t.Fatalf("NewEngine should default zero token ceiling to %d, got %d", DefaultMaxTotalTokens, e2.config.Global.MaxTotalTokens)
+	}
+	e2.state.AddTokens(DefaultMaxTotalTokens, 0)
+	if r := e2.budgetExceeded(time.Time{}); r == "" {
+		t.Fatal("expected default token ceiling to trip")
 	}
 }

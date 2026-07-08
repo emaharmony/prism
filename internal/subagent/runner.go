@@ -52,7 +52,7 @@ type Backend interface {
 type LoopRunner struct {
 	backend       Backend
 	maxIterations int
-	maxTokens     int // 0 = no token ceiling (still bounded by maxIterations)
+	maxTokens     int
 	systemPrompt  func(packet v2.TaskPacket, runtime AgentRuntime) string
 	scope         ToolScope // nil = no per-agent tool scoping
 }
@@ -61,7 +61,7 @@ type LoopRunner struct {
 type LoopRunnerConfig struct {
 	Backend       Backend
 	MaxIterations int // 0 → DefaultMaxIterations
-	MaxTokens     int // 0 → unlimited
+	MaxTokens     int // 0 → DefaultMaxTokens
 	// SystemPrompt overrides the default task charter builder.
 	SystemPrompt func(packet v2.TaskPacket, runtime AgentRuntime) string
 	// Scope enforces per-agent tool scoping. nil disables it (any registered
@@ -72,10 +72,16 @@ type LoopRunnerConfig struct {
 // DefaultMaxIterations bounds a single delegated task's tool-loop turns.
 const DefaultMaxIterations = 25
 
+// DefaultMaxTokens bounds aggregate prompt+completion tokens for one delegated task.
+const DefaultMaxTokens = 100_000
+
 // NewLoopRunner builds a LoopRunner from config.
 func NewLoopRunner(cfg LoopRunnerConfig) *LoopRunner {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = DefaultMaxIterations
+	}
+	if cfg.MaxTokens <= 0 {
+		cfg.MaxTokens = DefaultMaxTokens
 	}
 	sp := cfg.SystemPrompt
 	if sp == nil {

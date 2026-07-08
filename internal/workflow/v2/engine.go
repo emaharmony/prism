@@ -125,6 +125,7 @@ func NewEngineWithState(config *WorkflowConfig, state *WorkflowState, emitter Ev
 
 // NewEngine creates a new Natural Gates workflow engine.
 func NewEngine(config *WorkflowConfig, emitter EventEmitter, delegation *DelegationManager) *Engine {
+	NormalizeTokenBudgets(config)
 	e := &Engine{
 		phases:        make([]Phase, 0),
 		phaseMap:      make(map[string]int),
