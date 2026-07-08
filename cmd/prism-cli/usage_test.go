@@ -34,7 +34,7 @@ func TestCommandUsageCoversCommands(t *testing.T) {
 	for _, cmd := range []string{
 		"prism run", "prism chat", "prism serve",
 		"prism config", "prism doctor", "prism preview", "prism agent", "prism tool", "prism validation", "prism context",
-		"prism watch", "prism runs", "prism cost", "prism trace", "prism dashboard",
+		"prism watch", "prism panel", "prism runs", "prism cost", "prism trace", "prism dashboard",
 		"prism scan", "prism mcp", "prism skills", "prism approval",
 		"prism health", "prism search", "prism projection", "prism adapter", "prism remembrance", "prism version",
 	} {

@@ -53,6 +53,8 @@ coverage/
 prism-agent.exe
 prism-bus.exe
 prism.exe
+/prism-panel
+/prism-panel.exe
 .prism/
 
 # Local config (contains secrets)

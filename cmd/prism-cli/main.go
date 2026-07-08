@@ -590,6 +590,8 @@ func main() {
 		executeStatus(os.Args[2:])
 	case "watch":
 		executeWatch(os.Args[2:])
+	case "panel":
+		executePanel(os.Args[2:])
 	case "doctor":
 		executeDoctor(os.Args[2:])
 	case "preview":
@@ -641,6 +643,7 @@ func commandUsage() string {
 		}},
 		{"Observe runs", []string{
 			"prism watch [--config prism.yaml]             Live view of a running gated-loop workflow",
+			"prism panel [--port 8322]                     Launch the desktop pet panel (needs prism-panel build)",
 			"prism runs [<run-id>|latest] [--json]         List runs / show a run's report (or state JSON)",
 			"prism cost <run_id>                           Show token usage and cost report",
 			"prism trace <run_id>                          Show event trace (causal DAG)",
