@@ -1,13 +1,13 @@
-# Prism - Event-Native AI Agent Platform
+﻿# Prism - Event-Native AI Agent Platform
 
 [![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/)
 [![Tests](https://img.shields.io/badge/tests-go%20test%20.%2F...-brightgreen)]()
-[![Packages: 65](https://img.shields.io/badge/packages-65-green)]()
+[![Packages: 57](https://img.shields.io/badge/packages-57-green)]()
 [![License: All Rights Reserved](https://img.shields.io/badge/license-all%20rights%20reserved-red)](./LICENSE)
 
 > **License Notice:** Prism is source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, or incorporation requires written permission. See [LICENSE](./LICENSE) for details.
 
-Prism is a Go event-native AI agent platform that runs as a persistent service. Agents communicate through a NATS event bus, maintain conversation sessions, remember context through Remembrance, use tools under policy, and expose a local API/dashboard.
+Prism is a Go event-native AI agent platform that runs as a persistent service. Agents communicate through a NATS event bus, maintain conversation sessions, remember context through Remembrance, use tools under policy, and expose a local API/dashboard. Autonomous sub-agents can run bounded tool loops with worktree isolation, capability-aware routing, and per-run budgets.
 
 The framework controls lifecycle, safety, context, routing, and persistence. The model generates outputs inside that lifecycle.
 
@@ -23,12 +23,14 @@ Prism Runtime
   - Embedded or external NATS JetStream
   - SQLite-backed sessions, tasks, approvals, events, and run artifacts
   - Agent router, tool executor, policy/guard checks, plan/state managers
+  - Sub-agent worker: bounded tool-loop delegation with worktree isolation (V58)
   - Remembrance HTTP client and cache
   - HTTP API, SSE event stream, dashboard, visual workflow editor
   - Optional cross-Prism bridge and Roblox Factory handoff
+  - Idle guard + schedule optimization (zero tokens when nothing to do)
 
 Ingress/Egress
-  - Discord bot
+  - Discord bot (interactive approval buttons, channel roles)
   - CLI run/chat commands
   - REST API clients
   - NATS subjects and scheduled wake events
@@ -38,27 +40,42 @@ Ingress/Egress
 
 | Package | Purpose |
 |---------|---------|
-| `bus/`, `event/`, `run/` | Embedded NATS, canonical events, run lifecycle, WAL-style artifacts |
-| `provider/` | Mock, Ollama, OpenAI chat completions, OpenAI Responses, Anthropic, Gemini |
-| `agent/`, `router/`, `orchestrator/` | Agent registry, routing, config loading, live service lifecycle |
-| `session/`, `task/`, `approval/`, `delegation/` | Conversation state, task tracking, approvals, multi-agent delegation |
+| `bus/`, `event/`, `run/`, `runtrack/` | Embedded NATS, canonical events, run lifecycle, WAL-style artifacts, run tracking |
+| `provider/` | Mock, Ollama, OpenAI chat completions, OpenAI Responses, Anthropic, Gemini, Claude Code CLI, Codex CLI |
+| `agent/`, `agentns/`, `router/`, `orchestrator/` | Agent registry, agent namespaces, routing, config loading, live service lifecycle |
+| `session/`, `task/`, `approval/`, `delegation/`, `subagent/` | Conversation state, task tracking, approvals, multi-agent delegation, autonomous sub-agent worker |
 | `tool/`, `policy/`, `safety/`, `mutation/`, `guard/` | Tool registry, policy gates, path safety, mutations, plan-aware guard checks |
 | `state/`, `plan/`, `prompt/`, `context/` | Working state, task plans, prompt layering, workspace context injection |
+| `stage/`, `workstart/` | Gated-loop phase stages, work-start lifecycle |
+| `skill/` | SKILL.md skill-use capabilities (Claude Code / OpenClaw) |
 | `remembrance/` | Go HTTP client and cache for the separate Remembrance memory service |
 | `api/`, `dashboard/`, `editor/`, `workflow/` | REST/SSE API, dashboard, visual editor, SVG workflow diagrams |
-| `bridge/`, `crossprism/`, `factory/`, `scheduler/` | Cross-Prism protocol, Factory handoff, scheduled wake events |
+| `bridge/`, `crossprism/`, `factory/`, `factorymonitor/` | Cross-Prism protocol, Factory handoff, Factory queue monitoring |
+| `autopatch/`, `improve/` | Self-patching PR mode, issue scanner, improvement proposals |
+| `claudecli/`, `claudeworker/`, `codexworker/` | Claude Code CLI resolution, Claude reviewer worker, Codex subscription worker |
+| `gitx/` | Shared git worktree helpers (used by sub-agents, autopatch, gated loop) |
+| `codesummary/` | Codebase summary generation |
 | `vector/`, `sse/`, `cost/`, `projection/`, `validation/`, `review/` | Search, streaming helpers, cost tracking, CQRS projections, checks, review artifacts |
+| `action/`, `debounce/`, `retry/`, `checksum/`, `scheduler/` | Event actions, debounce, retry logic, checksums, cron scheduler |
+| `config/`, `sqlite/`, `integration/` | Configuration loading, SQLite persistence, integration tests |
+
+---
+
+## Requirements
+
+- **Go 1.26+** (module requires 1.26.2)
+- **Git** (for project tools, worktree isolation, autopatch)
+- **Ollama** — if using local Ollama models
+- **Python 3.11+** — only if running the Remembrance memory service
+- **Claude CLI** — only if using the `claude_code` provider or Claude reviewer (subscription-based, no API key)
+- **Codex CLI** — only if using the Codex worker (`codex login` required)
+- **`gh` CLI** — only if using autopatch in `"pr"` mode (GitHub pull requests)
+
+No external database or message broker is required for basic operation — Prism embeds NATS JetStream and uses SQLite.
 
 ---
 
 ## Quick Start
-
-### Prerequisites
-
-- Go 1.26 or newer
-- Git
-- Ollama if using local Ollama models
-- Python 3.11+ only if running Remembrance
 
 ### Build
 
@@ -81,7 +98,7 @@ For a full Windows walkthrough, see [docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP
 ### Test
 
 ```bash
-go test ./... -count=1
+go test ./... -count=1 -race
 ```
 
 ### Start Serve Mode
@@ -186,6 +203,10 @@ agents:
     capabilities: [code, test, report]
 ```
 
+### Autonomous Sub-Agent Worker (V58)
+
+Sub-agents run independently with bounded tool loops, per-agent tool scoping (capability-based gating), worktree-per-subagent isolation, and deadline enforcement. Enable with `PRISM_SUBAGENT_WORKER=1`. Code-capable agents get isolated git worktrees; read-only agents skip isolation. Failed or timed-out sub-agents always emit a `status:"failed"` completion — they never silently hold a gate.
+
 ### Plan-Aware Tool Execution
 
 Serve and chat modes register read, project, git, state, and plan tools. Read-only tools can run directly inside allowed paths; mutation tools such as `git_add`, `git_commit`, and `git_push` are policy-gated.
@@ -193,6 +214,10 @@ Serve and chat modes register read, project, git, state, and plan tools. Read-on
 ### Verified Gated Loop
 
 The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT`) enforces objective build/test verification in EXECUTION: after the model commits, Prism runs an allowlisted V5 validation profile (e.g. `go_test_all` → `go test ./...`). With `blocking: true` the phase cannot complete until it passes — the failing output is fed back so the model fixes the real problem and re-commits. The model can also call the `run_validation` tool to self-check before committing. The loop is bounded by run budgets (`max_total_time`, `max_total_tokens`) and stuck-loop detection (`max_repeated_tool_calls`), each emitting an event and stopping gracefully. Configure it per phase under `verification` (see [docs/V35-VERIFICATION-GATE-DESIGN.md](./docs/V35-VERIFICATION-GATE-DESIGN.md)).
+
+### Scout Sub-Agent
+
+A lightweight local model (e.g. qwen3:8b, gemma3:4b) gathers codebase context before the cloud model runs, reducing token cost. The scout can also collect reference images via the `collect_reference_images` tool (with Firecrawl support for real image downloads).
 
 ### Cross-Prism and Factory Handoff
 
@@ -216,6 +241,17 @@ codex:
 
 After enabling it, local agents can emit `[DELEGATE: codex | code] ...`, and cross-Prism commands can target `/prism delegate target:codex task:...`.
 
+### Claude Code Provider
+
+Use the Claude CLI as an orchestrator brain for the gated loop (no API key — uses your subscription). Define an agent with `provider: claude_code` and point a project at it with `project.orchestrator`. The provider shells out to `claude -p` with tools disabled, so Prism still owns tool execution, gates, and policy. Claude Code can also serve as a reviewer at feedback gates.
+
+```yaml
+claude_code:
+  enabled: true
+  reviewer_name: "claude"
+  timeout_minutes: 10
+```
+
 ### Auto-Patching
 
 Autopatch turns explicit bug reports or validation failures into reviewable patch proposals. It creates an isolated git worktree, tries configured patch workers in order, runs allowlisted validation profiles, and stores artifacts under `.prism/data/autopatch/<task-id>/`. Two modes: `"propose"` (default — patch artifact only, never touches the main worktree) and `"pr"` (V50 — pushes a branch and opens a GitHub pull request via the `gh` CLI; `prism doctor` preflights `gh` auth).
@@ -233,7 +269,28 @@ autopatch:
   base_branch: ""            # PR base in "pr" mode; empty = repo default
 ```
 
-Start a task with `POST /api/v1/autopatch` using `{"description":"tests are failing, fix this bug"}`. In Discord, explicit requests such as “auto patch this bug” or “tests are failing, fix this bug” start the same tracked `auto_patch` task.
+Start a task with `POST /api/v1/autopatch` using `{"description":"tests are failing, fix this bug"}`. In Discord, explicit requests such as "auto patch this bug" or "tests are failing, fix this bug" start the same tracked `auto_patch` task.
+
+### Skill-Use Capabilities (V54)
+
+Agents can consume SKILL.md files (Claude Code / OpenClaw format) via the `use_skill` tool, enabling structured skill injection into prompts.
+
+### MCP Client (V49)
+
+Consume external MCP (Model Context Protocol) tool servers. Tools register as `mcp_<name>_<tool>` and run through the same policy engine as built-in tools. Probe a server before enabling:
+
+```bash
+prism mcp probe --command npx --args "-y,@modelcontextprotocol/server-filesystem,D:/_projects_"
+```
+
+```yaml
+mcp_servers:
+  - name: "filesystem"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "D:/_projects_"]
+    enabled: true
+mcp_auto_approve: false
+```
 
 ---
 
@@ -257,10 +314,29 @@ prism run --task "..." --memory-enabled --memory-url http://localhost:18790
 prism run --task "..." --dry-run-prompt
 ```
 
+### Workflows and Projects
+
+```bash
+prism workflow list
+prism workflow show <name>
+prism workflow run <name> --input input.json
+prism workflow start --project <id> --prompt "..."
+prism workflow status <run_id>
+prism preview [--config prism.yaml]          # static gated-loop preview
+prism watch [--config prism.yaml]            # live SSE run visibility
+prism runs [--json]                          # browse past runs & reports
+prism runs latest                            # latest run shortcut
+```
+
 ### Management
 
 ```bash
 prism health [--bus-url nats://localhost:4222]
+prism doctor [--json]                        # preflight health check
+prism config validate                        # validate prism.yaml
+prism config summarize                       # summarize config
+prism config wizard                          # interactive config setup
+prism config import                          # OpenClaw→prism.yaml import
 prism agent list
 prism agent show <id>
 prism approval list [--run <run_id>]
@@ -268,6 +344,7 @@ prism approval approve <id> --by <name> --run <run_id> [--validate]
 prism approval deny <id> --by <name> --run <run_id>
 prism tool list
 prism tool run <name> --input '{"key":"value"}' --workspace .
+prism skills list                            # list available SKILL.md files
 prism validation list
 prism validation run <profile>
 prism policy list
@@ -278,14 +355,13 @@ prism adapter health <name>
 prism projection list
 prism projection rebuild --run <id>
 prism projection query <name> --run <id>
-prism workflow list
-prism workflow show <name>
-prism workflow run <name> --input input.json
-prism workflow status <run_id>
 prism context show --context soul,agents --workspace-root .
 prism cost <run_id>
 prism trace <run_id>
 prism search --query "text" [--top-k 10] [--provider mock|openai|ollama]
+prism scan [--start]                         # issue-discovery scanner
+prism mcp probe --command <cmd> --args <args> # probe MCP server
+prism remembrance status                     # check Remembrance connection
 ```
 
 ---
@@ -305,6 +381,7 @@ prism:
   llm_timeout_seconds: 1200
   port: 8321
   log_level: "info"
+  bind_host: "127.0.0.1"            # "0.0.0.0" to expose on network (requires api.auth_token)
   read_roots:
     - "D:/"
     - "C:/Users/emaha"
@@ -315,6 +392,11 @@ prism:
   scheduler:                         # built-in cron; see docs/SCHEDULER.md
     enabled: false
     jobs: []
+
+api:
+  auth_token: ""                     # bearer token for state-changing endpoints
+  auth_token_env: ""                 # e.g. "PRISM_API_TOKEN" (takes priority)
+  allowed_origins: []                # CORS origin allowlist
 
 bridge:
   enabled: false
@@ -338,10 +420,21 @@ bridge:
     enable_ui_generation: false
     ui_generation_dry_run: true
 
+projects:
+  - id: my-project
+    repo_path: "/path/to/your/repo"
+    state_file: "PROJECT_STATE.md"
+    default_branch: "main"
+    channel: ""
+    workflow_config: ""
+    orchestrator: ""                 # agent ID (e.g. "claude_code"); empty = primary agent
+    worktree_isolation: false        # V56: per-run git worktree
+    default: true
+
 agents:
   - id: astraea
     role: orchestrator
-    provider: ollama                  # ollama, openai, openai_responses, anthropic, gemini
+    provider: ollama                  # ollama, openai, openai_responses, anthropic, gemini, claude_code
     model: "llama3.2"
     primary: true
     context: [soul, agents, user]
@@ -378,11 +471,45 @@ sessions:
   compaction_strategy: "summarize"
   keep_archived_messages: true
   daily_reset_hour: 4
+  continuity_scope: "owner_agent"    # or "channel_user" for per-channel
+  recall_window_mode: "calendar_week"
+  recall_timezone: "Local"
+  short_term_window_days: 7
+  verbatim_recent_messages: 40
 
 remembrance:
   enabled: false
   url: "http://localhost:18790"
   timeout_seconds: 60
+
+autopatch:
+  enabled: false
+  mode: "propose"
+  require_clean_worktree: true
+  max_attempts: 2
+  validation_profiles: ["go_test_all"]
+  worker_order: ["codex", "local_agent"]
+  local_agent: "forge"
+
+codex:
+  enabled: false
+  sandbox: "workspace-write"
+  approval_policy: "on-request"
+  timeout_minutes: 30
+
+claude_code:
+  enabled: false
+  reviewer_name: "claude"
+  timeout_minutes: 10
+  allowed_tools: ""                  # empty = read-only default
+
+mcp_servers: []
+mcp_auto_approve: false
+
+factory_monitor:
+  enabled: false
+  poll_seconds: 30
+  stuck_after_minutes: 30
 ```
 
 Windows notes:
@@ -401,6 +528,9 @@ Windows notes:
 | `OLLAMA_BASE_URL` | Optional embedding base URL for `prism search --provider ollama` |
 | `OLLAMA_EMBEDDING_MODEL` | Optional Ollama embedding model override |
 | `PRISM_BRIDGE_SECRET` | Shared HMAC secret for cross-Prism bridge when enabled |
+| `PRISM_SUBAGENT_WORKER` | Set to `1` to enable the V58 autonomous sub-agent worker in serve mode |
+| `PRISM_API_TOKEN` | Bearer token for API authentication (via `api.auth_token_env`) |
+| `DISCORD_BOT_TOKEN` | Discord bot token (referenced in channel config) |
 
 ---
 
@@ -532,11 +662,45 @@ Current routes include:
 - `POST /api/v1/approvals/{id}/grant`, `POST /api/v1/approvals/{id}/deny`
 - `GET /api/v1/events/stream`
 - `GET /api/v1/workflows`, `GET /api/v1/workflows/{type}`
+- `POST /api/v1/workflows/start`
 - `GET/PUT /api/v1/editor`
 - `GET/POST /api/v1/editor/nodes`, `PUT/DELETE /api/v1/editor/nodes/{id}`
 - `GET/POST /api/v1/editor/edges`, `DELETE /api/v1/editor/edges/{id}`
 - `POST /api/v1/editor/save`
 - `GET /api/v1/costs`
+- `POST /api/v1/autopatch`
+
+---
+
+## Makefile Targets
+
+| Target | Command | Description |
+|--------|---------|-------------|
+| `make dev` | `go run ./cmd/prism-cli run ...` | Run in development mode |
+| `make test` | `go test ./... -count=1 -race` | Run all tests with race detector |
+| `make test-short` | `go test ./... -count=1 -short` | Run tests without race detector (faster) |
+| `make test-coverage` | Generates `coverage.html` | Tests with coverage report |
+| `make lint` | `go vet ./...` | Run linters |
+| `make ci` | vet → build → test | Full CI gate |
+| `make build` | `CGO_ENABLED=0 go build ...` | Build binary for current platform |
+| `make build-all` | Cross-compile | Linux amd64, Darwin arm64, Windows amd64 |
+| `make docker-build` | `docker build -t prism:latest .` | Build Docker image |
+| `make docker-run` | `docker-compose up -d` | Run in Docker |
+| `make docker-stop` | `docker-compose down` | Stop Docker containers |
+| `make clean` | Remove build artifacts | Clean up binaries and coverage files |
+
+---
+
+## Docker
+
+```bash
+docker build -t prism:latest .
+docker-compose up -d
+```
+
+> **Note:** The Dockerfile currently uses `golang:1.24-alpine` as the build image. <!-- TODO: update to golang:1.26-alpine when available -->
+
+The Docker setup exposes port 8080 and mounts `./runs` and `./policies` as volumes.
 
 ---
 
@@ -550,6 +714,132 @@ Current routes include:
 - ChatProvider-native tool calling is preferred where supported; text-based tool requests remain as fallback.
 - Working state and plans are explicit files managed by state/plan tools.
 - Cross-Prism and Factory integrations are optional adapters around the core runtime.
+- Sub-agents fail closed: unknown agent, runner error, or timeout always yields a failed completion — never silently holds a gate.
+- Idle guard prevents token waste when no work is scheduled.
+
+---
+
+## Project Structure
+
+```text
+prism/
+├── cmd/
+│   ├── prism-cli/          # Main CLI binary (serve, run, chat, doctor, config, workflow, etc.)
+│   ├── prism-bus/          # Standalone NATS bus binary
+│   └── prism-agent/        # Standalone agent binary
+├── internal/               # All core packages (~57 domains)
+│   ├── action/             # Event-triggered actions
+│   ├── adapter/            # Adapter contract
+│   ├── agent/              # Agent registry and lifecycle
+│   ├── agentns/            # Agent namespace helpers
+│   ├── api/                # REST/SSE HTTP API
+│   ├── approval/           # Approval gates
+│   ├── autopatch/          # Self-patching (propose + PR modes)
+│   ├── bridge/             # Cross-Prism bridge protocol
+│   ├── bus/                # Embedded NATS JetStream
+│   ├── checksum/           # Deterministic checksums
+│   ├── claudecli/          # Claude Code CLI executable resolution
+│   ├── claudeworker/       # Claude reviewer worker
+│   ├── codesummary/        # Codebase summary generation
+│   ├── codexworker/        # Codex CLI subscription worker
+│   ├── config/             # Configuration loading
+│   ├── context/            # Workspace context injection
+│   ├── cost/               # Token/cost tracking
+│   ├── crossprism/         # Cross-Prism messaging
+│   ├── dashboard/          # Dashboard UI
+│   ├── debounce/           # Debounce helpers
+│   ├── delegation/         # Multi-agent delegation
+│   ├── editor/             # Visual workflow editor
+│   ├── event/              # Canonical event types
+│   ├── factory/            # Roblox Factory adapter
+│   ├── factorymonitor/     # Factory queue monitoring
+│   ├── gitx/               # Shared git worktree helpers
+│   ├── guard/              # Plan-aware guard checks
+│   ├── improve/            # Improvement proposals
+│   ├── integration/        # Integration tests
+│   ├── mutation/           # Mutation tracking
+│   ├── orchestrator/       # Live orchestrator lifecycle
+│   ├── plan/               # Task plan management
+│   ├── policy/             # Policy engine
+│   ├── projection/         # CQRS state projections
+│   ├── prompt/             # Prompt layering
+│   ├── provider/           # LLM providers (Mock, Ollama, OpenAI, Anthropic, Gemini, Claude Code, Codex)
+│   ├── remembrance/        # Remembrance HTTP client + cache
+│   ├── retry/              # Retry logic
+│   ├── review/             # Review artifacts
+│   ├── router/             # Agent routing
+│   ├── run/                # Run lifecycle + WAL artifacts
+│   ├── runtrack/           # Run tracking
+│   ├── safety/             # Path safety checks
+│   ├── scheduler/          # Built-in cron scheduler
+│   ├── session/            # Conversation sessions
+│   ├── skill/              # SKILL.md parsing and injection
+│   ├── sqlite/             # SQLite persistence
+│   ├── sse/                # SSE streaming helpers
+│   ├── stage/              # Gated-loop phase stages
+│   ├── state/              # Working state management
+│   ├── subagent/           # Autonomous sub-agent worker (V58)
+│   ├── task/               # Task tracking
+│   ├── tool/               # Tool registry and execution
+│   ├── validation/         # Validation profiles
+│   ├── vector/             # Vector search
+│   ├── workflow/           # Workflow runtime
+│   └── workstart/          # Work-start lifecycle
+├── adapters/               # External adapter implementations
+│   ├── echo/               # Echo adapter (example)
+│   └── remembrance/        # Remembrance adapter
+├── sdk/                    # SDK for external consumers
+│   ├── examples/
+│   └── prism/
+├── remembrance/            # Separate Python memory service
+│   ├── configs/
+│   ├── src/
+│   └── tests/
+├── policies/               # Policy definition files
+├── examples/               # Example configs and workflows
+│   ├── runs/
+│   └── workflows/
+├── docs/                   # Design documents (V1–V58)
+├── scripts/                # Utility scripts
+├── Makefile                # Build, test, lint, CI, Docker targets
+├── Dockerfile              # Multi-stage Docker build
+├── docker-compose.yaml     # Docker Compose setup
+├── go.mod / go.sum         # Go module (github.com/emaharmony/prism)
+├── prism.yaml.example      # Reference configuration
+└── LICENSE                 # All rights reserved
+```
+
+---
+
+## Testing
+
+```bash
+go test ./... -count=1           # all tests
+go test ./... -count=1 -race     # all tests with race detector
+go test ./internal/stage/... -race
+go test ./internal/vector/... -bench=.
+go test ./internal/checksum/ -v -count=1  # single package
+```
+
+Tests use the external test package pattern (`package foo_test`), stdlib `testing` only (no third-party frameworks), and assertions via `t.Errorf` / `t.Fatalf`.
+
+---
+
+## Dependencies
+
+Direct runtime dependencies (from `go.mod`):
+
+| Dependency | Purpose |
+|------------|---------|
+| `modernc.org/sqlite` | Pure-Go SQLite (no CGO required) |
+| `nats-io/nats-server/v2`, `nats-io/nats.go` | Embedded NATS JetStream server and client |
+| `gopkg.in/yaml.v3` | YAML configuration parsing |
+| `bwmarrin/discordgo` | Discord bot integration |
+| `ajstarks/svgo` | SVG workflow diagram generation |
+| `gofrs/flock` | File locking |
+| `oklog/ulid/v2`, `rs/xid` | ULID and XID generation |
+
+No external database requirement for local development.
 
 ---
 
@@ -606,36 +896,21 @@ Current routes include:
 | V48 | Actions on flows in the visual workflow editor | [V48](./docs/V48-EDGE-ACTIONS-DESIGN.md) |
 | V49 | MCP client foundation (consume external MCP tool servers) | [V49](./docs/V49-MCP-CLIENT-DESIGN.md) |
 | V50 | Self-patching PR mode (autopatch opens pull requests) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
-| V51 | Issue-discovery scanner + `prism scan` (self-directed autopatch) | [V50](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
-| V52 | `prism config` validate + summarize prism.yaml | [V39](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
+| V51 | Issue-discovery scanner + `prism scan` (self-directed autopatch) | [V51](./docs/V50-AUTOPATCH-PR-DESIGN.md) |
+| V52 | `prism config` validate + summarize prism.yaml | [V52](./docs/V39-DOCTOR-PREFLIGHT-DESIGN.md) |
 | V54 | Skill-use capabilities (Claude Code / OpenClaw SKILL.md) | [V54](./docs/V54-SKILLS-DESIGN.md) |
 | V55 | Config wizard + OpenClaw→prism.yaml import (`prism config wizard` / `import`) | [V55](./docs/V55-CONFIG-WIZARD-DESIGN.md) |
 | V56 | Gated-loop worktree isolation (`projects[].worktree_isolation`, shared `internal/gitx`) | [V56](./docs/V56-WORKTREE-ISOLATION-DESIGN.md) |
 | V57 | Auto-rollback for failed loops + per-phase token budgets | [V57](./docs/V57-AUTO-ROLLBACK-DESIGN.md) |
-
----
-
-## Dependencies
-
-Direct runtime dependencies are intentionally small: pure-Go SQLite, NATS server/client, YAML, locking, ULID/XID, Discord, SVG, and WebSocket support. There is no external database requirement for local development.
-
----
-
-## Testing
-
-```bash
-go test ./... -count=1
-go test ./internal/stage/... -race
-go test ./internal/vector/... -bench=.
-```
+| V58 | Full autonomy: generic sub-agent worker (bounded tool-loop, worktree isolation, capability routing) | [V58](./docs/V58-FULL-AUTONOMY-DESIGN.md) |
 
 ---
 
 ## Project Status
 
-Prism is source-available and active. The stable core includes serve mode, Discord integration, sessions, multi-agent orchestration, Remembrance, tool execution, API/dashboard/editor, state/plan tooling, scheduler hooks, cross-Prism bridge, and provider support including OpenAI Responses.
+Prism is source-available and active. The stable core includes serve mode, Discord integration, sessions, multi-agent orchestration, Remembrance, tool execution, API/dashboard/editor, state/plan tooling, scheduler hooks, cross-Prism bridge, provider support (including OpenAI Responses, Claude Code CLI, and Codex CLI), autonomous sub-agent workers (V58), MCP client integration, and self-patching autopatch with PR mode.
 
-Current focus is keeping runtime behavior, docs, and configuration aligned while hardening the state/plan/guard pipeline, event-driven wake, and cross-Prism/Factory handoff.
+Current focus is keeping runtime behavior, docs, and configuration aligned while hardening the sub-agent worker pipeline, idle-guard optimization, and cross-Prism/Factory handoff.
 
 See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/TASKS.md](./docs/TASKS.md).
 
@@ -643,4 +918,4 @@ See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/TASKS.md](./docs/TASKS.md).
 
 ## License
 
-All rights reserved. See [LICENSE](./LICENSE) for details.
+All rights reserved. Copyright (c) 2025–2026 Emmanuel Vinas. See [LICENSE](./LICENSE) for details.
