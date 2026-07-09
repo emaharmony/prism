@@ -102,3 +102,59 @@ func TestDefaultConfigAllowsReferenceImageCollection(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigDefaultsZeroMaxTotalTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		path string
+	}{
+		{
+			name: "yaml omitted",
+			path: "workflow.yaml",
+			data: `name: token-default
+version: 2
+global:
+  max_total_iterations: 1
+phases:
+  - name: REPORT
+    type: report
+    max_iterations: 1
+    gate:
+      type: report_completeness
+`,
+		},
+		{
+			name: "yaml zero",
+			path: "workflow.yaml",
+			data: `name: token-default
+version: 2
+global:
+  max_total_iterations: 1
+  max_total_tokens: 0
+phases:
+  - name: REPORT
+    type: report
+    max_iterations: 1
+    gate:
+      type: report_completeness
+`,
+		},
+		{
+			name: "json zero",
+			path: "workflow.json",
+			data: `{"name":"token-default","version":2,"global":{"max_total_tokens":0},"phases":[{"name":"REPORT","type":"report","max_iterations":1,"gate":{"type":"report_completeness"}}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parseConfigBytes([]byte(tc.data), tc.path)
+			if err != nil {
+				t.Fatalf("parseConfigBytes: %v", err)
+			}
+			if cfg.Global.MaxTotalTokens != DefaultMaxTotalTokens {
+				t.Fatalf("MaxTotalTokens = %d, want %d", cfg.Global.MaxTotalTokens, DefaultMaxTotalTokens)
+			}
+		})
+	}
+}

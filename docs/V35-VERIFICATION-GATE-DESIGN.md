@@ -90,10 +90,10 @@ profile.
 
 The loop tracked tokens and parsed `max_total_time` but enforced neither. `Drive`
 now computes a wall-clock deadline from `global.max_total_time` and enforces a
-`global.max_total_tokens` ceiling. Both are checked before each phase and before
+`global.max_total_tokens` ceiling (`-1` = unlimited, `0` = default, positive = explicit cap). Both are checked before each phase and before
 each iteration; on exceed the loop emits `workflow.budget_exhausted` and finalizes
 gracefully (a soft stop, not a hard error). Either dimension is disabled by a zero
-value. `DefaultConfig` ships a 1,000,000-token ceiling so a runaway or stuck run
+value. `DefaultConfig` ships a 2,000,000-token ceiling so a runaway or stuck run
 cannot burn tokens without bound.
 
 ## Stuck-loop detection (shipped with V35)

@@ -1,56 +1,69 @@
-# Token Limit Handoff
+# Token Limit Work Notes
 
-Checkpoint created on branch `token-limit`.
+Branch: `token-limit`
 
 ## Goal
 
-Find token-related defaults that allow project or autonomous work to run without a finite token limit, replace those defaults with bounded behavior, and verify the behavior with tests.
+Find token-related defaults and autonomous run paths that allowed project work to run without a finite token limit, replace accidental unlimited behavior with bounded defaults, preserve an explicit unlimited opt-out, and verify the behavior with tests.
 
-## Completed In This Checkpoint
+## Completed
 
-- Added a default aggregate token budget for `read_project` tool output in `internal/tool/builtins.go`.
-- Added optional `max_tokens` input for `read_project` so callers can request a smaller output cap.
-- Added token metadata to `read_project` output: `total_tokens`, `max_tokens`, `token_budget_exhausted`, and per-file `tokens` / `truncated`.
-- Added `DefaultMaxTotalTokens` in `internal/workflow/v2/config.go`.
-- Changed workflow config loading so omitted or zero `global.max_total_tokens` normalizes to `DefaultMaxTotalTokens`.
-- Updated `DefaultConfig()` to use `DefaultMaxTotalTokens`.
+- `read_project` has a default aggregate output budget of `50_000` estimated tokens, accepts optional `max_tokens`, and reports aggregate/per-file token metadata.
+- Workflow `global.max_total_tokens` semantics are explicit: `-1` = unlimited, `0` or omitted = `DefaultRunTokenCeiling` (`2_000_000`), positive = explicit cap, below `-1` = invalid.
+- `v2.NewEngine` normalizes token budgets and defensively rejects invalid negatives for direct callers.
+- Workflow state records `max_total_tokens`, and phase state records `max_tokens`, so reports/API/CLI can show ceiling and remaining budget after a run.
+- Budget-killed runs end as `budget_exhausted`, and `workflow.completed` carries the terminal status instead of masking budget stops as normal completion.
+- Providers that return zero token usage are estimated by prompt/response length so budget enforcement still works.
+- Project `token_budget` supports the same `-1` / `0` / positive semantics and overrides the workflow cap.
+- Delegated task packets carry `max_tokens`; sub-agent loops honor the parent remaining budget, support `-1`, stop before more tool work once exhausted, and return usage plus prior partial artifacts on budget errors.
+- Delegated sub-agent prompt/completion tokens roll up into the parent workflow budget.
+- V36 wake tool loops use the resolved project/default/unlimited ceiling instead of a hardcoded run cap and estimate zero-usage provider responses.
+- `prism context show` / run context injection no longer default to unbounded context: `0` resolves to `4000`, `-1` is explicit no truncation, and `< -1` is rejected.
+- Cost event aggregation moved into `internal/cost`; `GET /api/v1/costs`, `prism cost`, and REPORT artifacts expose token totals, ceilings, remaining budget, status, and estimated cost when event logs include cost data.
+- `prism cost` can now fall back to workflow state for token/budget fields even when an events file is missing.
+- Default constants are disambiguated with compatibility aliases: `DefaultRunTokenCeiling`, `DefaultSubAgentTokenBudget`, and `DefaultRunResponseTokens`.
+- YAML/docs/dashboard labels now document `-1 = unlimited`, `0 = default` for run/project token budgets.
+- `.claude/commands/prism-loop.md` was checked; it adds loop discipline only: finish dirty work, update docs/state, run build/vet/test, commit.
 
-## Not Yet Completed
+## Regression Coverage
 
-- Add engine-level token normalization in `internal/workflow/v2/engine.go` so direct `NewEngine` callers cannot bypass loaded-config normalization.
-- Add project-level token limit config, likely on `orchestrator.ProjectConfig`, and apply it when `WakeHandler.loadWorkflowConfig` / `RunGatedLoop` resolves a project workflow.
-- Validate negative project token caps in `internal/orchestrator/config.go`.
-- Update `prism.yaml.example` to document the project token-limit field.
-- Update bundled workflows, especially `examples/workflows/natural-gates-default.yaml`, so examples do not imply unlimited tokens.
-- Add regression tests for:
-  - workflow config files with omitted or zero `max_total_tokens`;
-  - project-specific token cap override;
-  - `read_project` aggregate token truncation;
-  - direct engine construction with zero `MaxTotalTokens`;
-  - any changed sub-agent or runtrack defaults if those are bounded.
-- Review other zero-token defaults:
-  - `internal/subagent/runner.go` currently documents `MaxTokens` zero as unlimited;
-  - `internal/runtrack/run.go` initializes `MaxTokens` to zero.
+Added or updated tests for:
 
-## Verification Status
+- omitted/zero workflow token caps defaulting to `2_000_000`;
+- `max_total_tokens = -1` unlimited and invalid negatives rejected on load;
+- project `token_budget = -1` accepted and `< -1` rejected;
+- budget-killed runs ending as `budget_exhausted` with a single global budget event;
+- provider zero-usage responses still tripping budgets via estimates;
+- delegated token usage rolling up to the parent;
+- delegated packets receiving the parent remaining budget and blocking when no budget remains;
+- sub-agent packet budget override, unlimited override, over-budget final answers, and partial artifacts/usage on budget errors;
+- wake-loop resolved ceiling and unlimited behavior;
+- context command budget sentinel/default handling;
+- `read_project` aggregate token truncation;
+- `REPORT.md` token budget section;
+- real `/api/v1/costs` token/budget fields;
+- `prism cost` budget/remaining display and workflow-state fallback.
 
-No tests were run after this checkpoint because the work was interrupted. Run focused tests first:
+## Verification
+
+Focused gate:
 
 ```powershell
-go test ./internal/tool ./internal/workflow/v2 ./internal/orchestrator
+go test ./internal/workflow/v2 ./internal/subagent ./cmd/prism-cli ./internal/orchestrator ./internal/runtrack ./internal/tool ./internal/api ./internal/cost
 ```
 
-Then run the full suite:
+Final gates:
 
 ```powershell
-go test ./...
+go build ./...
+go vet ./...
+go test -p 1 ./...
 ```
+
+Result: all commands passed on `token-limit`.
 
 ## Unrelated Working Tree Items
 
-At checkpoint time, the working tree also showed:
+Do not stage unrelated local settings unless intentionally part of a separate change:
 
-- deleted `tmp_natspub/main.go`
-- untracked `.claude/settings.local.json`
-
-Those were not included in the token-limit checkpoint unless intentionally staged later.
+- `.claude/settings.local.json`

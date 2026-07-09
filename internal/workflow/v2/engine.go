@@ -113,6 +113,9 @@ type ExternalEvent struct {
 func NewEngineWithState(config *WorkflowConfig, state *WorkflowState, emitter EventEmitter, delegation *DelegationManager) *Engine {
 	e := NewEngine(config, emitter, delegation)
 	e.state = state
+	if e.state != nil {
+		e.state.ApplyBudgetConfig(config)
+	}
 	// Set the current phase index based on the state's current phase
 	for i, phase := range e.phases {
 		if phase.Name() == state.CurrentPhase() {
@@ -125,6 +128,13 @@ func NewEngineWithState(config *WorkflowConfig, state *WorkflowState, emitter Ev
 
 // NewEngine creates a new Natural Gates workflow engine.
 func NewEngine(config *WorkflowConfig, emitter EventEmitter, delegation *DelegationManager) *Engine {
+	NormalizeTokenBudgets(config)
+	// Defensive: callers that build a config by hand (bypassing LoadConfig's
+	// validation) must not be able to disable the ceiling with an invalid negative.
+	// -1 (unlimited) is allowed through; anything below that falls back to the default.
+	if config != nil && config.Global.MaxTotalTokens < UnlimitedTokens {
+		config.Global.MaxTotalTokens = DefaultRunTokenCeiling
+	}
 	e := &Engine{
 		phases:        make([]Phase, 0),
 		phaseMap:      make(map[string]int),

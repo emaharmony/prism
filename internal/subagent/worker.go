@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
@@ -42,6 +43,11 @@ type AgentResolver interface {
 type RunResult struct {
 	Summary   string
 	Artifacts v2.CompletionArtifacts
+	// PromptTokens/CompletionTokens are the sub-agent's LLM usage for this task.
+	// They are carried on both success and failure returns so the orchestrator can
+	// roll delegated spend into the parent run's token budget.
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // TaskRunner executes one delegated task for a resolved agent. Implementations
@@ -114,17 +120,27 @@ func (w *Worker) Handle(ctx context.Context, packet v2.TaskPacket) v2.TaskComple
 
 	result, err := w.runGuarded(runCtx, packet, runtime)
 	if err != nil {
+		reason := fmt.Sprintf("agent %q failed: %v", packet.TargetAgent, err)
 		if runCtx.Err() == context.DeadlineExceeded {
-			return failed(packet.TaskID, fmt.Sprintf("task %q timed out for agent %q", packet.TaskID, packet.TargetAgent))
+			reason = fmt.Sprintf("task %q timed out for agent %q", packet.TaskID, packet.TargetAgent)
 		}
-		return failed(packet.TaskID, fmt.Sprintf("agent %q failed: %v", packet.TargetAgent, err))
+		fc := failed(packet.TaskID, reason)
+		if strings.TrimSpace(result.Summary) != "" {
+			fc.OutputSummary = strings.TrimSpace(result.Summary)
+		}
+		fc.Artifacts = result.Artifacts
+		// Even a failed/timed-out sub-agent spent tokens, so surface them to the parent budget.
+		fc.PromptTokens, fc.CompletionTokens = result.PromptTokens, result.CompletionTokens
+		return fc
 	}
 
 	return v2.TaskCompletion{
-		TaskID:        packet.TaskID,
-		Status:        "completed",
-		OutputSummary: result.Summary,
-		Artifacts:     result.Artifacts,
+		TaskID:           packet.TaskID,
+		Status:           "completed",
+		OutputSummary:    result.Summary,
+		Artifacts:        result.Artifacts,
+		PromptTokens:     result.PromptTokens,
+		CompletionTokens: result.CompletionTokens,
 	}
 }
 

@@ -15,7 +15,7 @@ global:
   max_total_iterations: 60
   max_total_time: "60m"
   # Hard token ceiling across the whole run (prompt + completion). When exceeded the
-  # loop stops gracefully and finalizes, emitting workflow.budget_exhausted. 0 = unlimited.
+  # loop stops gracefully and finalizes, emitting workflow.budget_exhausted. -1 = unlimited, 0 = default ceiling.
   max_total_tokens: 1000000
   # Abort a phase after this many identical tool calls (same tool + same input) with
   # no progress, emitting phase.stuck. Guards against oscillation/stuck loops. 0 = default (6).

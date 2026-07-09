@@ -151,8 +151,18 @@ func (m *watchModel) apply(evType string, payload map[string]any) {
 		}
 	case "workflow.budget_exhausted":
 		m.status = "budget exhausted"
+	case "phase.budget_exhausted":
+		if name := str(payload, "phase"); name != "" {
+			m.phase(name).status = "budget"
+		}
 	case "workflow.completed":
-		m.status = "completed"
+		// The terminal event carries the real outcome so a budget-killed run
+		// isn't masked as "completed" in the live view.
+		if s := str(payload, "status"); s != "" && s != "completed" {
+			m.status = strings.ReplaceAll(s, "_", " ")
+		} else {
+			m.status = "completed"
+		}
 	case "workflow.blocked":
 		m.status = "blocked"
 	case "task.delegated":

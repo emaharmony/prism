@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/emaharmony/prism/internal/orchestrator"
 )
 
 func TestFormatPRList_Empty(t *testing.T) {
@@ -137,4 +139,29 @@ func containsStr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoadWorkflowConfigAppliesProjectTokenBudget(t *testing.T) {
+	wh := &WakeHandler{cfg: orchestrator.DefaultConfig()}
+	cfg := wh.loadWorkflowConfig(&orchestrator.ProjectConfig{ID: "example", TokenBudget: 12345})
+	if cfg.Global.MaxTotalTokens != 12345 {
+		t.Fatalf("MaxTotalTokens = %d, want 12345", cfg.Global.MaxTotalTokens)
+	}
+}
+
+func TestLoadWorkflowConfigAppliesUnlimitedProjectTokenBudget(t *testing.T) {
+	wh := &WakeHandler{cfg: orchestrator.DefaultConfig()}
+	cfg := wh.loadWorkflowConfig(&orchestrator.ProjectConfig{ID: "example", TokenBudget: -1})
+	if cfg.Global.MaxTotalTokens != -1 {
+		t.Fatalf("MaxTotalTokens = %d, want -1", cfg.Global.MaxTotalTokens)
+	}
+}
+
+func TestWakeTokenBudgetExceededRespectsUnlimited(t *testing.T) {
+	if wakeTokenBudgetExceeded(10_000_000, -1) {
+		t.Fatal("unlimited token ceiling should not trip")
+	}
+	if !wakeTokenBudgetExceeded(100, 100) {
+		t.Fatal("positive token ceiling should trip at the cap")
+	}
 }

@@ -641,3 +641,21 @@ func TestValidateSessionRecallConfig(t *testing.T) {
 		t.Fatal("expected invalid recall_timezone error")
 	}
 }
+
+func TestValidateProjectTokenBudget(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Projects = []ProjectConfig{{ID: "example", TokenBudget: 1}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("positive project token budget should validate: %v", err)
+	}
+
+	cfg.Projects[0].TokenBudget = -1
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("-1 project token budget should validate as unlimited: %v", err)
+	}
+
+	cfg.Projects[0].TokenBudget = -2
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for invalid negative project token budget")
+	}
+}
