@@ -654,6 +654,8 @@ type ReadProjectTool struct {
 
 const DefaultReadProjectTokenBudget = 50_000
 
+const readProjectTruncationMarker = "\n[... truncated by read_project token budget ...]"
+
 var errReadProjectTokenBudget = errors.New("read_project token budget exhausted")
 
 func (t *ReadProjectTool) Name() string { return "read_project" }
@@ -874,7 +876,10 @@ func truncateReadProjectContent(content string, tokenBudget int) string {
 	if len(content) <= maxChars {
 		return content
 	}
-	return content[:maxChars] + "\n[... truncated by read_project token budget ...]"
+	if maxChars <= len(readProjectTruncationMarker) {
+		return content[:maxChars]
+	}
+	return content[:maxChars-len(readProjectTruncationMarker)] + readProjectTruncationMarker
 }
 
 // RegisterBuiltins adds the built-in tools to a registry, using the given

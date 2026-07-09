@@ -59,9 +59,15 @@ func renderWorkflowPreview(cfg *v2.WorkflowConfig, source string) string {
 	if cfg.Global.MaxTotalTime != "" {
 		fmt.Fprintf(&b, "  max time:        %s\n", cfg.Global.MaxTotalTime)
 	}
-	if cfg.Global.MaxTotalTokens > 0 {
-		fmt.Fprintf(&b, "  max tokens:      %s\n", humanInt(cfg.Global.MaxTotalTokens))
+	maxTokens := cfg.Global.MaxTotalTokens
+	tokLabel := humanInt(maxTokens)
+	switch {
+	case maxTokens == v2.UnlimitedTokens:
+		tokLabel = "unlimited"
+	case maxTokens <= 0:
+		tokLabel = humanInt(v2.DefaultRunTokenCeiling)
 	}
+	fmt.Fprintf(&b, "  max tokens:      %s\n", tokLabel)
 	repeat := cfg.Global.MaxRepeatedToolCalls
 	if repeat <= 0 {
 		repeat = 6

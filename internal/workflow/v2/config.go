@@ -22,12 +22,23 @@ type WorkflowConfig struct {
 	FastPath          *FastPathConfig `json:"fast_path,omitempty"`
 }
 
-const DefaultMaxTotalTokens = 2_000_000
+// DefaultRunTokenCeiling is the default prompt+completion ceiling for one
+// Natural Gates workflow run.
+const DefaultRunTokenCeiling = 2_000_000
+
+// DefaultMaxTotalTokens is kept as a compatibility alias for older callers.
+const DefaultMaxTotalTokens = DefaultRunTokenCeiling
+
+// UnlimitedTokens is the explicit "no ceiling" sentinel for max_total_tokens.
+// Semantics: -1 = unlimited, 0 = DefaultRunTokenCeiling, any positive = that cap.
+// Values below -1 are invalid (rejected at load) so a typo cannot silently disable
+// the budget.
+const UnlimitedTokens = -1
 
 type GlobalConfig struct {
 	MaxTotalIterations   int    `json:"max_total_iterations"`
 	MaxTotalTime         string `json:"max_total_time"`
-	MaxTotalTokens       int    `json:"max_total_tokens,omitempty"`        // hard ceiling on prompt+completion tokens; 0 = DefaultMaxTotalTokens
+	MaxTotalTokens       int    `json:"max_total_tokens,omitempty"`        // ceiling on prompt+completion tokens; -1 = unlimited, 0 = DefaultRunTokenCeiling, >0 = that cap
 	MaxRepeatedToolCalls int    `json:"max_repeated_tool_calls,omitempty"` // abort a phase after this many identical tool calls; 0 = default (6)
 	StatePersistenceDir  string `json:"state_persistence_dir"`
 	EventEmission        bool   `json:"event_emission"`
@@ -156,24 +167,50 @@ func parseConfigBytes(data []byte, path string) (*WorkflowConfig, error) {
 			return nil, fmt.Errorf("decode yaml %s: %w", path, err)
 		}
 		NormalizeTokenBudgets(&config)
+		if err := validateTokenBudgets(&config); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
 		return &config, nil
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("decode json %s: %w", path, err)
 	}
 	NormalizeTokenBudgets(&config)
+	if err := validateTokenBudgets(&config); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return &config, nil
 }
 
+// validateTokenBudgets rejects invalid token caps on the runtime load path (the
+// full ValidateConfig is only used by doctor/preview/api). It guards the sentinel
+// contract so a typo like -100 fails loudly instead of silently disabling the cap.
+func validateTokenBudgets(cfg *WorkflowConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Global.MaxTotalTokens < UnlimitedTokens {
+		return fmt.Errorf("global.max_total_tokens must be -1 (unlimited), 0 (default), or a positive cap; got %d", cfg.Global.MaxTotalTokens)
+	}
+	for _, p := range cfg.Phases {
+		if p.MaxTokens < 0 {
+			return fmt.Errorf("phase %q: max_tokens must be >= 0 (0 = no per-phase cap); got %d", p.Name, p.MaxTokens)
+		}
+	}
+	return nil
+}
+
 // NormalizeTokenBudgets applies finite token defaults to loaded workflow configs.
-// A zero global cap previously meant unlimited; for autonomous/project workflows
-// it now means "use the built-in default cap" so omitted fields do not run open-ended.
+// A zero global cap means "use the built-in default cap" so omitted fields do not
+// run open-ended. The explicit unlimited opt-out is -1 (UnlimitedTokens), which is
+// left untouched here; any other negative is invalid and rejected by
+// validateTokenBudgets on the load path.
 func NormalizeTokenBudgets(cfg *WorkflowConfig) {
 	if cfg == nil {
 		return
 	}
 	if cfg.Global.MaxTotalTokens == 0 {
-		cfg.Global.MaxTotalTokens = DefaultMaxTotalTokens
+		cfg.Global.MaxTotalTokens = DefaultRunTokenCeiling
 	}
 }
 
@@ -257,8 +294,8 @@ func ValidateConfig(cfg *WorkflowConfig) []string {
 	if len(cfg.Phases) == 0 {
 		errs = append(errs, "at least one phase is required")
 	}
-	if cfg.Global.MaxTotalTokens < 0 {
-		errs = append(errs, "global.max_total_tokens must be >= 0")
+	if cfg.Global.MaxTotalTokens < UnlimitedTokens {
+		errs = append(errs, "global.max_total_tokens must be -1 (unlimited), 0 (default), or a positive cap")
 	}
 	if cfg.Global.MaxVerificationAttempts < 0 {
 		errs = append(errs, "global.max_verification_attempts must be >= 0")
@@ -397,9 +434,9 @@ func DefaultConfig() *WorkflowConfig {
 		Version:     2,
 		Description: "7-phase gated loop: PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT",
 		Global: GlobalConfig{
-			MaxTotalIterations:   600,                   // 10x default for autonomous loops
-			MaxTotalTime:         "30m",                 // increased from 60m for autonomous loops
-			MaxTotalTokens:       DefaultMaxTotalTokens, // increased from 1M for autonomous loops
+			MaxTotalIterations:   600,                    // 10x default for autonomous loops
+			MaxTotalTime:         "30m",                  // increased from 60m for autonomous loops
+			MaxTotalTokens:       DefaultRunTokenCeiling, // default ceiling for autonomous loops
 			MaxRepeatedToolCalls: 6,
 			StatePersistenceDir:  "runs/gated-loop",
 			EventEmission:        true,

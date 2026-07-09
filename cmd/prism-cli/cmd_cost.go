@@ -10,6 +10,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/cost"
 	"github.com/emaharmony/prism/internal/event"
+	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 )
 
 // costCmdFlags and cost command implementation.
@@ -29,13 +30,19 @@ func runCostCommand(args []string) error {
 
 	report, err := buildCostReport(runID, dataDir)
 	if err != nil {
-		return fmt.Errorf("cost: %w", err)
+		report = &cost.CostReport{RunID: runID}
+		if !enrichCostReportWithWorkflowState(report, runID, dataDir) {
+			return fmt.Errorf("cost: %w", err)
+		}
+	} else {
+		enrichCostReportWithWorkflowState(report, runID, dataDir)
 	}
 
 	fmt.Printf("Run: %s\n", report.RunID)
 	fmt.Printf("Total tokens: %d (prompt: %d, completion: %d)\n",
 		report.TotalTokens, report.PromptTokens, report.CompletionTokens)
 	fmt.Printf("Estimated cost: $%.6f\n", report.EstimatedCostUsd)
+	fmt.Print(formatCostBudgetLines(report))
 	fmt.Printf("Events: %d\n", report.EventCount)
 
 	if len(report.ByProvider) > 0 {
@@ -62,49 +69,56 @@ func runCostCommand(args []string) error {
 	return nil
 }
 
-func buildCostReport(runID, dataDir string) (*cost.CostReport, error) {
-	eventsFile := filepath.Join(dataDir, runID, "events.jsonl")
-	f, err := os.Open(eventsFile)
-	if err != nil {
-		return nil, fmt.Errorf("open events: %w", err)
+func formatCostBudgetLines(report *cost.CostReport) string {
+	if report == nil {
+		return ""
 	}
-	defer f.Close()
+	var b strings.Builder
+	if report.MaxTokens < 0 {
+		b.WriteString("Token ceiling: unlimited\n")
+	} else if report.MaxTokens > 0 {
+		fmt.Fprintf(&b, "Token ceiling: %d (remaining: %d, used: %.1f%%)\n", report.MaxTokens, report.RemainingTokens, report.PercentUsed)
+	}
+	if report.Status != "" {
+		fmt.Fprintf(&b, "Status: %s\n", report.Status)
+	}
+	return b.String()
+}
 
-	decoder := json.NewDecoder(f)
-	tracker := cost.NewCostTracker(runID)
+func buildCostReport(runID, dataDir string) (*cost.CostReport, error) {
+	return cost.ReportFromDataDir(runID, dataDir)
+}
 
-	for decoder.More() {
-		var evt event.Event
-		if err := decoder.Decode(&evt); err != nil {
+func enrichCostReportWithWorkflowState(report *cost.CostReport, runID, dataDir string) bool {
+	if report == nil {
+		return false
+	}
+	for _, path := range []string{
+		filepath.Join(dataDir, "workflow-"+runID+".json"),
+		filepath.Join(dataDir, "gated-loop", "workflow-"+runID+".json"),
+		filepath.Join(dataDir, runID, "workflow-"+runID+".json"),
+	} {
+		st, err := v2.LoadWorkflowState(path)
+		if err != nil {
 			continue
 		}
-
-		if evt.Type == "prism.llm.completed" || evt.Type == "prism.llm.failed" {
-			provider, _ := evt.Payload["provider"].(string)
-			model, _ := evt.Payload["model"].(string)
-			agent := evt.Metadata.Agent
-
-			var usage *cost.TokenUsage
-			if evt.Metadata.TokenUsage != nil {
-				tu := evt.Metadata.TokenUsage
-				usage = &cost.TokenUsage{
-					PromptTokens:     tu.PromptTokens,
-					CompletionTokens: tu.CompletionTokens,
-					TotalTokens:      tu.TotalTokens,
-					EstimatedCostUsd:  tu.EstimatedCostUsd,
-				}
-			} else if evt.Metadata.TokenCost > 0 {
-				usage = &cost.TokenUsage{
-					TotalTokens:      evt.Metadata.TokenCost,
-					EstimatedCostUsd: cost.EstimateCost(model, evt.Metadata.TokenCost),
-				}
-			}
-
-			tracker.Track(provider, model, agent, usage)
+		if report.TotalTokens == 0 {
+			report.PromptTokens = st.TotalPromptTokens
+			report.CompletionTokens = st.TotalCompletionTokens
+			report.TotalTokens = st.TotalPromptTokens + st.TotalCompletionTokens
 		}
+		report.Status = string(st.Status)
+		report.MaxTokens = st.MaxTotalTokens
+		if report.MaxTokens > 0 {
+			report.RemainingTokens = report.MaxTokens - report.TotalTokens
+			if report.RemainingTokens < 0 {
+				report.RemainingTokens = 0
+			}
+			report.PercentUsed = float64(report.TotalTokens) / float64(report.MaxTokens) * 100
+		}
+		return true
 	}
-
-	return tracker.Report(), nil
+	return false
 }
 
 // Trace command implementation.

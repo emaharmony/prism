@@ -43,3 +43,4 @@ YYYY-MM-DD HH:MM | BUILDER|OPERATOR | what shipped / was found | verification | 
 2026-07-04 20:40 | BUILDER | V56 worktree isolation (f0407df): internal/gitx + projects[].worktree_isolation, fail-closed | go build+vet+test green + gitx tests vs real temp repos | V57
 2026-07-04 20:55 | BUILDER | V57 auto-rollback (bdaee16): 3 triggers, rolled_back status, runs --json rollback field | go build+vet+test green, 7 new driver tests | per-phase budgets
 2026-07-04 21:05 | BUILDER | Per-phase token budgets (10dcb46): phases[].max_tokens + phase.budget_exhausted | go build+vet+test green | docs/ROADMAP sync, then backlog = stretch items only → OPERATOR next
+2026-07-09 21:33 | BUILDER | Token-limit completion: explicit -1 unlimited sentinel, default run/project/context ceilings, delegated remaining budgets, real cost/report/API surfaces | go build ./... + go vet ./... + go test -p 1 ./... green | commit token-limit branch

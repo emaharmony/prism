@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -164,6 +165,51 @@ func TestReadFileToolNonexistent(t *testing.T) {
 	}
 	if result.Success {
 		t.Error("read_file should fail for nonexistent file")
+	}
+}
+func TestReadProjectToolTokenBudget(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte(strings.Repeat("A", 120)), 0644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte(strings.Repeat("B", 120)), 0644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+
+	tool := &ReadProjectTool{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
+	result, err := tool.Execute(context.Background(), map[string]any{"path": ".", "max_tokens": float64(20)})
+	if err != nil {
+		t.Fatalf("read_project should not return Go error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("read_project should succeed, got: %s", result.Error)
+	}
+	if exhausted, _ := result.Output["token_budget_exhausted"].(bool); !exhausted {
+		t.Fatalf("expected token_budget_exhausted=true, got %+v", result.Output)
+	}
+	if truncated, _ := result.Output["truncated"].(bool); !truncated {
+		t.Fatalf("expected truncated=true, got %+v", result.Output)
+	}
+	totalTokens, ok := result.Output["total_tokens"].(int)
+	if !ok {
+		t.Fatalf("total_tokens type = %T", result.Output["total_tokens"])
+	}
+	if totalTokens > 20 {
+		t.Fatalf("total_tokens = %d, want <= 20", totalTokens)
+	}
+	files, ok := result.Output["files"].([]map[string]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("files = %#v", result.Output["files"])
+	}
+	if files[0]["truncated"] != true {
+		t.Fatalf("first file should be marked truncated: %#v", files[0])
+	}
+	content, ok := files[0]["content"].(string)
+	if !ok {
+		t.Fatalf("content type = %T", files[0]["content"])
+	}
+	if len(content) > 20*4 {
+		t.Fatalf("truncated content length = %d, want <= 80", len(content))
 	}
 }
 
