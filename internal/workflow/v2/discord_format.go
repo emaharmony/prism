@@ -3,6 +3,7 @@ package v2
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -215,6 +216,66 @@ func FormatReviewPackage(state *WorkflowState, gitDiff string, requiredReviewers
 	return sb.String()
 }
 
+func formatTokenBudgetReport(state *WorkflowState) string {
+	if state == nil {
+		return ""
+	}
+	state.mu.RLock()
+	prompt := state.TotalPromptTokens
+	completion := state.TotalCompletionTokens
+	max := state.MaxTotalTokens
+	type phaseUsage struct {
+		name       string
+		tokens     int
+		maxTokens  int
+		iterations int
+	}
+	phases := make([]phaseUsage, 0, len(state.PhaseStates))
+	for name, ps := range state.PhaseStates {
+		if ps == nil {
+			continue
+		}
+		phases = append(phases, phaseUsage{name: name, tokens: ps.PromptTokens + ps.CompletionTokens, maxTokens: ps.MaxTokens, iterations: ps.Iterations})
+	}
+	state.mu.RUnlock()
+
+	total := prompt + completion
+	if max == 0 {
+		max = DefaultRunTokenCeiling
+	}
+	var sb strings.Builder
+	sb.WriteString("### Token Budget\n")
+	sb.WriteString(fmt.Sprintf("- Total: %d tokens (prompt %d / completion %d)\n", total, prompt, completion))
+	switch {
+	case max == UnlimitedTokens:
+		sb.WriteString("- Ceiling: unlimited\n")
+	case max > 0:
+		remaining := max - total
+		if remaining < 0 {
+			remaining = 0
+		}
+		percent := float64(total) / float64(max) * 100
+		sb.WriteString(fmt.Sprintf("- Ceiling: %d tokens (remaining %d, %.1f%% used)\n", max, remaining, percent))
+	}
+	sort.Slice(phases, func(i, j int) bool { return phases[i].name < phases[j].name })
+	if len(phases) > 0 {
+		sb.WriteString("- Per phase:\n")
+		for _, p := range phases {
+			if p.tokens == 0 && p.maxTokens == 0 && p.iterations == 0 {
+				continue
+			}
+			if p.maxTokens > 0 {
+				pct := float64(p.tokens) / float64(p.maxTokens) * 100
+				sb.WriteString(fmt.Sprintf("  - %s: %d/%d tokens (%.1f%%)\n", p.name, p.tokens, p.maxTokens, pct))
+			} else {
+				sb.WriteString(fmt.Sprintf("  - %s: %d tokens\n", p.name, p.tokens))
+			}
+		}
+	}
+	sb.WriteString("\n")
+	return sb.String()
+}
+
 // FormatFinalReport formats the REPORT phase output for Discord.
 func FormatFinalReport(state *WorkflowState) string {
 	var sb strings.Builder
@@ -224,6 +285,7 @@ func FormatFinalReport(state *WorkflowState) string {
 	sb.WriteString(fmt.Sprintf("**Status:** %s\n", state.Status))
 	sb.WriteString(fmt.Sprintf("**Duration:** %s → %s\n\n", state.StartedAt, state.CompletedAt))
 
+	sb.WriteString(formatTokenBudgetReport(state))
 	// Phase summary
 	sb.WriteString("### Phase Summary\n")
 	for _, phaseCfg := range DefaultConfig().Phases {

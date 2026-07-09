@@ -650,7 +650,12 @@ func TestValidateProjectTokenBudget(t *testing.T) {
 	}
 
 	cfg.Projects[0].TokenBudget = -1
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("-1 project token budget should validate as unlimited: %v", err)
+	}
+
+	cfg.Projects[0].TokenBudget = -2
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected validation error for negative project token budget")
+		t.Fatal("expected validation error for invalid negative project token budget")
 	}
 }

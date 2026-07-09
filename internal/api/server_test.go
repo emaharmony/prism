@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/task"
+	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 )
 
 type fakeAutoPatchStarter struct {
@@ -684,5 +686,71 @@ func TestAPI_EditorSave(t *testing.T) {
 	}
 	if result["yaml"] == nil {
 		t.Error("expected yaml in response")
+	}
+}
+
+func TestAPI_CostsReturnsWorkflowTokenNumbers(t *testing.T) {
+	s, cleanup := newTestAPI(t)
+	defer cleanup()
+
+	dir := t.TempDir()
+	cfg := v2.DefaultConfig()
+	cfg.Global.StatePersistenceDir = dir
+	cfg.Global.MaxTotalTokens = 1000
+	cfgPath := filepath.Join(dir, "workflow.json")
+	cfgBytes, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal workflow config: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, cfgBytes, 0o644); err != nil {
+		t.Fatalf("write workflow config: %v", err)
+	}
+	s.workflowConfigPath = cfgPath
+
+	st := v2.NewWorkflowState(cfg)
+	st.RunID = "gl-cost"
+	st.Status = v2.StatusBudgetExhausted
+	st.AddTokens(120, 80)
+	if err := v2.SaveWorkflowState(st, dir); err != nil {
+		t.Fatalf("save workflow state: %v", err)
+	}
+	runDir := filepath.Join(dir, st.RunID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	eventLine := `{"id":"evt_cost","type":"prism.llm.completed","source":"test","timestamp":"2026-07-08T00:00:00Z","payload":{"provider":"openai","model":"gpt-4o"},"metadata":{"agent":"agent1","token_usage":{"prompt_tokens":120,"completion_tokens":80,"total_tokens":200,"estimated_cost_usd":0.002}}}` + "\n"
+	if err := os.WriteFile(filepath.Join(runDir, "events.jsonl"), []byte(eventLine), 0o644); err != nil {
+		t.Fatalf("write events: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/costs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		TotalTokens int `json:"total_tokens"`
+		Runs        []struct {
+			RunID           string  `json:"run_id"`
+			TotalTokens     int     `json:"total_tokens"`
+			MaxTokens       int     `json:"max_tokens"`
+			RemainingTokens int     `json:"remaining_tokens"`
+			PercentUsed     float64 `json:"percent_used"`
+			Status          string  `json:"status"`
+		} `json:"runs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode costs response: %v", err)
+	}
+	if body.TotalTokens != 200 || len(body.Runs) != 1 {
+		t.Fatalf("unexpected costs body: %+v", body)
+	}
+	run := body.Runs[0]
+	if run.RunID != "gl-cost" || run.TotalTokens != 200 || run.MaxTokens != 1000 || run.RemainingTokens != 800 || run.Status != string(v2.StatusBudgetExhausted) {
+		t.Fatalf("unexpected run costs: %+v", run)
+	}
+	if run.PercentUsed != 20 {
+		t.Fatalf("percent_used = %v, want 20", run.PercentUsed)
 	}
 }

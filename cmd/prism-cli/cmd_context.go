@@ -10,13 +10,15 @@ import (
 	workspacecontext "github.com/emaharmony/prism/internal/context"
 )
 
+const defaultContextTokenBudget = 4000
+
 // Context show command flags
 var contextShowCmdFlag = flag.NewFlagSet("context show", flag.ExitOnError)
 var contextShowNamed = contextShowCmdFlag.String("context", "", "Named contexts to show (comma-separated: soul,agents,user,heartbeat,memory)")
 var contextShowAuto = contextShowCmdFlag.Bool("auto", false, "Auto-discover docs matching a task")
 var contextShowTask = contextShowCmdFlag.String("task", "", "Task description for auto-discovery")
 var contextShowWorkspace = contextShowCmdFlag.String("workspace-root", "", "Workspace root directory (default: ~/.openclaw/workspace)")
-var contextShowBudget = contextShowCmdFlag.Int("budget", 0, "Token budget (0 = unlimited)")
+var contextShowBudget = contextShowCmdFlag.Int("budget", 0, "Token budget (0 = default 4000, -1 = no truncation)")
 var contextShowFile = contextShowCmdFlag.String("context-file", "", "Additional context file")
 
 func runContextCommand(args []string) error {
@@ -71,12 +73,17 @@ func showContext() error {
 		explicitFiles = []string{*contextShowFile}
 	}
 
+	tokenBudget, err := resolveContextTokenBudget(*contextShowBudget)
+	if err != nil {
+		return err
+	}
+
 	// Build context
 	builder := workspacecontext.NewBuilder(workspaceRoot).
 		WithNamedContexts(namedContexts).
 		WithAutoFiles(autoFiles).
 		WithExplicitFiles(explicitFiles).
-		WithTokenBudget(*contextShowBudget)
+		WithTokenBudget(tokenBudget)
 
 	result, err := builder.Build()
 	if err != nil {
@@ -112,11 +119,28 @@ func buildContextForRun(workspaceRoot string, namedContexts []string, autoTask s
 		autoFiles = workspacecontext.DiscoverFiles(workspaceRoot, autoTask)
 	}
 
+	resolvedBudget, err := resolveContextTokenBudget(tokenBudget)
+	if err != nil {
+		return nil, err
+	}
+
 	builder := workspacecontext.NewBuilder(workspaceRoot).
 		WithNamedContexts(namedContexts).
 		WithAutoFiles(autoFiles).
 		WithExplicitFiles(explicitFiles).
-		WithTokenBudget(tokenBudget)
+		WithTokenBudget(resolvedBudget)
 
 	return builder.Build()
+}
+func resolveContextTokenBudget(budget int) (int, error) {
+	switch {
+	case budget == -1:
+		return 0, nil
+	case budget == 0:
+		return defaultContextTokenBudget, nil
+	case budget > 0:
+		return budget, nil
+	default:
+		return 0, fmt.Errorf("context token budget must be -1 (no truncation), 0 (default %d), or a positive cap", defaultContextTokenBudget)
+	}
 }

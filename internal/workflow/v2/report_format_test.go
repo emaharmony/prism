@@ -31,3 +31,22 @@ func TestFinalReportFailedVerificationShown(t *testing.T) {
 		t.Fatalf("expected failed verification in report:\n%s", out)
 	}
 }
+
+func TestFinalReportIncludesTokenBudget(t *testing.T) {
+	state := NewWorkflowState(DefaultConfig())
+	state.RunID = "gl-token"
+	state.MaxTotalTokens = 1000
+	state.AddTokens(120, 80)
+	state.AddPhaseTokens("EXECUTION", 50, 25)
+	if ps := state.PhaseStates["EXECUTION"]; ps != nil {
+		ps.MaxTokens = 500
+		ps.Iterations = 1
+	}
+
+	out := FormatFinalReport(state)
+	for _, want := range []string{"### Token Budget", "Total: 200 tokens", "Ceiling: 1000 tokens", "remaining 800", "EXECUTION: 75/500 tokens"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("final report missing %q.\n---\n%s", want, out)
+		}
+	}
+}

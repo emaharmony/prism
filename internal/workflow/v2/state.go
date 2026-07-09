@@ -20,6 +20,10 @@ const (
 	// auto-rollback (blocking verification exhausted or the run ended in a
 	// failing state with auto_rollback enabled).
 	StatusRolledBack WorkflowStatus = "rolled_back"
+	// StatusBudgetExhausted marks a run that stopped because it hit its run-wide
+	// token or wall-clock ceiling. Distinct from StatusCompleted so a consumer
+	// polling the terminal status can tell a budget-killed run from a clean one.
+	StatusBudgetExhausted WorkflowStatus = "budget_exhausted"
 )
 
 // PhaseStatus represents the status of a single phase.
@@ -39,6 +43,7 @@ type WorkflowState struct {
 	mu                    sync.RWMutex
 	WorkflowName          string                       `json:"workflow_name"`
 	Version               int                          `json:"version"`
+	MaxTotalTokens        int                          `json:"max_total_tokens,omitempty"`
 	Status                WorkflowStatus               `json:"status"`
 	RunID                 string                       `json:"run_id"`
 	CorrelationID         string                       `json:"correlation_id"`
@@ -69,8 +74,9 @@ type WorkflowState struct {
 
 // PhaseState tracks the state of a single phase.
 type PhaseState struct {
-	Status     PhaseStatus     `json:"status"`
-	Iterations int             `json:"iterations"`
+	Status     PhaseStatus `json:"status"`
+	Iterations int         `json:"iterations"`
+	MaxTokens  int         `json:"max_tokens,omitempty"`
 	// PromptTokens/CompletionTokens accumulate this phase's LLM usage so a
 	// per-phase budget (PhaseConfig.MaxTokens) can be enforced and observers
 	// can see where a run spends its tokens.
@@ -120,9 +126,9 @@ type PlanGraph struct {
 
 // PlanTask is a single task in the plan.
 type PlanTask struct {
-	ID              string         `json:"id"`
-	Description     string         `json:"description"`
-	Agent           string         `json:"agent"`
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Agent       string `json:"agent"`
 	// Capability, when set, is the capability an agent must hold to run this
 	// task. It enables capability-aware routing/validation: a task delegated to
 	// an agent that lacks it fails closed. Empty = no capability requirement.
@@ -235,6 +241,7 @@ func NewWorkflowState(config *WorkflowConfig) *WorkflowState {
 	state := &WorkflowState{
 		WorkflowName:     config.Name,
 		Version:          config.Version,
+		MaxTotalTokens:   config.Global.MaxTotalTokens,
 		Status:           StatusStarted,
 		PhaseStates:      make(map[string]*PhaseState),
 		Assumptions:      make([]Assumption, 0),
@@ -258,6 +265,7 @@ func NewWorkflowState(config *WorkflowConfig) *WorkflowState {
 		state.PhaseStates[phase.Name] = &PhaseState{
 			Status:     PhaseStatusPending,
 			Iterations: 0,
+			MaxTokens:  phase.MaxTokens,
 			EnteredAt:  "",
 			ExitedAt:   "",
 		}
@@ -279,6 +287,33 @@ func NewWorkflowState(config *WorkflowConfig) *WorkflowState {
 }
 
 // CurrentPhase returns the name of the current phase.
+
+// ApplyBudgetConfig backfills budget ceilings from the workflow config. It keeps
+// old persisted runs observable after a resume without overwriting ceilings that
+// were already recorded in state.
+func (s *WorkflowState) ApplyBudgetConfig(config *WorkflowConfig) {
+	if s == nil || config == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.MaxTotalTokens == 0 {
+		s.MaxTotalTokens = config.Global.MaxTotalTokens
+	}
+	if s.PhaseStates == nil {
+		s.PhaseStates = make(map[string]*PhaseState)
+	}
+	for _, phase := range config.Phases {
+		ps := s.PhaseStates[phase.Name]
+		if ps == nil {
+			ps = &PhaseState{Status: PhaseStatusPending}
+			s.PhaseStates[phase.Name] = ps
+		}
+		if ps.MaxTokens == 0 {
+			ps.MaxTokens = phase.MaxTokens
+		}
+	}
+}
 func (s *WorkflowState) CurrentPhase() string {
 	if s.CurrentPhaseIdx < 0 {
 		return ""
@@ -642,4 +677,13 @@ func (s *WorkflowState) GetPhaseTokens(phaseName string) int {
 		return ps.PromptTokens + ps.CompletionTokens
 	}
 	return 0
+}
+
+// GetTotalTokens returns prompt+completion tokens as a single atomic read, so the
+// run-wide budget can't observe a torn snapshot when accounting is fed concurrently
+// (e.g. delegated sub-agent usage rolled up from another goroutine).
+func (s *WorkflowState) GetTotalTokens() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.TotalPromptTokens + s.TotalCompletionTokens
 }

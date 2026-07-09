@@ -17,16 +17,20 @@ type TokenUsage struct {
 
 // CostReport aggregates token usage and cost across a single run.
 type CostReport struct {
-	RunID            string            `json:"run_id"`
-	TotalTokens      int               `json:"total_tokens"`
-	PromptTokens     int               `json:"prompt_tokens"`
-	CompletionTokens int               `json:"completion_tokens"`
-	EstimatedCostUsd float64           `json:"estimated_cost_usd"`
+	RunID            string             `json:"run_id"`
+	TotalTokens      int                `json:"total_tokens"`
+	PromptTokens     int                `json:"prompt_tokens"`
+	CompletionTokens int                `json:"completion_tokens"`
+	EstimatedCostUsd float64            `json:"estimated_cost_usd"`
 	ByProvider       map[string]float64 `json:"by_provider"` // cost per provider
-	ByModel          map[string]float64 `json:"by_model"`     // cost per model
-	ByAgent          map[string]int     `json:"by_agent"`     // tokens per agent
-	EventCount       int               `json:"event_count"`
-	DurationMs       int64             `json:"duration_ms"`
+	ByModel          map[string]float64 `json:"by_model"`    // cost per model
+	ByAgent          map[string]int     `json:"by_agent"`    // tokens per agent
+	EventCount       int                `json:"event_count"`
+	DurationMs       int64              `json:"duration_ms"`
+	MaxTokens        int                `json:"max_tokens,omitempty"`
+	RemainingTokens  int                `json:"remaining_tokens,omitempty"`
+	PercentUsed      float64            `json:"percent_used,omitempty"`
+	Status           string             `json:"status,omitempty"`
 }
 
 // CostTracker accumulates token usage from LLM events.

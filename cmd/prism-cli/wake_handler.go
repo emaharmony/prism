@@ -1442,17 +1442,17 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 	// V36: Run state tracking
 	type RunState struct {
-		filesWritten   bool
-		filesStaged    bool
-		committed      bool
-		pushed         bool
-		readsInPhase   int
-		proseCount     int
-		branchName     string
-		assignedTask   string
-		lastToolHashes []string
-		lastRespHashes []string
-		orientFoundWork bool   // V37: ORIENT phase must find actual work before BRANCH is allowed
+		filesWritten    bool
+		filesStaged     bool
+		committed       bool
+		pushed          bool
+		readsInPhase    int
+		proseCount      int
+		branchName      string
+		assignedTask    string
+		lastToolHashes  []string
+		lastRespHashes  []string
+		orientFoundWork bool // V37: ORIENT phase must find actual work before BRANCH is allowed
 	}
 	state := RunState{}
 
@@ -1504,8 +1504,16 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 
 	phaseIdx := 0
 	iterInPhase := 0
+	tokenCeiling := wh.wakeToolTokenCeiling()
 
 	for totalIter := 0; totalIter < maxTotalIterations; totalIter++ {
+		// Bound token spend like the gated loop. This V36 tool loop was previously
+		// capped only by iteration count; use the default run ceiling so a stuck or
+		// expensive loop can't burn tokens without limit.
+		if used := totalPromptTokens + totalCompletionTokens; wakeTokenBudgetExceeded(used, tokenCeiling) {
+			log.Printf("[WAKE-TOOL] token budget exhausted (%d/%d) - stopping", used, tokenCeiling)
+			return fmt.Sprintf("Project work stopped: token budget exhausted (%d/%d tokens)", used, tokenCeiling), totalPromptTokens, totalCompletionTokens
+		}
 		phase := phases[phaseIdx]
 		log.Printf("[WAKE-TOOL] phase=%s iteration %d/%d (total %d/%d)", phase.Name, iterInPhase+1, phase.MaxIterations, totalIter+1, maxTotalIterations)
 
@@ -1592,8 +1600,17 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				return fmt.Sprintf("Project work failed: %v", err), totalPromptTokens, totalCompletionTokens
 			}
 			responseText = resp.Content
-			totalPromptTokens += resp.PromptTokens
-			totalCompletionTokens += resp.OutputTokens
+			pt, ct := resp.PromptTokens, resp.OutputTokens
+			if pt == 0 && ct == 0 && responseText != "" {
+				pt, ct = estimateWakeChatPromptTokens(messages), estimateWakeTokens(responseText)
+				log.Printf("[WAKE-TOOL] provider reported no token usage; estimated %d prompt + %d completion", pt, ct)
+			}
+			totalPromptTokens += pt
+			totalCompletionTokens += ct
+			if used := totalPromptTokens + totalCompletionTokens; wakeTokenBudgetExceeded(used, tokenCeiling) {
+				log.Printf("[WAKE-TOOL] token budget exhausted (%d/%d) after model call", used, tokenCeiling)
+				return fmt.Sprintf("Project work stopped: token budget exhausted (%d/%d tokens)", used, tokenCeiling), totalPromptTokens, totalCompletionTokens
+			}
 		} else {
 			// Fall back to text provider
 			prov, provErr := wh.providers.Get(model)
@@ -1620,8 +1637,17 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 				return fmt.Sprintf("Project work failed at iteration %d: %v", totalIter+1, err), totalPromptTokens, totalCompletionTokens
 			}
 			responseText = resp.Text
-			totalPromptTokens += resp.PromptTokens
-			totalCompletionTokens += resp.OutputTokens
+			pt, ct := resp.PromptTokens, resp.OutputTokens
+			if pt == 0 && ct == 0 && responseText != "" {
+				pt, ct = estimateWakeTokens(flatPrompt), estimateWakeTokens(responseText)
+				log.Printf("[WAKE-TOOL] provider reported no token usage; estimated %d prompt + %d completion", pt, ct)
+			}
+			totalPromptTokens += pt
+			totalCompletionTokens += ct
+			if used := totalPromptTokens + totalCompletionTokens; wakeTokenBudgetExceeded(used, tokenCeiling) {
+				log.Printf("[WAKE-TOOL] token budget exhausted (%d/%d) after model call", used, tokenCeiling)
+				return fmt.Sprintf("Project work stopped: token budget exhausted (%d/%d tokens)", used, tokenCeiling), totalPromptTokens, totalCompletionTokens
+			}
 		}
 
 		// V36: Prose detection
@@ -2146,10 +2172,34 @@ func (wh *WakeHandler) loadWorkflowConfig(project *orchestrator.ProjectConfig) *
 
 func applyProjectTokenBudget(cfg *v2.WorkflowConfig, project *orchestrator.ProjectConfig) *v2.WorkflowConfig {
 	v2.NormalizeTokenBudgets(cfg)
-	if cfg != nil && project != nil && project.TokenBudget > 0 {
+	if cfg != nil && project != nil && project.TokenBudget != 0 && project.TokenBudget >= v2.UnlimitedTokens {
 		cfg.Global.MaxTotalTokens = project.TokenBudget
 	}
 	return cfg
+}
+
+func (wh *WakeHandler) wakeToolTokenCeiling() int {
+	cfg := applyProjectTokenBudget(v2.DefaultConfig(), wh.cfg.DefaultProject())
+	if cfg == nil {
+		return v2.DefaultRunTokenCeiling
+	}
+	return cfg.Global.MaxTotalTokens
+}
+
+func wakeTokenBudgetExceeded(used, max int) bool {
+	return max > 0 && used >= max
+}
+
+func estimateWakeTokens(s string) int {
+	return (len(s) + 3) / 4
+}
+
+func estimateWakeChatPromptTokens(messages []provider.ChatMessage) int {
+	n := 0
+	for _, m := range messages {
+		n += len(m.Content)
+	}
+	return (n + 3) / 4
 }
 
 // runNaturalGatesWorkflow is the scheduled entry point: resolve the default

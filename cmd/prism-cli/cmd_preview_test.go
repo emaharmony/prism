@@ -58,3 +58,13 @@ func TestResolvePreviewConfigExplicitFileError(t *testing.T) {
 		t.Fatal("expected error for missing explicit workflow file")
 	}
 }
+
+func TestRenderWorkflowPreviewZeroTokenBudgetShowsDefault(t *testing.T) {
+	cfg := v2.DefaultConfig()
+	cfg.Global.MaxTotalTokens = 0
+
+	out := renderWorkflowPreview(cfg, "raw")
+	if !strings.Contains(out, "max tokens:      2000.0k") {
+		t.Fatalf("preview should show default token ceiling for zero budget:\n%s", out)
+	}
+}
