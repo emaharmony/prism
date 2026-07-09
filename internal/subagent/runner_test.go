@@ -190,3 +190,60 @@ func TestWorker_WithLoopRunner(t *testing.T) {
 		t.Fatalf("unexpected completion: %+v", c)
 	}
 }
+
+func TestLoopRunner_TaskPacketTokenBudgetOverridesRunnerDefault(t *testing.T) {
+	backend := &scriptBackend{
+		parse: func(text string) Action { return Action{Tool: "read_file", Input: map[string]any{"path": "notes.md"}} },
+		turns: []Turn{
+			{Text: "TOOL read_file", PromptTokens: 100, CompletionTokens: 50},
+			{Text: "TOOL read_file", PromptTokens: 100, CompletionTokens: 50},
+		},
+	}
+	r := NewLoopRunner(LoopRunnerConfig{Backend: backend, MaxIterations: 10})
+	res, err := r.Run(context.Background(), v2.TaskPacket{TaskID: "T-budget", MaxTokens: 250}, AgentRuntime{AgentID: "muse"})
+	if err == nil || !strings.Contains(err.Error(), "token budget 250 exhausted") {
+		t.Fatalf("expected packet token-budget error, got %v", err)
+	}
+	if res.PromptTokens+res.CompletionTokens != 300 {
+		t.Fatalf("usage not returned on budget error: %+v", res)
+	}
+	if len(res.Artifacts.FilePaths) != 1 || res.Artifacts.FilePaths[0] != "notes.md" {
+		t.Fatalf("partial artifacts not returned on budget error: %+v", res.Artifacts)
+	}
+	if len(backend.toolCalls) != 1 {
+		t.Fatalf("exhausting turn should not execute another tool, got %d calls", len(backend.toolCalls))
+	}
+}
+
+func TestLoopRunner_TaskPacketUnlimitedOverridesRunnerBudget(t *testing.T) {
+	backend := &scriptBackend{
+		parse: lineParser,
+		turns: []Turn{
+			{Text: "TOOL read_file", PromptTokens: 100, CompletionTokens: 100},
+			{Text: "FINAL: complete", PromptTokens: 1, CompletionTokens: 1},
+		},
+	}
+	r := NewLoopRunner(LoopRunnerConfig{Backend: backend, MaxIterations: 10, MaxTokens: 10})
+	res, err := r.Run(context.Background(), v2.TaskPacket{TaskID: "T-unlimited", MaxTokens: v2.UnlimitedTokens}, AgentRuntime{AgentID: "muse"})
+	if err != nil {
+		t.Fatalf("unlimited packet budget should not trip runner budget: %v", err)
+	}
+	if res.Summary != "complete" {
+		t.Fatalf("summary = %q", res.Summary)
+	}
+}
+
+func TestLoopRunner_TokenBudgetStopsOverBudgetFinal(t *testing.T) {
+	backend := &scriptBackend{
+		parse: lineParser,
+		turns: []Turn{{Text: "FINAL: complete", PromptTokens: 100, CompletionTokens: 100}},
+	}
+	r := NewLoopRunner(LoopRunnerConfig{Backend: backend, MaxIterations: 10, MaxTokens: 150})
+	res, err := r.Run(context.Background(), v2.TaskPacket{TaskID: "T-final"}, AgentRuntime{AgentID: "muse"})
+	if err == nil || !strings.Contains(err.Error(), "token budget 150 exhausted") {
+		t.Fatalf("expected token-budget error, got %v", err)
+	}
+	if res.Summary == "complete" {
+		t.Fatalf("over-budget final answer should not be reported as success: %+v", res)
+	}
+}

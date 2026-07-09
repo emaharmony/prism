@@ -80,6 +80,9 @@ type TaskPacket struct {
 	// RequiredCapability, when set, is the capability the target agent must hold
 	// to run this task (capability-aware routing). Empty = no requirement.
 	RequiredCapability string `json:"required_capability,omitempty"`
+	// MaxTokens is the delegated task ceiling inherited from the parent run.
+	// -1 means unlimited, 0 means the worker default, >0 means this cap.
+	MaxTokens int `json:"max_tokens,omitempty"`
 }
 
 type TaskContext struct {
@@ -95,6 +98,11 @@ type TaskCompletion struct {
 	OutputSummary string              `json:"output_summary"`
 	Artifacts     CompletionArtifacts `json:"artifacts"`
 	ReviewNotes   string              `json:"review_notes,omitempty"`
+	// PromptTokens/CompletionTokens are the sub-agent's LLM usage for this task, so
+	// delegated spend rolls up into the parent run's token budget (see
+	// HandleTaskCompletion). Zero when the worker did not report usage.
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
 }
 
 type CompletionArtifacts struct {
@@ -170,6 +178,12 @@ func (dm *DelegationManager) HandleTaskCompletion(completion TaskCompletion, sta
 		}
 	}
 	state.mu.Unlock()
+
+	// Roll the sub-agent's token usage into the parent run's budget so delegated
+	// spend counts against global.max_total_tokens (it was previously invisible).
+	if completion.PromptTokens > 0 || completion.CompletionTokens > 0 {
+		state.AddTokens(completion.PromptTokens, completion.CompletionTokens)
+	}
 
 	// Update task status
 	artifactsData := map[string]any{

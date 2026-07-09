@@ -405,7 +405,7 @@ type ProjectConfig struct {
 	WorkflowConfig string `yaml:"workflow_config"`
 
 	// TokenBudget optionally overrides the workflow's global max_total_tokens for
-	// this project. Zero uses the workflow/default cap.
+	// this project. -1 = unlimited, 0 uses the workflow/default cap, >0 = explicit cap.
 	TokenBudget int `yaml:"token_budget"`
 
 	// Orchestrator optionally names the agent ID whose model drives this
@@ -928,8 +928,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
 	}
 	for i, p := range c.Projects {
-		if p.TokenBudget < 0 {
-			return fmt.Errorf("config: projects[%d].token_budget must be >= 0", i)
+		if p.TokenBudget < -1 {
+			return fmt.Errorf("config: projects[%d].token_budget must be -1 (unlimited), 0 (workflow/default), or a positive cap", i)
 		}
 	}
 	if c.Codex.Enabled {

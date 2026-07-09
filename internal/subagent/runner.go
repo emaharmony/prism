@@ -61,7 +61,7 @@ type LoopRunner struct {
 type LoopRunnerConfig struct {
 	Backend       Backend
 	MaxIterations int // 0 → DefaultMaxIterations
-	MaxTokens     int // 0 → DefaultMaxTokens
+	MaxTokens     int // 0 -> DefaultSubAgentTokenBudget, -1 -> unlimited
 	// SystemPrompt overrides the default task charter builder.
 	SystemPrompt func(packet v2.TaskPacket, runtime AgentRuntime) string
 	// Scope enforces per-agent tool scoping. nil disables it (any registered
@@ -72,16 +72,19 @@ type LoopRunnerConfig struct {
 // DefaultMaxIterations bounds a single delegated task's tool-loop turns.
 const DefaultMaxIterations = 25
 
-// DefaultMaxTokens bounds aggregate prompt+completion tokens for one delegated task.
-const DefaultMaxTokens = 100_000
+// DefaultSubAgentTokenBudget bounds aggregate prompt+completion tokens for one delegated task.
+const DefaultSubAgentTokenBudget = 100_000
+
+// DefaultMaxTokens is kept as a compatibility alias for older callers.
+const DefaultMaxTokens = DefaultSubAgentTokenBudget
 
 // NewLoopRunner builds a LoopRunner from config.
 func NewLoopRunner(cfg LoopRunnerConfig) *LoopRunner {
 	if cfg.MaxIterations <= 0 {
 		cfg.MaxIterations = DefaultMaxIterations
 	}
-	if cfg.MaxTokens <= 0 {
-		cfg.MaxTokens = DefaultMaxTokens
+	if cfg.MaxTokens == 0 || cfg.MaxTokens < v2.UnlimitedTokens {
+		cfg.MaxTokens = DefaultSubAgentTokenBudget
 	}
 	sp := cfg.SystemPrompt
 	if sp == nil {
@@ -112,23 +115,42 @@ func (r *LoopRunner) Run(ctx context.Context, packet v2.TaskPacket, runtime Agen
 	}
 
 	artifacts := newArtifactSet()
-	totalTokens := 0
+	maxTokens := r.maxTokens
+	if packet.MaxTokens != 0 {
+		maxTokens = packet.MaxTokens
+	}
+	if maxTokens < v2.UnlimitedTokens {
+		maxTokens = r.maxTokens
+	}
+	totalPrompt, totalCompletion := 0, 0
+	// usage snapshots the accumulated token counts onto any RunResult (success or
+	// failure) so delegated spend is never lost from the parent budget.
+	usage := func(r RunResult) RunResult {
+		r.PromptTokens, r.CompletionTokens = totalPrompt, totalCompletion
+		return r
+	}
 
 	for i := 0; i < r.maxIterations; i++ {
 		if err := ctx.Err(); err != nil {
-			return RunResult{}, err
+			return usage(RunResult{}), err
 		}
 
 		turn, err := llm(ctx, messages)
 		if err != nil {
-			return RunResult{}, fmt.Errorf("model turn %d: %w", i+1, err)
+			return usage(RunResult{}), fmt.Errorf("model turn %d: %w", i+1, err)
 		}
-		totalTokens += turn.PromptTokens + turn.CompletionTokens
+		totalPrompt += turn.PromptTokens
+		totalCompletion += turn.CompletionTokens
 		messages = append(messages, v2.Message{Role: "assistant", Content: turn.Text})
+		usedTokens := totalPrompt + totalCompletion
+		if maxTokens > 0 && usedTokens >= maxTokens {
+			summary := fmt.Sprintf("token budget %d exhausted after %d turns", maxTokens, i+1)
+			return usage(RunResult{Summary: summary, Artifacts: artifacts.result()}), fmt.Errorf("%s", summary)
+		}
 
 		action := parse(turn.Text)
 		if action.Final {
-			return RunResult{Summary: strings.TrimSpace(action.Content), Artifacts: artifacts.result()}, nil
+			return usage(RunResult{Summary: strings.TrimSpace(action.Content), Artifacts: artifacts.result()}), nil
 		}
 
 		if action.Tool == "" {
@@ -153,12 +175,9 @@ func (r *LoopRunner) Run(ctx context.Context, packet v2.TaskPacket, runtime Agen
 			messages = append(messages, v2.Message{Role: "user", Content: truncate(fmt.Sprintf("Tool %q result:\n%s", action.Tool, result), 3000)})
 		}
 
-		if r.maxTokens > 0 && totalTokens >= r.maxTokens {
-			return RunResult{}, fmt.Errorf("token budget %d exhausted after %d turns", r.maxTokens, i+1)
-		}
 	}
 
-	return RunResult{}, fmt.Errorf("task %q did not complete within %d iterations", packet.TaskID, r.maxIterations)
+	return usage(RunResult{Artifacts: artifacts.result()}), fmt.Errorf("task %q did not complete within %d iterations", packet.TaskID, r.maxIterations)
 }
 
 // artifactSet dedupes file paths touched during a run so the completion reports

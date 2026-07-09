@@ -58,6 +58,19 @@ steps:
 | `version` | number | Recommended | Workflow version |
 | `steps` | list | Yes | Ordered workflow steps |
 
+### Natural Gates Token Budgets
+
+Natural Gates workflow configs (`version: 2`, such as `examples/workflows/gated-loop.yaml`) use `global.max_total_tokens` as the run-wide prompt+completion ceiling:
+
+| Value | Meaning |
+|---:|---|
+| `-1` | Explicitly unlimited. Use only when an external guardrail bounds the run. |
+| `0` or omitted | Built-in default ceiling (`2,000,000` tokens). |
+| Positive integer | Explicit run ceiling in tokens. |
+| Less than `-1` | Invalid; config loading rejects it. |
+
+Project entries in `prism.yaml` may set `projects[].token_budget` with the same `-1` / `0` / positive semantics. A project token budget overrides the workflow's `global.max_total_tokens` for that project.
+
 ### Step Fields
 
 | Field | Type | Required? | Description |

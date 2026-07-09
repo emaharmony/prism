@@ -55,6 +55,7 @@ import (
 
 	"github.com/emaharmony/prism/internal/agentns"
 	"github.com/emaharmony/prism/internal/autopatch"
+	costpkg "github.com/emaharmony/prism/internal/cost"
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/editor"
 	"github.com/emaharmony/prism/internal/invocation"
@@ -70,13 +71,13 @@ import (
 
 // Server provides the Prism HTTP API.
 type Server struct {
-	addr      string
-	orch      *orchestrator.Orchestrator
-	store     *task.Store
-	sessions  *session.Manager
-	engine    *delegation.Engine
-	approval  *delegation.ApprovalManager
-	tracker   *delegation.Tracker
+	addr        string
+	orch        *orchestrator.Orchestrator
+	store       *task.Store
+	sessions    *session.Manager
+	engine      *delegation.Engine
+	approval    *delegation.ApprovalManager
+	tracker     *delegation.Tracker
 	autopatch   AutoPatchStarter
 	nc          *nats.Conn
 	mux         *http.ServeMux
@@ -1164,12 +1165,94 @@ func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cost data comes from the cost tracker in the orchestrator
-	// For now, return a placeholder
+	reports, err := s.workflowCostReports()
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	total := costpkg.CostReport{RunID: "all", ByProvider: map[string]float64{}, ByModel: map[string]float64{}, ByAgent: map[string]int{}}
+	for _, report := range reports {
+		total.TotalTokens += report.TotalTokens
+		total.PromptTokens += report.PromptTokens
+		total.CompletionTokens += report.CompletionTokens
+		total.EstimatedCostUsd += report.EstimatedCostUsd
+		total.EventCount += report.EventCount
+		for k, v := range report.ByProvider {
+			total.ByProvider[k] += v
+		}
+		for k, v := range report.ByModel {
+			total.ByModel[k] += v
+		}
+		for k, v := range report.ByAgent {
+			total.ByAgent[k] += v
+		}
+	}
 	writeJSON(w, map[string]any{
-		"note":      "cost tracking endpoint — integrate with internal/cost",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"run_id":             total.RunID,
+		"total_tokens":       total.TotalTokens,
+		"prompt_tokens":      total.PromptTokens,
+		"completion_tokens":  total.CompletionTokens,
+		"estimated_cost_usd": total.EstimatedCostUsd,
+		"event_count":        total.EventCount,
+		"by_provider":        total.ByProvider,
+		"by_model":           total.ByModel,
+		"by_agent":           total.ByAgent,
+		"runs":               reports,
+		"workflow_state_dir": s.workflowStateDir(),
+		"timestamp":          time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) workflowCostReports() ([]costpkg.CostReport, error) {
+	dir := s.workflowStateDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []costpkg.CostReport{}, nil
+		}
+		return nil, err
+	}
+	seen := map[string]bool{}
+	reports := make([]costpkg.CostReport, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "workflow-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		state, err := v2.LoadWorkflowState(filepath.Join(dir, name))
+		if err != nil || state.RunID == "" || seen[state.RunID] {
+			continue
+		}
+		seen[state.RunID] = true
+		reports = append(reports, workflowCostReport(dir, state))
+	}
+	if current, err := v2.LoadCurrentWorkflowState(dir); err == nil && current.RunID != "" && !seen[current.RunID] {
+		reports = append(reports, workflowCostReport(dir, current))
+	}
+	sort.Slice(reports, func(i, j int) bool { return reports[i].RunID > reports[j].RunID })
+	return reports, nil
+}
+
+func workflowCostReport(stateDir string, state *v2.WorkflowState) costpkg.CostReport {
+	report, err := costpkg.ReportFromRunDir(state.RunID, filepath.Join(stateDir, state.RunID))
+	if err != nil {
+		report = &costpkg.CostReport{RunID: state.RunID, ByProvider: map[string]float64{}, ByModel: map[string]float64{}, ByAgent: map[string]int{}}
+	}
+	if report.TotalTokens == 0 {
+		report.PromptTokens = state.TotalPromptTokens
+		report.CompletionTokens = state.TotalCompletionTokens
+		report.TotalTokens = state.TotalPromptTokens + state.TotalCompletionTokens
+	}
+	report.Status = string(state.Status)
+	report.MaxTokens = state.MaxTotalTokens
+	if report.MaxTokens > 0 {
+		report.RemainingTokens = report.MaxTokens - report.TotalTokens
+		if report.RemainingTokens < 0 {
+			report.RemainingTokens = 0
+		}
+		report.PercentUsed = float64(report.TotalTokens) / float64(report.MaxTokens) * 100
+	}
+	return *report
 }
 
 // --- Workflow SVG ---

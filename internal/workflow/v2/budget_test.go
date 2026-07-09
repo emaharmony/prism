@@ -10,6 +10,15 @@ import (
 type captureEmitter struct{ events []string }
 
 func (c *captureEmitter) Emit(t string, _ map[string]any) { c.events = append(c.events, t) }
+func (c *captureEmitter) count(t string) int {
+	n := 0
+	for _, e := range c.events {
+		if e == t {
+			n++
+		}
+	}
+	return n
+}
 func (c *captureEmitter) has(t string) bool {
 	for _, e := range c.events {
 		if e == t {
@@ -45,11 +54,14 @@ func TestDriveStopsOnTokenBudget(t *testing.T) {
 	if !em.has("workflow.budget_exhausted") {
 		t.Fatalf("expected workflow.budget_exhausted event, got %v", em.events)
 	}
+	if got := em.count("workflow.budget_exhausted"); got != 1 {
+		t.Fatalf("workflow.budget_exhausted emitted %d times, want 1 (%v)", got, em.events)
+	}
 	if used := state.GetTotalPromptTokens() + state.GetTotalCompletionTokens(); used < 5 {
 		t.Fatalf("expected at least the budget in tokens, got %d", used)
 	}
-	if state.Status != StatusCompleted {
-		t.Fatalf("budget-exhausted run should finalize as completed, got %s", state.Status)
+	if state.Status != StatusBudgetExhausted {
+		t.Fatalf("budget-exhausted run should finalize as %s, got %s", StatusBudgetExhausted, state.Status)
 	}
 }
 
@@ -144,5 +156,116 @@ func TestBudgetExceededTokensOnly(t *testing.T) {
 	e2.state.AddTokens(DefaultMaxTotalTokens, 0)
 	if r := e2.budgetExceeded(time.Time{}); r == "" {
 		t.Fatal("expected default token ceiling to trip")
+	}
+}
+
+// -1 is the explicit "unlimited" opt-out: it must survive NewEngine normalization
+// and never trip the ceiling, even past the default cap.
+func TestBudgetUnlimitedNeverTrips(t *testing.T) {
+	cfg := execVerifyConfig(false)
+	cfg.Global.MaxTotalTokens = UnlimitedTokens
+	e := NewEngine(cfg, nil, nil)
+	if e.config.Global.MaxTotalTokens != UnlimitedTokens {
+		t.Fatalf("NewEngine must preserve the unlimited sentinel, got %d", e.config.Global.MaxTotalTokens)
+	}
+	e.state.AddTokens(DefaultMaxTotalTokens*3, 0)
+	if r := e.budgetExceeded(time.Time{}); r != "" {
+		t.Fatalf("unlimited ceiling must never trip, got %q", r)
+	}
+}
+
+// A delegated sub-agent's token spend must roll up into the parent run's budget so
+// it counts against global.max_total_tokens (previously it was invisible).
+func TestHandleTaskCompletionRollsUpTokens(t *testing.T) {
+	st := NewWorkflowState(&WorkflowConfig{Name: "x", Version: 2, Phases: []PhaseConfig{{Name: "EXECUTION"}}})
+	dm := &DelegationManager{}
+	before := st.GetTotalTokens()
+	dm.HandleTaskCompletion(TaskCompletion{
+		TaskID: "T1", Status: "completed", PromptTokens: 120, CompletionTokens: 80,
+	}, st)
+	if got := st.GetTotalTokens() - before; got != 200 {
+		t.Fatalf("sub-agent tokens not rolled up: parent gained %d, want 200", got)
+	}
+}
+
+// A cap below the unlimited sentinel (e.g. a typo like -100) is invalid and must be
+// rejected on the load path, not silently disable the budget.
+func TestLoadConfigRejectsInvalidNegativeTokens(t *testing.T) {
+	bad := `{"name":"bad","version":2,"global":{"max_total_tokens":-100},"phases":[{"name":"REPORT","type":"report","max_iterations":1,"gate":{"type":"report_completeness"}}]}`
+	if _, err := parseConfigBytes([]byte(bad), "bad.json"); err == nil {
+		t.Fatal("expected max_total_tokens < -1 to be rejected on load")
+	}
+	// -1 (unlimited) and 0 (default) must still load cleanly.
+	for _, ok := range []string{
+		`{"name":"u","version":2,"global":{"max_total_tokens":-1},"phases":[{"name":"REPORT","type":"report","max_iterations":1,"gate":{"type":"report_completeness"}}]}`,
+		`{"name":"z","version":2,"global":{"max_total_tokens":0},"phases":[{"name":"REPORT","type":"report","max_iterations":1,"gate":{"type":"report_completeness"}}]}`,
+	} {
+		if _, err := parseConfigBytes([]byte(ok), "ok.json"); err != nil {
+			t.Fatalf("valid token cap rejected: %v", err)
+		}
+	}
+}
+
+func TestDriveEstimatesZeroUsageProviderForBudget(t *testing.T) {
+	cfg := &WorkflowConfig{
+		Name: "zero-usage", Version: 2,
+		Global: GlobalConfig{MaxTotalIterations: 10, MaxTotalTokens: 10},
+		Phases: []PhaseConfig{{Name: "PROBE", Type: "probe", MaxIterations: 5, Gate: GateConfig{Type: "assumption_threshold", Threshold: 2.0}}},
+	}
+	em := &captureEmitter{}
+	engine := NewEngine(cfg, em, nil)
+	llm := func(_ context.Context, _ []Message) (string, int, int, error) {
+		return strings.Repeat("x", 200), 0, 0, nil
+	}
+	state, err := engine.Drive(context.Background(), llm, noopTool, DriveOptions{SystemPrompt: "system", UserPrompt: "user"})
+	if err != nil {
+		t.Fatalf("Drive returned error: %v", err)
+	}
+	if state.GetTotalTokens() == 0 {
+		t.Fatal("expected estimated tokens to be recorded")
+	}
+	if state.Status != StatusBudgetExhausted {
+		t.Fatalf("zero-usage provider should still trip budget, got %s", state.Status)
+	}
+}
+
+func TestHandleDelegatePassesRemainingTokenBudget(t *testing.T) {
+	cfg := &WorkflowConfig{
+		Name: "delegate-budget", Version: 2,
+		Global: GlobalConfig{MaxTotalTokens: 100},
+		Phases: []PhaseConfig{{Name: "EXECUTION", Type: "execution", MaxIterations: 1}},
+	}
+	dm := NewDelegationManager("tasks", "complete")
+	engine := NewEngine(cfg, nil, dm)
+	engine.GetState().Plan = &PlanGraph{Tasks: []PlanTask{{ID: "T1", Agent: "coder", Description: "do it"}}}
+	engine.GetState().AddTokens(30, 20)
+	var published TaskPacket
+	engine.SetTaskPublisher(func(p TaskPacket) error { published = p; return nil })
+	msg := engine.handleDelegate(context.Background(), &ToolRequest{Input: map[string]any{"task_id": "T1"}})
+	if !strings.Contains(msg, "dispatched") {
+		t.Fatalf("expected delegation dispatch, got %q", msg)
+	}
+	if published.MaxTokens != 50 {
+		t.Fatalf("delegated max_tokens = %d, want remaining budget 50", published.MaxTokens)
+	}
+}
+
+func TestHandleDelegateBlocksWhenNoRunBudgetRemains(t *testing.T) {
+	cfg := &WorkflowConfig{
+		Name: "delegate-budget", Version: 2,
+		Global: GlobalConfig{MaxTotalTokens: 100},
+		Phases: []PhaseConfig{{Name: "EXECUTION", Type: "execution", MaxIterations: 1}},
+	}
+	engine := NewEngine(cfg, nil, NewDelegationManager("tasks", "complete"))
+	engine.GetState().Plan = &PlanGraph{Tasks: []PlanTask{{ID: "T1", Agent: "coder", Description: "do it"}}}
+	engine.GetState().AddTokens(100, 0)
+	published := false
+	engine.SetTaskPublisher(func(p TaskPacket) error { published = true; return nil })
+	msg := engine.handleDelegate(context.Background(), &ToolRequest{Input: map[string]any{"task_id": "T1"}})
+	if !strings.Contains(msg, "token budget exhausted") {
+		t.Fatalf("expected budget exhaustion message, got %q", msg)
+	}
+	if published {
+		t.Fatal("delegation should not publish when no run budget remains")
 	}
 }

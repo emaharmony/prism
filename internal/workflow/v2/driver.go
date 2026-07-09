@@ -133,8 +133,14 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 	// stuck loop (the model retrying the same action with no progress).
 	repeats := map[string]int{}
 
+	// runBudgetHit records the reason the run-wide ceiling (tokens or wall-clock)
+	// tripped, if it did. It drives the terminal status (StatusBudgetExhausted) and
+	// ensures a budget-killed phase isn't relabeled as a gate pass or re-emitted.
+	var runBudgetHit string
+
 	for e.state.CurrentPhaseIdx >= 0 && e.state.CurrentPhaseIdx < len(e.phases) {
 		if reason := e.budgetExceeded(deadline); reason != "" {
+			runBudgetHit = reason
 			e.emitEvent("workflow.budget_exhausted", map[string]any{"phase": e.phases[e.state.CurrentPhaseIdx].Name(), "reason": reason})
 			log.Printf("[V2] budget exhausted before phase: %s", reason)
 			break
@@ -229,9 +235,13 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 		messages = append(messages, Message{Role: "system", Content: e.phaseGuidance(phase)})
 
 		completed := false
+		// phaseBudgetHit records that the per-phase token cap stopped this phase
+		// (soft: the run continues to the next phase). Reset each phase.
+		phaseBudgetHit := false
 	iterLoop:
 		for iter := 0; iter < phase.MaxIterations() && totalIter < maxTotal; iter++ {
 			if reason := e.budgetExceeded(deadline); reason != "" {
+				runBudgetHit = reason
 				e.emitEvent("workflow.budget_exhausted", map[string]any{"phase": phaseName, "reason": reason})
 				log.Printf("[V2] budget exhausted in %s: %s", phaseName, reason)
 				break iterLoop
@@ -240,6 +250,7 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			// stops iterating and falls through to its fallback handling while
 			// the run continues.
 			if max := e.phaseMaxTokens(phaseName); max > 0 && e.state.GetPhaseTokens(phaseName) >= max {
+				phaseBudgetHit = true
 				e.emitEvent("phase.budget_exhausted", map[string]any{
 					"phase": phaseName, "tokens": e.state.GetPhaseTokens(phaseName), "max": max,
 				})
@@ -289,22 +300,33 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			}
 
 			text, pt, ct, err := llm(ctx, messages)
+			// Some providers/paths (e.g. certain Ollama/streaming responses) return
+			// no usage. Estimate from message/response length (~4 chars/token) so a
+			// 0-usage provider can't silently defeat the token ceiling.
+			if pt == 0 && ct == 0 {
+				ep, ec := estimatePromptTokens(messages), estimateTokens(text)
+				if ep > 0 || ec > 0 {
+					pt, ct = ep, ec
+					log.Printf("[V2] %s: provider reported no token usage; estimated %d prompt + %d completion", phaseName, pt, ct)
+				}
+			}
 			e.state.AddTokens(pt, ct)
 			e.state.AddPhaseTokens(phaseName, pt, ct)
+			if err != nil {
+				return e.state, fmt.Errorf("llm call in %s: %w", phaseName, err)
+			}
 			// Per-iteration token telemetry so live observers (e.g. `prism watch`)
-			// can render a budget burn-down. Purely observational.
+			// can render a budget burn-down. Purely observational; emitted only for
+			// a successful call.
 			e.emitEvent("phase.tokens", map[string]any{
 				"phase":       phaseName,
 				"prompt":      e.state.GetTotalPromptTokens(),
 				"completion":  e.state.GetTotalCompletionTokens(),
-				"total":       e.state.GetTotalPromptTokens() + e.state.GetTotalCompletionTokens(),
+				"total":       e.state.GetTotalTokens(),
 				"max":         e.config.Global.MaxTotalTokens,
 				"phase_total": e.state.GetPhaseTokens(phaseName),
 				"phase_max":   e.phaseMaxTokens(phaseName),
 			})
-			if err != nil {
-				return e.state, fmt.Errorf("llm call in %s: %w", phaseName, err)
-			}
 			messages = append(messages, Message{Role: "assistant", Content: text})
 
 			action, _ := phase.RunIteration(ctx, e.state, text)
@@ -465,11 +487,29 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			}
 		}
 
+		// Run-wide ceiling cut this phase off mid-flight: end the run here without
+		// masking it as a gate pass / iteration exhaustion, and without re-checking
+		// (and re-emitting) the budget event at the top of the outer loop.
+		if runBudgetHit != "" {
+			if !e.state.RolledBack() {
+				e.state.SetPhaseStatus(phaseName, PhaseStatusFallback)
+			}
+			if err := phase.Exit(ctx, e.state); err != nil {
+				log.Printf("[V2] phase %s exit: %v", phaseName, err)
+			}
+			e.emitEvent("phase.exited", map[string]any{"phase": phaseName})
+			break
+		}
+
 		if !completed && !e.state.RolledBack() {
 			if e.gatePasses(phaseName) {
 				completed = true
 			} else {
-				e.emitEvent("phase.fallback", map[string]any{"phase": phaseName, "reason": "max_iterations_reached"})
+				reason := "max_iterations_reached"
+				if phaseBudgetHit {
+					reason = "phase_token_budget_exhausted"
+				}
+				e.emitEvent("phase.fallback", map[string]any{"phase": phaseName, "reason": reason})
 				e.state.SetPhaseStatus(phaseName, PhaseStatusFallback)
 				if cfg := e.config.GetPhase(phaseName); cfg != nil && cfg.Fallback.Blocks {
 					// V57: a blocking-phase fallback ends the run — discard its
@@ -517,13 +557,16 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 		}
 	}
 
-	if e.state.RolledBack() {
+	switch {
+	case e.state.RolledBack():
 		e.state.Status = StatusRolledBack
-	} else {
+	case runBudgetHit != "":
+		e.state.Status = StatusBudgetExhausted
+	default:
 		e.state.Status = StatusCompleted
 	}
 	e.state.CompletedAt = time.Now().UTC().Format(time.RFC3339)
-	e.emitEvent("workflow.completed", map[string]any{"workflow": e.config.Name})
+	e.emitEvent("workflow.completed", map[string]any{"workflow": e.config.Name, "status": string(e.state.Status)})
 	if opts.StateDir != "" {
 		_ = SaveWorkflowState(e.state, opts.StateDir)
 		_ = SaveCurrentWorkflowState(e.state, opts.StateDir)
@@ -585,12 +628,48 @@ func (e *Engine) injectGateReason(phaseName string, messages *[]Message) {
 	}
 }
 
+// remainingRunTokens returns the delegated task ceiling inherited from the parent
+// run. -1 means unlimited, 0 means no budget remains, positive is remaining tokens.
+func (e *Engine) remainingRunTokens() int {
+	if e == nil || e.config == nil || e.state == nil {
+		return 0
+	}
+	max := e.config.Global.MaxTotalTokens
+	if max == UnlimitedTokens {
+		return UnlimitedTokens
+	}
+	if max <= 0 {
+		return 0
+	}
+	used := e.state.GetTotalTokens()
+	if used >= max {
+		return 0
+	}
+	return max - used
+}
+
 // phaseMaxTokens returns a phase's configured token cap (0 = none).
 func (e *Engine) phaseMaxTokens(phaseName string) int {
 	if cfg := e.config.GetPhase(phaseName); cfg != nil {
 		return cfg.MaxTokens
 	}
 	return 0
+}
+
+// estimateTokens approximates a token count from character length (~4 chars/token).
+// Used only as a fallback when a provider reports no usage, so the budget stays
+// meaningful rather than silently no-op.
+func estimateTokens(s string) int {
+	return (len(s) + 3) / 4
+}
+
+// estimatePromptTokens approximates prompt tokens from all message content.
+func estimatePromptTokens(msgs []Message) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content)
+	}
+	return (n + 3) / 4
 }
 
 // doRollback fires the injected V57 rollback runner (if any), emits the
@@ -747,10 +826,15 @@ func (e *Engine) handleDelegate(ctx context.Context, req *ToolRequest) string {
 			return fmt.Sprintf("delegate: agent %q is offline. Assign an available agent or handle the task yourself.", task.Agent)
 		}
 	}
+	remainingTokens := e.remainingRunTokens()
+	if remainingTokens == 0 {
+		return fmt.Sprintf("delegate: token budget exhausted before task %q could be delegated.", taskID)
+	}
 	del, packet, err := e.delegation.DelegateTask(ctx, *task, e.state)
 	if err != nil {
 		return fmt.Sprintf("delegate: failed to delegate %q: %v", taskID, err)
 	}
+	packet.MaxTokens = remainingTokens
 	published := "recorded (no transport configured)"
 	if e.publishTask != nil {
 		if perr := e.publishTask(packet); perr != nil {
@@ -786,7 +870,7 @@ func (e *Engine) budgetExceeded(deadline time.Time) string {
 		return fmt.Sprintf("max_total_time exceeded (%s)", e.config.Global.MaxTotalTime)
 	}
 	if max := e.config.Global.MaxTotalTokens; max > 0 {
-		if used := e.state.GetTotalPromptTokens() + e.state.GetTotalCompletionTokens(); used >= max {
+		if used := e.state.GetTotalTokens(); used >= max {
 			return fmt.Sprintf("max_total_tokens exceeded (%d/%d)", used, max)
 		}
 	}
