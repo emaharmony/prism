@@ -63,13 +63,15 @@ docs/PUDGYPOWER-FACTORY-RUNBOOK.md
 /campaign
 /references
 
-# AI assistant tooling — local state, chat history, and caches (not project source).
-# NOTE: CLAUDE.md, AGENTS.md, .cursorrules, and .github/copilot-instructions.md are
-# deliberately NOT ignored — those are commonly committed on purpose.
+# .junie and other session artifacts
+/.junie/
 /.claude/
 /.codex/
-/.junie/
 /.gemini/
+/.output.txt
+/~
+
+# AI assistant tooling — local state, chat history, and caches (not project source).
 .cursor/
 .aider*
 .specstory/
