@@ -15,37 +15,13 @@ Checked-in root binaries can lag behind source. For a fresh setup, build from `c
 
 ---
 
-## Status
+## Stability
 
 Prism is in **public-preview** development. It is source-available, local-first,
 and **not production-ready**.
 
-**Stable enough to explore:**
-
-- local CLI workflows and the event spine
-- workflow runtime and run artifacts
-- policy checks and tool execution
-- approvals / validation / review
-- event logging and local run inspection
-
-**Experimental (opt-in, off by default):**
-
-- multi-agent delegation and sub-agent workers
-- MCP client integration
-- self-patching / autopatch
-- cross-Prism bridge and Factory handoff
-- external provider integrations (OpenAI, Anthropic, Gemini, Claude Code, Codex)
-- Remembrance memory integration
-- scheduler / dashboard-editor features
-
-**Not production-ready / out of scope:**
-
-- high-risk unattended automation
-- live trading or financial execution
-- unattended code mutation without human review
-- enterprise multi-user deployment
-
-See the [Capability Status](./docs/CAPABILITY_STATUS.md) matrix for detail.
+For a detailed breakdown of feature stability and production recommendations, see the [Stability Matrix](./docs/reference/stability-matrix.md).
+Current project quality metrics are available in [QUALITY.md](./QUALITY.md).
 
 ---
 

@@ -8,52 +8,39 @@ design note. New here? Read [Getting Started](GETTING_STARTED.md) first.
 > experimental. See [Capability Status](CAPABILITY_STATUS.md) before relying on any
 > capability.
 
-## Guides
+## 🚀 Getting Started
+*   [Introduction](./getting-started/GETTING_STARTED.md) - What is Prism?
+*   [Onboarding](./getting-started/ONBOARDING.md) - Step-by-step setup.
+*   [Windows Setup](./getting-started/WINDOWS_SETUP.md) - Specific instructions for Windows users.
+*   [Examples](./getting-started/EXAMPLES.md) - Sample workflows and configurations.
 
-Practical, task-oriented docs for getting things done.
+## 🧠 Concepts
+*   [Architecture Overview](./architecture/product-layers.md) - Product layers and trust boundaries.
+*   [System Overview](./architecture/ARCHITECTURE.md) - High-level architectural design.
+*   [Safety & Policy](./concepts/SAFETY.md) - How Prism ensures safe execution.
+*   [Prism Vision](./concepts/PRISM-VISION.md) - The core philosophy and long-term goals.
 
-| Doc | What it covers |
-|---|---|
-| [Getting Started](GETTING_STARTED.md) | Install, build, test, and run your first workflow. |
-| [Configuration](CONFIGURATION.md) | Where config files live and how Prism loads them. |
-| [Commands](COMMANDS.md) | The CLI command surface and what each does. |
-| [Examples](EXAMPLES.md) | Guided demo flows. |
-| [Scheduler](SCHEDULER.md) | Cron jobs and scheduled wake actions. |
-| [Windows Setup](WINDOWS_SETUP.md) | Windows-specific build and run notes. |
-| [Troubleshooting](TROUBLESHOOTING.md) | Common setup and runtime issues. |
-| [Onboarding](ONBOARDING.md) | Developer onboarding for contributors. |
+## 🛠️ Reference
+*   [Stability Matrix](./reference/stability-matrix.md) - Feature status and production readiness.
+*   [Command Reference](./reference/COMMANDS.md) - CLI usage and options.
+*   [YAML Reference](./reference/YAML_REFERENCE.md) - Configuration schema details.
+*   [Event Manual](./reference/EVENT-MANUAL.md) - Detailed guide to the Prism event system.
+*   [Capability Status](./reference/CAPABILITY_STATUS.md) - Detailed matrix of agent capabilities.
 
-## Reference
+## ⚙️ Operations
+*   [Configuration Guide](./operations/CONFIGURATION.md) - How to configure Prism.
+*   [Scheduler](./operations/SCHEDULER.md) - Running periodic tasks.
+*   [Troubleshooting](./operations/TROUBLESHOOTING.md) - Common issues and solutions.
+*   [Public Preview Checklist](./operations/PUBLIC_PREVIEW_CHECKLIST.md) - Requirements for the preview phase.
 
-Look-up material: schemas, status, and safety.
+## 📈 Quality & Engineering
+*   [Repository Assessment](./quality/repository-assessment.md) - Current state and risk analysis.
+*   [Repository Hygiene](./quality/repository-hygiene.md) - Rules for repository cleanliness.
 
-| Doc | What it covers |
-|---|---|
-| [YAML Reference](YAML_REFERENCE.md) | Workflow, policy, adapter, provider, and agent YAML. |
-| [Capability Status](CAPABILITY_STATUS.md) | Stable vs. experimental features, and safe defaults. |
-| [Safety Model](SAFETY.md) | Human-in-the-loop, policy vs. validators, autopatch risks. |
-| [Event Manual](EVENT-MANUAL.md) | The canonical event types and how the bus is used. |
-
-## Architecture & Design
-
-How Prism is built and why.
-
-| Doc | What it covers |
-|---|---|
-| [Architecture](ARCHITECTURE.md) | A concise map of how Prism works internally. |
-| [System Design](DESIGN.md) | The full design rationale. |
-| [Natural Gates Workflow](natural-gates-workflow.md) | The gated-loop (V2) workflow that drives autonomous runs. |
-| [Vision](PRISM-VISION.md) | The long-term product vision. |
-| [Roadmap](ROADMAP.md) | Project direction and priorities. |
-| [Version History](VERSION_HISTORY.md) | The annotated V1–V59 development story (links every design note). |
-| [Public Preview Checklist](PUBLIC_PREVIEW_CHECKLIST.md) | Release-prep status. |
-
-## Design Archive
-
-Per-version design notes (`V1`–`V59`), planning reviews, and historical handoffs
-live in **[`design/`](design/README.md)**. They record how the system was built and
-are kept for context, not as current user guides. [Version History](VERSION_HISTORY.md)
-is the best annotated index into the V-series.
+## 📜 History & Design
+*   [Design Milestones](./history/README.md) - Historical "V-series" design documents.
+*   [Version History](./history/VERSION_HISTORY.md) - Semantic release changelog.
+*   [Roadmap](./history/ROADMAP.md) - Future plans and goals.
 
 ## Contributing to the Docs
 

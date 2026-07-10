@@ -6,25 +6,71 @@ on:
   pull_request:
 
 jobs:
-  build-test:
+  lint-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
-          check-latest: true
-
-      - name: Vet (includes unreachable-code analysis)
+          cache: true
+      - name: Vet
         run: go vet ./...
+      - name: Staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+          install-go: false
 
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
       - name: Build
         run: go build ./...
-
       - name: Test
-        run: go test ./... -count=1
+        run: go test ./... -count=1 -coverprofile=coverage.out
+      - name: Test (race)
+        run: go test -race ./internal/bus/... ./internal/event/... ./internal/run/... ./internal/workflow/... ./internal/safety/... ./internal/policy/... ./internal/agent/... ./internal/orchestrator/... ./internal/task/... -count=1
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
 
-      - name: Test (race, core packages)
-        run: go test ./internal/stage/... ./internal/session/... ./internal/safety/... -race -count=1
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Test (Basic)
+        run: go test ./internal/safety/... ./internal/config/... ./internal/run/... -count=1
+      - name: CLI Smoke Test
+        run: go run ./cmd/prism-cli doctor
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          cd remembrance
+          pip install -r requirements.txt
+      - name: Test
+        run: |
+          cd remembrance
+          pytest tests/
