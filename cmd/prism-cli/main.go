@@ -65,6 +65,7 @@ import (
 	"github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/provider/ollama"
 	"github.com/emaharmony/prism/internal/provider/openai"
+	"github.com/emaharmony/prism/internal/version"
 )
 
 func main() {
@@ -610,7 +611,7 @@ func main() {
 	case "remembrance":
 		executeRemembrance(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.24.0")
+		fmt.Println(version.String())
 	default:
 		printUsage()
 		os.Exit(1)

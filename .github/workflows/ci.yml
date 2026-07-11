@@ -9,111 +9,157 @@ permissions:
   contents: read
 
 jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
+
   go-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.26.x"
-          check-latest: true
+          go-version: "1.26.5"
           cache: true
       - name: Formatting
         run: test -z "$(gofmt -l $(git ls-files '*.go'))"
-      - name: Vet
-        run: go vet ./...
-      - name: Build
-        run: go build ./...
-      - name: Test
-        run: go test ./... -count=1
-      - name: Integration tests
-        run: go test ./internal/integration/... -count=1
+      - name: Version contract
+        run: ./scripts/check-version.sh
+      - name: Vet and build
+        run: |
+          go vet ./...
+          go build ./...
+      - name: Deterministic tests
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          go test -json ./... -count=1 | tee test-results/go-test.json
       - name: Race tests
-        run: go test -race ./... -count=1
-      - name: Coverage
-        run: go test ./... -coverprofile=coverage.out -count=1
+        run: |
+          set -o pipefail
+          go test -race -json ./... -count=1 | tee test-results/go-race.json
+      - name: Coverage gates
+        run: ./scripts/coverage-gate.sh
+      - name: Benchmarks
+        run: go test ./internal/vector -run '^$' -bench . -benchmem -count=1 | tee test-results/benchmarks.txt
       - name: Staticcheck
-        uses: dominikh/staticcheck-action@v1
+        uses: dominikh/staticcheck-action@9716614d4101e79b4340dd97b10e54d68234e431 # v1.4.1
         with:
-          version: latest
+          version: "2026.1"
           install-go: false
       - name: Govulncheck
-        uses: golang/govulncheck-action@v1
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1
         with:
-          go-version-input: "1.26.x"
+          go-version-input: "1.26.5"
           go-package: ./...
       - name: Quality report
         if: always()
         run: ./scripts/quality-report.sh --output quality-report.md
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: go-quality-linux
           path: |
             coverage.out
+            coverage-gate.md
             quality-report.md
-          if-no-files-found: warn
+            test-results/
+          if-no-files-found: error
 
   go-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.26.x"
-          check-latest: true
+          go-version: "1.26.5"
           cache: true
-      - name: Build
-        run: go build ./...
-      - name: Test
-        run: go test ./... -count=1
-      - name: Build CLI
-        run: go build -o prism.exe ./cmd/prism-cli
+      - name: Version contract
+        shell: pwsh
+        run: ./scripts/check-version.ps1
+      - name: Build and test
+        shell: pwsh
+        run: |
+          go build ./...
+          New-Item -ItemType Directory -Force test-results | Out-Null
+          go test -json ./... -count=1 | Tee-Object test-results/go-test-windows.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Coverage gates
+        shell: pwsh
+        run: ./scripts/coverage-gate.ps1
       - name: CLI and filesystem smoke tests
         shell: pwsh
         run: |
-          .\prism.exe --help
-          .\prism.exe config --config prism.yaml.example --json
-          .\prism.exe doctor --config prism.yaml.example --json
-          .\prism.exe workflow run demo.echo_tool --run-dir .\test-results\runs
+          go build -o prism.exe ./cmd/prism-cli
+          ./prism.exe --help
+          ./prism.exe config --config prism.yaml.example --json
+          ./prism.exe doctor --config prism.yaml.example --json
+          ./prism.exe workflow run demo.echo_tool --run-dir ./test-results/runs
       - name: Quality inventory
+        if: always()
         shell: pwsh
-        run: .\scripts\quality-report.ps1 -Output quality-report.md
-      - uses: actions/upload-artifact@v4
+        run: ./scripts/quality-report.ps1 -Output quality-report.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: go-quality-windows
           path: |
+            coverage.out
+            coverage-gate.md
             quality-report.md
             test-results/
-          if-no-files-found: warn
+          if-no-files-found: error
 
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
           cache: pip
       - name: Install
         run: python -m pip install -e 'remembrance[dev]' -e 'sdk[dev]'
       - name: Test
-        run: python -m pytest remembrance/tests -q
-      - name: Lint
+        run: |
+          mkdir -p test-results
+          python -m pytest remembrance/tests sdk/tests -q --junitxml=test-results/pytest.xml
+      - name: Ruff
         run: python -m ruff check remembrance sdk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: python-quality
+          path: test-results/pytest.xml
+          if-no-files-found: error
 
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: DavidAnson/markdownlint-cli2-action@v19
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Local links
+        run: ./scripts/check-links.sh
+      - uses: DavidAnson/markdownlint-cli2-action@05f32210e84442804257b2a6f20b273450ec8265 # v19
         with:
           globs: |
             README.md
             QUALITY.md
             docs/**/*.md
-      - uses: lycheeverse/lychee-action@v2
+
+  release-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          args: --no-progress --exclude-path examples/runs -- README.md QUALITY.md docs/**/*.md
-          fail: true
+          go-version: "1.26.5"
+          cache: true
+      - name: Cross-compile archives
+        run: ./scripts/build-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-smoke
+          path: dist/
+          if-no-files-found: error
