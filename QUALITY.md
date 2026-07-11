@@ -17,6 +17,13 @@ tests, coverage, and tracked-worktree status. CI is the authoritative
 cross-platform record; local results can vary when optional toolchains are
 absent.
 
+The coverage contract is enforced by `scripts/coverage-gate.sh` and
+`scripts/coverage-gate.ps1`: at least 55% aggregate Go coverage, at least 80%
+for `safety`, `policy`, `approval`, `mutation`, `validation`, and `guard`, and
+at least 80% combined across the tool executor, policy, registry, and path
+boundary files. Local Markdown targets can be checked with the matching
+`scripts/check-links` script for the host shell.
+
 See [repository assessment](docs/quality/repository-assessment.md),
 [CI operations](docs/operations/ci.md), and
 [benchmarks](docs/quality/benchmarks.md).

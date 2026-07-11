@@ -11,10 +11,10 @@ Prism uses three independent version concepts:
   persisted-artifact contract. A schema changes only under that contract's
   compatibility rules; it does not advance automatically with a milestone.
 
-No release tag is currently present in the verified checkout. The CLI reports
-`v0.24.0`, while the changelog and Python packages currently describe `0.1.0`.
-That mismatch must be resolved by the maintainer before a public release; this
-documentation does not invent a canonical replacement.
+The canonical semantic version is `v0.1.0`. It is stored in the root `VERSION`
+contract and shared by the CLI, changelog, Prism SDK, and Remembrance package.
+Release builds embed the exact tag version. No release tag is present in this
+checkout; creating one remains a maintainer action.
 
 Historical milestone documents remain at `docs/V*-DESIGN.md` and are indexed
 in [Version History](../VERSION_HISTORY.md).
