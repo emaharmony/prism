@@ -14,6 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
+        with:
+          version: "1.7.12"
 
   go-linux:
     runs-on: ubuntu-latest
@@ -24,7 +26,7 @@ jobs:
           go-version: "1.26.5"
           cache: true
       - name: Formatting
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+        run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
       - name: Version contract
         run: ./scripts/check-version.sh
       - name: Vet and build

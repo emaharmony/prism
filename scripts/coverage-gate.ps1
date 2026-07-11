@@ -58,7 +58,7 @@ try {
         Invoke-Smoke @('adapter', 'health', 'echo')
         Invoke-Smoke @('projection', 'list')
         Invoke-Smoke @('skills', '--json')
-        Invoke-Smoke @('mcp', '--json')
+        Invoke-Smoke @('mcp', '--config', 'prism.yaml.example', '--json')
         Invoke-Smoke @('scan', '--json')
         Invoke-Smoke @('search', '--query', 'coverage', '--provider', 'mock')
         Invoke-Smoke @('approval', 'list')

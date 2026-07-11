@@ -13,7 +13,7 @@ Prism is an event-native agentic environment. Separate services communicate thro
 
 ## Service Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Prism Runtime                                │
 │                                                                   │
@@ -116,7 +116,7 @@ agents:
 
 The `id` field becomes the event namespace prefix. If omitted, auto-generated as `prism<N>`:
 
-```
+```text
 <agent-id>.agent.started          → Agent begins reasoning
 <agent-id>.agent.output           → Agent produces output
 <agent-id>.agent.completed       → Agent finishes
@@ -131,7 +131,7 @@ The `id` field becomes the event namespace prefix. If omitted, auto-generated as
 
 Service namespaces (Remembrance, adapters) use their own prefixes:
 
-```
+```text
 remembrance.memory.stored    → Context saved
 remembrance.memory.recalled  → Context retrieved
 remembrance.gate.extract    → Memory extraction triggered
@@ -139,7 +139,7 @@ remembrance.gate.extract    → Memory extraction triggered
 
 ### System Namespaces (shared)
 
-```
+```text
 prism.task.created           → Task created
 prism.task.completed         → Task finished
 prism.cost.tracked           → Token cost recorded
@@ -181,7 +181,7 @@ Events can trigger actions automatically — this is the webhook-style behavior:
 
 Sessions track conversations across messages, channels, and time.
 
-```
+```text
 Session {
     id:           string        // ULID, unique per session
     agent:        string        // Which agent (lumi, mango, etc.)
@@ -207,6 +207,7 @@ Session {
 ### Session → Remembrance Bridge
 
 Every `lumi.agent.output` and `mango.agent.output` event triggers Remembrance's gate pipeline:
+
 1. **Gate** — Is this worth remembering? (DistilBERT)
 2. **Extract** — What entities, facts, decisions are in this output? (Nemotron)
 3. **Persist** — Store in Remembrance DB with embeddings
@@ -272,7 +273,7 @@ The router decides which agent handles each message.
 
 ### Delegation Flow
 
-```
+```text
 You → "Lumi, fix the auth bug"
   → Lumi reasons: "I need to look at the code, write a fix, and run tests"
   → Lumi delegates to Mango: mango.task.created {parent: lumi.agent.output}
@@ -290,7 +291,7 @@ Remembrance hooks directly into the event bus as a Prism service.
 
 ### Event Flow
 
-```
+```text
 lumi.agent.output
   → remembrance.gate.extract (DistilBERT: worth remembering?)
     → remembrance.extract (Nemotron: extract entities/facts)

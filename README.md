@@ -1,8 +1,8 @@
 ﻿# Prism - Event-Native AI Agent Platform
 
 [![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/)
-[![Tests](https://img.shields.io/badge/tests-go%20test%20.%2F...-brightgreen)]()
-[![Packages: 57](https://img.shields.io/badge/packages-57-green)]()
+[![Tests](https://img.shields.io/badge/tests-go%20test%20.%2F...-brightgreen)](./.github/workflows/ci.yml)
+[![Packages: 57](https://img.shields.io/badge/packages-57-green)](./internal/)
 [![License: All Rights Reserved](https://img.shields.io/badge/license-all%20rights%20reserved-red)](./LICENSE)
 
 > **License Notice:** Prism is source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, or incorporation requires written permission. See [LICENSE](./LICENSE) for details.

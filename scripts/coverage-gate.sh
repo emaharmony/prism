@@ -53,7 +53,7 @@ smoke adapter show echo
 smoke adapter health echo
 smoke projection list
 smoke skills --json
-smoke mcp --json
+smoke mcp --config prism.yaml.example --json
 smoke scan --json
 smoke search --query coverage --provider mock
 smoke approval list

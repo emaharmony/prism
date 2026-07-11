@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecutorRunPassedWritesArtifactsAndEvents(t *testing.T) {
@@ -104,19 +105,9 @@ func TestExecutorRunFailureAndResolutionErrors(t *testing.T) {
 
 func TestExecutorRunTimeout(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module timeouttest\n\ngo 1.26.2\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	testSource := `package timeouttest
-import ("testing"; "time")
-func TestSleep(t *testing.T) { time.Sleep(10 * time.Second) }
-`
-	if err := os.WriteFile(filepath.Join(root, "sleep_test.go"), []byte(testSource), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	registry := NewEmptyRegistry()
 	mustRegisterProfile(t, registry, Profile{
-		Name: "timeout", Command: "go", Args: []string{"test", ".", "-run", "TestSleep", "-count=1"},
+		Name: "timeout", Command: os.Args[0], Args: []string{"-test.run=TestValidationSleepHelper", "--", "validation-sleep-helper"},
 		WorkingDir: ".", TimeoutSeconds: 1, AllowedExitCodes: []int{0},
 	})
 	result, err := NewExecutor(registry, root, t.TempDir()).Run(context.Background(), "timeout", "corr")
@@ -126,6 +117,13 @@ func TestSleep(t *testing.T) { time.Sleep(10 * time.Second) }
 	if result.Status != "timeout" || result.ExitCode != -1 {
 		t.Fatalf("result = %+v", result)
 	}
+}
+
+func TestValidationSleepHelper(t *testing.T) {
+	if len(os.Args) == 0 || os.Args[len(os.Args)-1] != "validation-sleep-helper" {
+		return
+	}
+	time.Sleep(10 * time.Second)
 }
 
 func TestRegistryEmptyAndUnregister(t *testing.T) {

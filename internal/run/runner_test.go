@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -340,10 +341,13 @@ func TestV1NATSPublishAndSubscribe(t *testing.T) {
 
 	// Subscribe to all events
 	received := make([]event.Event, 0)
+	var receivedMu sync.Mutex
 	sub, err := js.Subscribe("prism.>", func(msg *nats.Msg) {
 		var evt event.Event
 		if err := json.Unmarshal(msg.Data, &evt); err == nil {
+			receivedMu.Lock()
 			received = append(received, evt)
+			receivedMu.Unlock()
 		}
 		msg.Ack()
 	}, nats.Durable("test-sub"), nats.ManualAck())
@@ -376,6 +380,8 @@ func TestV1NATSPublishAndSubscribe(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Should have received at least 6 events
+	receivedMu.Lock()
+	defer receivedMu.Unlock()
 	if len(received) < 6 {
 		t.Errorf("expected at least 6 events received via NATS, got %d", len(received))
 	}

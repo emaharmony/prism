@@ -594,6 +594,10 @@ func validateWritePath(path string, allowedDir string) error {
 	if !filepath.IsAbs(absTarget) && !rootedPOSIX {
 		absTarget = filepath.Join(absBase, absTarget)
 	}
+	absTarget, err = filepath.Abs(absTarget)
+	if err != nil {
+		return fmt.Errorf("invalid target path: %w", err)
+	}
 	absTarget = filepath.Clean(absTarget)
 
 	// Resolve symlinks on the parent so a symlinked dir can't escape the jail.
