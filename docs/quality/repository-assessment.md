@@ -90,7 +90,7 @@ is plausible, but this report does not fabricate a higher measured value.
 The hardening checkout resolves the semantic-version mismatch at `v0.1.0` and
 adds SDK tests, cross-platform release builds, immutable CI action pins, strict
 local-link checks, and behavior-focused authority tests. Local Go evidence on
-2026-07-11 measured 55.4% aggregate coverage, with safety 95.4%, policy 92.5%,
+2026-07-11 measured 55.3% aggregate coverage, with safety 95.4%, policy 92.5%,
 approval 85.6%, mutation 82.7%, validation 90.6%, guard 96.1%, and the combined
 tool-authority files 86.3%. Vet, build, deterministic tests, CLI smokes, and
 release-smoke archives remain part of the delivery verification. A 9.7+ final

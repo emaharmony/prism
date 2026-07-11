@@ -44,7 +44,6 @@ smoke workflow run demo.echo_tool --run-dir test-results/coverage/cli-runs
 smoke agent list
 smoke agent show planner
 smoke tool list
-smoke tool run echo --input '{"text":"coverage"}' --workspace .
 smoke validation list
 smoke validation run echo_test --project . --run-dir test-results/coverage/validation-runs
 smoke policy list

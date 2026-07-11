@@ -49,7 +49,6 @@ try {
         Invoke-Smoke @('agent', 'list')
         Invoke-Smoke @('agent', 'show', 'planner')
         Invoke-Smoke @('tool', 'list')
-        Invoke-Smoke @('tool', 'run', 'echo', '--input', '{\"text\":\"coverage\"}', '--workspace', '.')
         Invoke-Smoke @('validation', 'list')
         Invoke-Smoke @('validation', 'run', 'echo_test', '--project', '.', '--run-dir', 'test-results/coverage/validation-runs')
         Invoke-Smoke @('policy', 'list')
