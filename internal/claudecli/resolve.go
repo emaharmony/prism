@@ -37,6 +37,7 @@ func resolveExecutable(executable, goos string, lookPath LookPathFunc) (string, 
 	if executable != "" {
 		path, err := lookPath(executable)
 		if err != nil {
+			//lint:ignore ST1005 Claude Code is a product name in a user-facing diagnostic.
 			return "", fmt.Errorf("Claude Code CLI executable %q not found: %w", executable, err)
 		}
 		return path, nil
@@ -50,6 +51,7 @@ func resolveExecutable(executable, goos string, lookPath LookPathFunc) (string, 
 		}
 	}
 
+	//lint:ignore ST1005 Claude Code is a product name in a user-facing diagnostic.
 	return "", fmt.Errorf("Claude Code CLI not found (tried %s); install Claude Code or set claude_code.executable", strings.Join(candidates, ", "))
 }
 

@@ -135,8 +135,8 @@ func AgentTopology(w io.Writer, agents []orchestrator.AgentConfig, cfg DiagramCo
 		fmt.Sprintf(".box{fill:%s;stroke:%s;stroke-width:2}", p.box, p.boxBorder),
 		fmt.Sprintf(".text{fill:%s;font-family:system-ui,sans-serif;font-size:14px}", p.text),
 		fmt.Sprintf(".text-dim{fill:%s;font-family:system-ui,sans-serif;font-size:11px}", p.textDim),
-		fmt.Sprintf(".badge{rx:4;ry:4;stroke-width:1}"),
-		fmt.Sprintf(".badge-text{font-family:system-ui,sans-serif;font-size:10px}"),
+		".badge{rx:4;ry:4;stroke-width:1}",
+		".badge-text{font-family:system-ui,sans-serif;font-size:10px}",
 		fmt.Sprintf(".primary{stroke:%s;stroke-width:3}", p.lead),
 	)
 
@@ -186,7 +186,7 @@ func AgentTopology(w io.Writer, agents []orchestrator.AgentConfig, cfg DiagramCo
 		canvas.Rect(x+10, y+40, 70, 20,
 			fmt.Sprintf("fill:%s;rx:4;ry:4", borderColor))
 		canvas.Text(x+45, y+54, agent.Role,
-			fmt.Sprintf("text-anchor:middle;font-family:system-ui,sans-serif;font-size:11px;fill:white"))
+			"text-anchor:middle;font-family:system-ui,sans-serif;font-size:11px;fill:white")
 
 		// Model
 		canvas.Text(x+10, y+75, fmt.Sprintf("Model: %s", agent.Model),

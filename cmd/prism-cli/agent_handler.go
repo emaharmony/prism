@@ -20,6 +20,8 @@ import (
 // Key difference from handleDiscordMessage: NO placeholder messages.
 // Placeholders ("✧ ...") are visible to other bots and trigger false responses.
 // Instead, we use only the typing indicator, then send the complete response.
+//
+//lint:ignore U1000 retained for peer-agent routing integration
 func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage) {
 	// Frame the message as coming from a peer agent
 	framedContent := fmt.Sprintf("[Message from agent %s]: %s", msg.UserName, msg.Content)
@@ -271,6 +273,8 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 }
 
 // findPrimaryAgent returns the ID of the primary agent, or the first agent if none is primary.
+//
+//lint:ignore U1000 retained for multi-agent routing integration
 func (cc *conversationContext) findPrimaryAgent() string {
 	for i := range cc.cfg.Agents {
 		if cc.cfg.Agents[i].Primary {

@@ -523,3 +523,72 @@ func TestExecutorDirectSymlinkBlocked(t *testing.T) {
 		t.Error("mutation targeting symlink should be blocked")
 	}
 }
+
+func TestExecutorAlreadyApprovedAppliesWithoutReapproval(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_approved", "corr", "test", "prism", approval.MutationWriteFile, "approved.txt", "content", policy)
+	if err := a.Approve("first-reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(a); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewExecutor(tmpDir, store).ApplyWithRun(context.Background(), "run_approved", a.ApprovalID, "second-reviewer")
+	if err != nil || !result.Success {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+	loaded, err := store.Load("run_approved", a.ApprovalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ApprovedBy != "first-reviewer" {
+		t.Fatalf("approved_by changed to %q", loaded.ApprovedBy)
+	}
+}
+
+func TestExecutorDenyApprovalErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+	executor := NewExecutor(tmpDir, store)
+	if err := executor.DenyApproval("missing-run", "missing", "reviewer", "reason"); err == nil {
+		t.Fatal("missing approval was denied without error")
+	}
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_deny_error", "corr", "test", "prism", approval.MutationWriteFile, "file.txt", "content", policy)
+	if err := a.Approve("reviewer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.DenyApproval("run_deny_error", a.ApprovalID, "other", "too late"); err == nil {
+		t.Fatal("approved mutation was denied without error")
+	}
+}
+
+func TestExecutorRejectsEmptyApprover(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := approval.NewStore(tmpDir)
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_empty_approver", "corr", "test", "prism", approval.MutationWriteFile, "file.txt", "content", policy)
+	if err := store.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewExecutor(tmpDir, store).ApplyWithRun(context.Background(), "run_empty_approver", a.ApprovalID, "")
+	if err != nil || result.Success || result.Message != "failed to approve" {
+		t.Fatalf("result = %+v, error = %v", result, err)
+	}
+}
+
+func TestValidateSafetyRejectsUnsupportedMutation(t *testing.T) {
+	tmpDir := t.TempDir()
+	executor := NewExecutor(tmpDir, approval.NewStore(tmpDir))
+	a := &approval.Approval{MutationType: "unknown", TargetPath: "file.txt"}
+	if err := executor.validateSafety(a); err == nil {
+		t.Fatal("unsupported mutation passed safety validation")
+	}
+}

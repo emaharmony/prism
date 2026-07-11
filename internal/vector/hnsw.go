@@ -58,7 +58,7 @@ func NewHNSWIndex(dimension, neighbors int) *HNSWIndex {
 // Insert adds a vector to the index, connecting it to its nearest neighbors.
 // Silently ignores nil or empty vectors, or vectors with wrong dimension.
 func (h *HNSWIndex) Insert(id string, vector []float64) {
-	if vector == nil || len(vector) == 0 || len(vector) != h.dim {
+	if len(vector) == 0 || len(vector) != h.dim {
 		return
 	}
 	h.mu.Lock()
@@ -140,7 +140,7 @@ func (h *HNSWIndex) Delete(id string) {
 // ef controls the beam width — higher = better recall, slower.
 // Returns nil for empty index, nil/empty query, or dimension mismatch.
 func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
-	if query == nil || len(query) == 0 || len(query) != h.dim {
+	if len(query) == 0 || len(query) != h.dim {
 		return nil
 	}
 	if ef < k {

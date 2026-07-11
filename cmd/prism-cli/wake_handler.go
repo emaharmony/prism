@@ -1314,6 +1314,8 @@ func cleanForDiscord(text string) string {
 }
 
 // postToDiscord posts a message to the manager-room channel.
+//
+//lint:ignore U1000 retained for manager-room notification integration
 func (wh *WakeHandler) postToDiscord(message string) {
 	if wh.bot == nil {
 		log.Printf("[V2-NATURAL-GATES] no bot, cannot post to Discord")
@@ -2594,7 +2596,7 @@ You may include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and the phase com
 
 // formatWorkflowReport creates a human-readable report from workflow state.
 func formatWorkflowReport(state *v2.WorkflowState) string {
-	report := fmt.Sprintf("## Natural Gates Workflow Report\n\n")
+	report := "## Natural Gates Workflow Report\n\n"
 	report += fmt.Sprintf("**Status:** %s\n", state.Status)
 	report += fmt.Sprintf("**Run ID:** %s\n\n", state.RunID)
 

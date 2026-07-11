@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import nats
 from nats.js import JetStreamContext
-from nats.js.api import StreamConfig, ConsumerConfig
+from nats.js.api import ConsumerConfig, DeliverPolicy, StreamConfig
 
 from prism.event import Event
 
@@ -145,15 +145,15 @@ class PrismClient:
             except Exception:
                 logger.exception(f"prism: handler error on {event.type}")
 
-        config = ConsumerConfig(durable_name=durable_name, deliver_all=True)
-        if queue:
-            config.deliver_group = queue
+        config = ConsumerConfig(deliver_policy=DeliverPolicy.ALL)
 
         sub = await self._js.subscribe(
             subject,
-            _callback,
+            queue=queue or None,
+            cb=_callback,
             durable=durable_name,
             stream="PRISM",
+            config=config,
         )
         self._subscriptions.append(sub)
         self._handlers[durable_name] = handler
@@ -209,19 +209,22 @@ class PrismClient:
         Returns:
             The result dict from the tool handler
         """
-        correlation_id = f"tool-call-{int(time.time() * 1000)}"
+        if not self._js:
+            raise RuntimeError("Not connected. Call connect() first.")
+
+        correlation_id = f"tool-call-{uuid.uuid4().hex}"
 
         # Set up a one-time subscription for the result
         result_future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
 
         async def _result_handler(event: Event) -> None:
-            if not result_future.done():
+            if event.correlation_id == correlation_id and not result_future.done():
                 result_future.set_result(event.payload.get("result", {}))
 
         result_subject = "prism.tool.result"
         sub = await self._js.subscribe(
             result_subject,
-            _result_handler,
+            cb=_result_handler,
             stream="PRISM",
         )
 
@@ -259,7 +262,3 @@ class PrismClient:
     def stop(self) -> None:
         """Signal the event loop to stop."""
         self._running = False
-
-
-# Required import for call_tool
-import time  # noqa: E402

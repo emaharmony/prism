@@ -56,8 +56,7 @@ try {
         Run "go vet ./..." { go vet ./... }
         Run "go build ./..." { go build ./... }
         Run "go test ./... -count=1" { go test ./... -count=1 }
-        $coveragePath = Join-Path $root "coverage.out"
-        Run "coverage" { go test ./... "-coverprofile=$coveragePath" -count=1 }
+        Run "coverage gates" { & (Join-Path $PSScriptRoot "coverage-gate.ps1") -Output (Join-Path $root "coverage-gate.md") }
         if ($Race) { Run "go test -race ./... -count=1" { go test -race ./... -count=1 } }
     } else {
         Add "| verification | SKIPPED | run with -Verify |"

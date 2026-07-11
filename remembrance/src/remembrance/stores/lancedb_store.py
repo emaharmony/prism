@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import lancedb
-import pyarrow as pa
 from lancedb.pydantic import LanceModel, Vector
 
 
@@ -95,7 +93,6 @@ class LanceDBStore:
 
     def delete_vector(self, memory_id: str):
         """Soft-delete by setting status to 'deleted'."""
-        table = self.db.open_table("memories")
         # LanceDB doesn't support updates easily, so we'd need to
         # re-add with status='deleted' or use merge operations
         # For V1, we just leave it and filter by status='active'

@@ -540,7 +540,7 @@ func (r *Runner) Run() (*RunResult, error) {
 				})
 
 				// Build approval summary
-				if toolResult != nil && toolResult.Output != nil {
+				if toolResult.Output != nil {
 					approvalID, _ := toolResult.Output["approval_id"].(string)
 					targetPath, _ := toolResult.Output["target_path"].(string)
 
@@ -574,12 +574,10 @@ func (r *Runner) Run() (*RunResult, error) {
 			})
 
 			// Write tool_result.json
-			if toolResult != nil {
-				toolResultPath := filepath.Join(runDir, "tool_result.json")
-				if toolData, jsonErr := json.MarshalIndent(toolResult, "", "  "); jsonErr == nil {
-					if writeErr := os.WriteFile(toolResultPath, append(toolData, '\n'), 0644); writeErr != nil {
-						log.Printf("prism: failed to write tool_result.json: %v", writeErr)
-					}
+			toolResultPath := filepath.Join(runDir, "tool_result.json")
+			if toolData, jsonErr := json.MarshalIndent(toolResult, "", "  "); jsonErr == nil {
+				if writeErr := os.WriteFile(toolResultPath, append(toolData, '\n'), 0644); writeErr != nil {
+					log.Printf("prism: failed to write tool_result.json: %v", writeErr)
 				}
 			}
 
@@ -587,17 +585,13 @@ func (r *Runner) Run() (*RunResult, error) {
 			var outputBuilder strings.Builder
 			outputBuilder.WriteString(genResp.Text)
 			outputBuilder.WriteString("\n\n---\n**Tool Result:**\n")
-			if toolResult != nil {
-				if toolResult.Success {
-					outputBuilder.WriteString(fmt.Sprintf("Tool `%s` executed successfully.\n", agentResp.ToolName))
-					for k, v := range toolResult.Output {
-						outputBuilder.WriteString(fmt.Sprintf("- %s: %v\n", k, v))
-					}
-				} else {
-					outputBuilder.WriteString(fmt.Sprintf("Tool `%s` failed: %s\n", agentResp.ToolName, toolResult.Error))
+			if toolResult.Success {
+				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` executed successfully.\n", agentResp.ToolName))
+				for k, v := range toolResult.Output {
+					outputBuilder.WriteString(fmt.Sprintf("- %s: %v\n", k, v))
 				}
 			} else {
-				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` execution error: %v\n", agentResp.ToolName, err))
+				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` failed: %s\n", agentResp.ToolName, toolResult.Error))
 			}
 			outputText = outputBuilder.String()
 		}

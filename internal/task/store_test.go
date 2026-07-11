@@ -312,7 +312,7 @@ func TestStore_NilContext(t *testing.T) {
 		t.Fatalf("failed to get task: %v", err)
 	}
 	// Nil context should deserialize as nil or empty map
-	if got.Context != nil && len(got.Context) != 0 {
+	if len(got.Context) != 0 {
 		t.Errorf("expected nil or empty context, got %v", got.Context)
 	}
 }

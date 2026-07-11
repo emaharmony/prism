@@ -104,15 +104,6 @@ type geminiUsage struct {
 	TotalTokenCount      int `json:"totalTokenCount"`
 }
 
-// errorResponse is the Gemini error format.
-type errorResponse struct {
-	Error struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Status  string `json:"status"`
-	} `json:"error"`
-}
-
 // ---------- Generate ----------
 
 // Generate calls the Gemini generateContent API synchronously.

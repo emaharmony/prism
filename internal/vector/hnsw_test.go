@@ -1,6 +1,7 @@
 package vector
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -330,13 +331,13 @@ func BenchmarkBruteForceSearch(b *testing.B) {
 	store := NewMemoryVectorStore(3)
 	for i := 0; i < 1000; i++ {
 		angle := float64(i) * math.Pi * 2 / 1000.0
-		store.Upsert(nil, VectorEntry{
+		store.Upsert(context.TODO(), VectorEntry{
 			ID:     fmt.Sprintf("v%d", i),
 			Vector: []float64{math.Cos(angle), math.Sin(angle), 0.0},
 		})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.Search(nil, []float64{1.0, 0.0, 0.0}, SearchOptions{TopK: 10, MinScore: 0.0})
+		store.Search(context.TODO(), []float64{1.0, 0.0, 0.0}, SearchOptions{TopK: 10, MinScore: 0.0})
 	}
 }

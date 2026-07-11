@@ -28,6 +28,12 @@ import (
 	"time"
 )
 
+var validationEnvironmentKeys = []string{
+	"HOME", "PATH", "USER", "USERPROFILE",
+	"GOPATH", "GOROOT", "GOFLAGS", "GOCACHE", "GOMODCACHE", "GOTMPDIR",
+	"TMP", "TEMP", "SystemRoot", "ComSpec", "PATHEXT", "LOCALAPPDATA",
+}
+
 // EventEmitter is a callback for emitting Prism events.
 type EventEmitter func(eventType, source string, payload map[string]any)
 
@@ -174,14 +180,7 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	// where a malicious or misconfigured system could set env vars that change command
 	// behavior (e.g., LD_PRELOAD, GIT_EXEC_PATH, NODE_OPTIONS). Only vars needed for
 	// typical Go/toolchain operations are forwarded.
-	cmd.Env = []string{
-		"HOME=" + os.Getenv("HOME"),
-		"PATH=" + os.Getenv("PATH"),
-		"USER=" + os.Getenv("USER"),
-		"GOPATH=" + os.Getenv("GOPATH"),
-		"GOROOT=" + os.Getenv("GOROOT"),
-		"GOFLAGS=" + os.Getenv("GOFLAGS"),
-	}
+	cmd.Env = validationEnvironment()
 
 	log.Printf("prism-validation: running %q in %s (timeout: %s)", profile.Name, workingDir, timeout)
 
@@ -196,10 +195,10 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 	// Determine exit code
 	exitCode := 0
 	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if execCtx.Err() == context.DeadlineExceeded {
+		if execCtx.Err() == context.DeadlineExceeded {
 			exitCode = -1 // timeout: -1 is our convention for "command was killed before finishing" (not a real Unix exit code)
+		} else if exitErr, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1 // unknown error (e.g., command not found, permission denied)
 		}
@@ -279,6 +278,16 @@ func (e *Executor) Run(ctx context.Context, profileName, correlationID string) (
 
 	e.writeResult(resultPath, result)
 	return result, nil
+}
+
+func validationEnvironment() []string {
+	env := make([]string, 0, len(validationEnvironmentKeys))
+	for _, key := range validationEnvironmentKeys {
+		if value, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 // writeResult writes the validation result as JSON to the given path.

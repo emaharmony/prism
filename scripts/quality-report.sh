@@ -57,7 +57,7 @@ if [[ $verify -eq 1 ]]; then
   run 'go vet ./...' go vet ./...
   run 'go build ./...' go build ./...
   run 'go test ./... -count=1' go test ./... -count=1
-  run 'coverage' go test ./... -coverprofile=coverage.out -count=1
+  run 'coverage gates' ./scripts/coverage-gate.sh --output coverage-gate.md
   [[ $race -eq 1 ]] && run 'go test -race ./... -count=1' go test -race ./... -count=1
 else
   echo '| verification | SKIPPED (run with --verify) |' >> "$report"
