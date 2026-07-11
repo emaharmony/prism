@@ -607,9 +607,45 @@ func validateWritePath(path string, allowedDir string) error {
 	}
 
 	rel, err := filepath.Rel(absBase, absTarget)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	lexicallyContained := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	if !lexicallyContained && !pathWithinExistingBase(absBase, filepath.Dir(absTarget)) {
 		return fmt.Errorf("path %q must be within %q", path, absBase)
 	}
 
 	return nil
+}
+
+// pathWithinExistingBase compares filesystem identities instead of path text.
+// This handles Windows short (8.3) aliases such as RUNNER~1 versus runneradmin
+// without weakening containment: an ancestor must resolve to the exact allowed
+// directory on disk. Non-existent target directories are walked upward first.
+func pathWithinExistingBase(base, targetDir string) bool {
+	baseInfo, err := os.Stat(base)
+	if err != nil {
+		return false
+	}
+
+	current := filepath.Clean(targetDir)
+	for {
+		if _, err := os.Stat(current); err == nil {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+
+	for {
+		info, err := os.Stat(current)
+		if err == nil && os.SameFile(baseInfo, info) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
