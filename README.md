@@ -11,7 +11,8 @@ Prism is a Go event-native AI agent platform that runs as a persistent service. 
 
 The framework controls lifecycle, safety, context, routing, and persistence. The model generates outputs inside that lifecycle.
 
-Checked-in root binaries can lag behind source. For a fresh setup, build from `cmd/prism-cli` and treat the source tree as authoritative.
+Local root binaries can lag behind source and are ignored by Git. For a fresh
+setup, build from `cmd/prism-cli` and treat the source tree as authoritative.
 
 ---
 
@@ -45,7 +46,8 @@ and **not production-ready**.
 - unattended code mutation without human review
 - enterprise multi-user deployment
 
-See the [Capability Status](./docs/CAPABILITY_STATUS.md) matrix for detail.
+See the normative [Stability Matrix](./docs/reference/stability-matrix.md) for
+default state, limitations, testing level, and compatibility expectations.
 
 ---
 
@@ -57,6 +59,7 @@ runs fully locally:
 
 ```bash
 go test ./...                                   # verify the build
+go run ./cmd/prism-cli doctor --json            # validate the local runtime
 go run ./cmd/prism-cli workflow list            # see available workflows
 go run ./cmd/prism-cli workflow show demo.echo_tool
 go run ./cmd/prism-cli workflow run demo.echo_tool
@@ -78,6 +81,9 @@ walkthrough see [Getting Started](./docs/GETTING_STARTED.md) and
 ---
 
 ## Architecture
+
+See the [system overview and trust boundaries](./docs/architecture/system-overview.md)
+and [Core / Platform / Integration map](./docs/architecture/product-layers.md).
 
 ```text
 Prism Runtime
@@ -125,7 +131,7 @@ Ingress/Egress
 
 ## Documentation
 
-New to Prism? Start here:
+New to Prism? Start at the [documentation home](./docs/README.md), then use:
 
 1. [Getting Started](docs/GETTING_STARTED.md) — install, build, test, and run your first workflow.
 2. [Configuration Guide](docs/CONFIGURATION.md) — where config files live and how Prism loads them.
@@ -139,6 +145,7 @@ New to Prism? Start here:
 10. [Roadmap](docs/ROADMAP.md) — project direction.
 11. [Version History](docs/VERSION_HISTORY.md) — the full V1–V58+ development story.
 12. [Public Preview Checklist](docs/PUBLIC_PREVIEW_CHECKLIST.md) — release-prep status.
+13. [Quality and Verification](QUALITY.md) — reproducible metrics and checks.
 
 ---
 

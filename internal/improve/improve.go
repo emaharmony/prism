@@ -9,10 +9,10 @@
 //
 // This is NOT a second LLM that reviews everything. It's a lightweight event
 // subscriber that:
-//   1. Counts error occurrences (no LLM needed)
-//   2. Flags repeated patterns (simple counting)
-//   3. Creates improvement proposals (JSON state, not LLM output)
-//   4. Optionally triggers a wake event for LLM review
+//  1. Counts error occurrences (no LLM needed)
+//  2. Flags repeated patterns (simple counting)
+//  3. Creates improvement proposals (JSON state, not LLM output)
+//  4. Optionally triggers a wake event for LLM review
 package improve
 
 import (
@@ -43,22 +43,22 @@ const (
 type ImprovementStatus string
 
 const (
-	StatusProposed    ImprovementStatus = "proposed"
-	StatusInReview    ImprovementStatus = "in_review"
-	StatusInProgress  ImprovementStatus = "in_progress"
-	StatusCompleted   ImprovementStatus = "completed"
-	StatusDismissed   ImprovementStatus = "dismissed"
-	StatusDuplicate   ImprovementStatus = "duplicate"
+	StatusProposed   ImprovementStatus = "proposed"
+	StatusInReview   ImprovementStatus = "in_review"
+	StatusInProgress ImprovementStatus = "in_progress"
+	StatusCompleted  ImprovementStatus = "completed"
+	StatusDismissed  ImprovementStatus = "dismissed"
+	StatusDuplicate  ImprovementStatus = "duplicate"
 )
 
 // ErrorPattern tracks recurring errors for pattern detection.
 type ErrorPattern struct {
 	ErrorType string    `json:"error_type"` // Short identifier (e.g., "map_iteration_bug")
 	Message   string    `json:"message"`    // Error message pattern
-	Count     int       `json:"count"`       // Number of occurrences
+	Count     int       `json:"count"`      // Number of occurrences
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
-	Source    string    `json:"source"`      // Which tool/component generated it
+	Source    string    `json:"source"` // Which tool/component generated it
 }
 
 // Improvement represents a proposed improvement.
@@ -68,8 +68,8 @@ type Improvement struct {
 	Description string              `json:"description"`
 	Category    ImprovementCategory `json:"category"`
 	Status      ImprovementStatus   `json:"status"`
-	Priority    int                 `json:"priority"` // 1=critical, 2=high, 3=medium, 4=low
-	Source      string              `json:"source"`   // What triggered this (error_pattern, self_review, process_violation)
+	Priority    int                 `json:"priority"`          // 1=critical, 2=high, 3=medium, 4=low
+	Source      string              `json:"source"`            // What triggered this (error_pattern, self_review, process_violation)
 	PlanID      string              `json:"plan_id,omitempty"` // Linked plan if one was created
 	CreatedAt   time.Time           `json:"created_at"`
 	UpdatedAt   time.Time           `json:"updated_at"`
@@ -80,23 +80,23 @@ type ProcessViolation struct {
 	ID          string    `json:"id"`
 	Rule        string    `json:"rule"`        // Which rule was violated
 	Description string    `json:"description"` // What happened
-	Severity    string    `json:"severity"`     // low, medium, high
+	Severity    string    `json:"severity"`    // low, medium, high
 	Timestamp   time.Time `json:"timestamp"`
 }
 
 // Manager manages error patterns, improvements, and process violations.
 type Manager struct {
-	stateDir     string
-	mu           sync.RWMutex
+	stateDir      string
+	mu            sync.RWMutex
 	errorPatterns map[string]*ErrorPattern // keyed by error_type
-	improvements []Improvement
-	violations   []ProcessViolation
+	improvements  []Improvement
+	violations    []ProcessViolation
 }
 
 // NewManager creates an improvement manager.
 func NewManager(workspaceDir string) *Manager {
 	return &Manager{
-		stateDir:     filepath.Join(workspaceDir, "state"),
+		stateDir:      filepath.Join(workspaceDir, "state"),
 		errorPatterns: make(map[string]*ErrorPattern),
 	}
 }

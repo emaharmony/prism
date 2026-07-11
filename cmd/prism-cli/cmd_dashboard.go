@@ -5,8 +5,9 @@
 // and serves a self-contained HTML page with inline CSS/JS.
 //
 // Usage:
-//   prism dashboard              # http://localhost:8080
-//   prism dashboard --port 3000  # Custom port
+//
+//	prism dashboard              # http://localhost:8080
+//	prism dashboard --port 3000  # Custom port
 //
 // The dashboard is read-only: it shows data but cannot approve, deny, execute,
 // or mutate anything. All write operations go through the CLI.

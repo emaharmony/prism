@@ -5,26 +5,115 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  build-test:
+  go-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           check-latest: true
-
-      - name: Vet (includes unreachable-code analysis)
+          cache: true
+      - name: Formatting
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - name: Vet
         run: go vet ./...
-
       - name: Build
         run: go build ./...
-
       - name: Test
         run: go test ./... -count=1
+      - name: Integration tests
+        run: go test ./internal/integration/... -count=1
+      - name: Race tests
+        run: go test -race ./... -count=1
+      - name: Coverage
+        run: go test ./... -coverprofile=coverage.out -count=1
+      - name: Staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+      - name: Govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.26.x"
+          go-package: ./...
+      - name: Quality report
+        if: always()
+        run: ./scripts/quality-report.sh --output quality-report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: go-quality-linux
+          path: |
+            coverage.out
+            quality-report.md
+          if-no-files-found: warn
 
-      - name: Test (race, core packages)
-        run: go test ./internal/stage/... ./internal/session/... ./internal/safety/... -race -count=1
+  go-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Test
+        run: go test ./... -count=1
+      - name: Build CLI
+        run: go build -o prism.exe ./cmd/prism-cli
+      - name: CLI and filesystem smoke tests
+        shell: pwsh
+        run: |
+          .\prism.exe --help
+          .\prism.exe config --config prism.yaml.example --json
+          .\prism.exe doctor --config prism.yaml.example --json
+          .\prism.exe workflow run demo.echo_tool --run-dir .\test-results\runs
+      - name: Quality inventory
+        shell: pwsh
+        run: .\scripts\quality-report.ps1 -Output quality-report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: go-quality-windows
+          path: |
+            quality-report.md
+            test-results/
+          if-no-files-found: warn
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e 'remembrance[dev]' -e 'sdk[dev]'
+      - name: Test
+        run: python -m pytest remembrance/tests -q
+      - name: Lint
+        run: python -m ruff check remembrance sdk
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v19
+        with:
+          globs: |
+            README.md
+            QUALITY.md
+            docs/**/*.md
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: --no-progress --exclude-path examples/runs -- README.md QUALITY.md docs/**/*.md
+          fail: true

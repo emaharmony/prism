@@ -124,8 +124,8 @@ func (am *ApprovalManager) RequestApproval(ctx context.Context, agentID string, 
 		"approval_type": string(approvalType),
 		"description":   description,
 		"target":        target,
-		"status":         string(ApprovalPending),
-		"created_at":     now.Format(time.RFC3339),
+		"status":        string(ApprovalPending),
+		"created_at":    now.Format(time.RFC3339),
 	}
 
 	if err := am.engine.publishEvent(agentID+".approval.requested", event); err != nil {
@@ -145,7 +145,7 @@ func (am *ApprovalManager) GrantApproval(ctx context.Context, taskID string, res
 
 	result := map[string]any{
 		"approval_status": string(ApprovalGranted),
-		"resolved_by":    resolvedBy,
+		"resolved_by":     resolvedBy,
 	}
 
 	if err := am.engine.Complete(ctx, taskID, result); err != nil {
@@ -154,10 +154,10 @@ func (am *ApprovalManager) GrantApproval(ctx context.Context, taskID string, res
 
 	// Publish approval.granted event
 	event := map[string]any{
-		"v":            1,
-		"task_id":      taskID,
-		"approved_by":  resolvedBy,
-		"approved_at":   time.Now().Format(time.RFC3339),
+		"v":           1,
+		"task_id":     taskID,
+		"approved_by": resolvedBy,
+		"approved_at": time.Now().Format(time.RFC3339),
 	}
 
 	if err := am.engine.publishEvent(task.DelegatedTo+".approval.granted", event); err != nil {
@@ -181,11 +181,11 @@ func (am *ApprovalManager) DenyApproval(ctx context.Context, taskID string, reso
 
 	// Publish approval.denied event
 	event := map[string]any{
-		"v":          1,
-		"task_id":    taskID,
-		"denied_by":  resolvedBy,
-		"reason":     reason,
-		"denied_at":  time.Now().Format(time.RFC3339),
+		"v":         1,
+		"task_id":   taskID,
+		"denied_by": resolvedBy,
+		"reason":    reason,
+		"denied_at": time.Now().Format(time.RFC3339),
 	}
 
 	if err := am.engine.publishEvent(task.DelegatedTo+".approval.denied", event); err != nil {

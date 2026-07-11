@@ -34,10 +34,10 @@ type ChatGenerateRequest struct {
 
 // ChatMessage represents a single message in a conversation.
 type ChatMessage struct {
-	Role      string    `json:"role"`                  // "system", "user", "assistant", "tool"
-	Content   string    `json:"content"`               // text content (may be empty for tool_calls-only messages)
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"` // present when role="assistant" and model requests tools
-	ToolID    string    `json:"tool_call_id,omitempty"` // present when role="tool" to link result to the call
+	Role      string     `json:"role"`                   // "system", "user", "assistant", "tool"
+	Content   string     `json:"content"`                // text content (may be empty for tool_calls-only messages)
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`   // present when role="assistant" and model requests tools
+	ToolID    string     `json:"tool_call_id,omitempty"` // present when role="tool" to link result to the call
 }
 
 // ToolCall represents a single tool call in an assistant message.
@@ -63,7 +63,7 @@ type ChatGenerateResponse struct {
 	Provider     string
 	LatencyMS    int64
 	PromptTokens int
-	OutputTokens  int
+	OutputTokens int
 	Raw          map[string]any
 }
 
@@ -80,8 +80,8 @@ func (r ChatGenerateResponse) IsFinal() bool {
 // ChatTool describes a tool that can be called by the model.
 // This is converted from the tool registry's ToolInfo into Ollama's function schema format.
 type ChatTool struct {
-	Type     string       `json:"type"` // always "function"
-	Function FunctionDef  `json:"function"`
+	Type     string      `json:"type"` // always "function"
+	Function FunctionDef `json:"function"`
 }
 
 // FunctionDef describes a function that the model can call.

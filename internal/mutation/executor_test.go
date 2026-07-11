@@ -470,7 +470,9 @@ func TestExecutorSymlinkEscapeBlocked(t *testing.T) {
 
 	// Create symlink inside workspace pointing outside
 	linkPath := filepath.Join(tmpDir, "escape_link")
-	os.Symlink(outsideDir, linkPath)
+	if err := os.Symlink(outsideDir, linkPath); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
 	a := approval.NewApproval("run_symlink", "corr_symlink", "test-cli", "prism", "write_file", "escape_link/malicious.txt", "malicious content", policy)
@@ -503,7 +505,9 @@ func TestExecutorDirectSymlinkBlocked(t *testing.T) {
 
 	// Create symlink inside workspace pointing directly to outside file
 	linkPath := filepath.Join(tmpDir, "target_link")
-	os.Symlink(outsideFile, linkPath)
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
 	a := approval.NewApproval("run_sym2", "corr_sym2", "test-cli", "prism", "write_file", "target_link", "overwritten", policy)

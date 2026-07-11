@@ -9,8 +9,9 @@
 // A validation profile is: a name, a command, args, a working directory, and a timeout.
 // Profiles are registered at startup (NewRegistry) and looked up by name at runtime.
 // The two built-in profiles are:
-//   echo_test — runs `go version`, used for integration testing (5s timeout)
-//   go_test_all — runs `go test ./...`, used for Go projects (120s timeout)
+//
+//	echo_test — runs `go version`, used for integration testing (5s timeout)
+//	go_test_all — runs `go test ./...`, used for Go projects (120s timeout)
 //
 // Validation events (prism.validation.requested/started/completed/failed/skipped/timeout)
 // track each step. Results are persisted as JSON artifacts under runs/<run_id>/validation/.

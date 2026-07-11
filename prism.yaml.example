@@ -337,12 +337,14 @@ agents:
   #     decisive and terse. Most spikes are noise — only flag genuinely
   #     reactive, funny, skillful, or dramatic moments.
 
-channels:
-  - type: discord
-    token: "${DISCORD_BOT_TOKEN}"
-    channels:
-      - "general"
-      - "dev"
+# External channels are optional. Keep the default example model-free and
+# uncomment this block only after setting DISCORD_BOT_TOKEN.
+channels: []
+#  - type: discord
+#    token: "${DISCORD_BOT_TOKEN}"
+#    channels:
+#      - "general"
+#      - "dev"
 
 channel_roles:
   - id: "general"
@@ -375,7 +377,7 @@ actions:
   # Send approval requests to Discord
   - trigger: "*.approval.requested"
     action: "adapter.discord.notify"
-    enabled: true
+    enabled: false  # enable with the Discord channel above
 
 sessions:
   # How long before an idle session resets (minutes)

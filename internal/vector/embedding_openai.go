@@ -22,12 +22,12 @@ type OpenAIEmbeddingProvider struct {
 
 // OpenAI embedding models and their default dimensions.
 const (
-	OpenAIEmbeddingSmall      = "text-embedding-3-small"
-	OpenAIEmbeddingLarge      = "text-embedding-3-large"
-	OpenAIEmbeddingAda002     = "text-embedding-ada-002"
-	OpenAIEmbeddingSmallDim   = 1536
-	OpenAIEmbeddingLargeDim   = 3072
-	OpenAIEmbeddingAda002Dim  = 1536
+	OpenAIEmbeddingSmall     = "text-embedding-3-small"
+	OpenAIEmbeddingLarge     = "text-embedding-3-large"
+	OpenAIEmbeddingAda002    = "text-embedding-ada-002"
+	OpenAIEmbeddingSmallDim  = 1536
+	OpenAIEmbeddingLargeDim  = 3072
+	OpenAIEmbeddingAda002Dim = 1536
 )
 
 // NewOpenAIEmbeddingProvider creates an OpenAI embedding provider.
@@ -64,9 +64,9 @@ func NewOpenAIEmbeddingProviderWithBaseURL(apiKey, baseURL, model string, dimens
 
 // openAIEmbeddingRequest is the request body for the embeddings API.
 type openAIEmbeddingRequest struct {
-	Model     string `json:"model"`
-	Input     any    `json:"input"` // string or []string
-	Dimensions int   `json:"dimensions,omitempty"`
+	Model      string `json:"model"`
+	Input      any    `json:"input"` // string or []string
+	Dimensions int    `json:"dimensions,omitempty"`
 }
 
 // openAIEmbeddingResponse is the response from the embeddings API.

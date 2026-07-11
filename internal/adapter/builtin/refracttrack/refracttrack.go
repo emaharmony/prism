@@ -179,7 +179,7 @@ func (a *RefractTrackAdapter) queryStatus(input map[string]any) (*adapter.Result
 				Output: map[string]any{
 					"project": project,
 					"entries": 0,
-					"message":  "no progress entries found",
+					"message": "no progress entries found",
 				},
 			}, nil
 		}

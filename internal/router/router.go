@@ -1,9 +1,9 @@
 // Package router routes incoming messages to the appropriate agent.
 //
 // Routing logic:
-//   1. Direct address: "Lumi, fix this" → route to agent named "lumi"
-//   2. @mention: "@Mango write tests" → route to agent named "mango"
-//   3. Default fallback: No address detected → route to primary agent
+//  1. Direct address: "Lumi, fix this" → route to agent named "lumi"
+//  2. @mention: "@Mango write tests" → route to agent named "mango"
+//  3. Default fallback: No address detected → route to primary agent
 //
 // The primary agent is determined by the config (primary: true) or
 // falls back to the first agent in the config. The primary agent decides
@@ -21,9 +21,9 @@ import (
 
 // Router determines which agent should handle an incoming message.
 type Router struct {
-	registry   *agent.Registry
-	primaryID  string // ID of the primary/default agent
-	agentIDs   []string
+	registry  *agent.Registry
+	primaryID string // ID of the primary/default agent
+	agentIDs  []string
 }
 
 // New creates a new Router with the given agent registry and config.
@@ -64,8 +64,9 @@ type RouteResult struct {
 
 // directAddressPattern matches "AgentName, " or "AgentName " at the start
 // of a message. Case-insensitive. Examples:
-//   "Lumi, fix this"     → match "Lumi, "
-//   "Mango write tests"  → match "Mango "
+//
+//	"Lumi, fix this"     → match "Lumi, "
+//	"Mango write tests"  → match "Mango "
 var directAddressPattern = regexp.MustCompile(`(?i)^([a-z0-9][a-z0-9-]*)[,\s]+`)
 
 // mentionPattern matches @Mention at any position in the message.
@@ -73,9 +74,9 @@ var mentionPattern = regexp.MustCompile(`(?i)@([a-z0-9][a-z0-9-]*)`)
 
 // Route determines which agent should handle the given message content.
 // Priority order:
-//   1. Direct address at start: "Lumi, fix this" → route to named agent
-//   2. @mention: "@Mango write tests" → route to named agent
-//   3. Default: route to primary agent
+//  1. Direct address at start: "Lumi, fix this" → route to named agent
+//  2. @mention: "@Mango write tests" → route to named agent
+//  3. Default: route to primary agent
 //
 // Direct address takes precedence over @mention because "Lumi, what about @Mango's code?"
 // is addressed to Lumi with an @mention in the body, not to Mango.

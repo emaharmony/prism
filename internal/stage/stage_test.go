@@ -14,10 +14,10 @@ type mockStage struct {
 	name        string
 	validateErr error
 	result      *StageResult
-	execErr    error
-	rollback   error
+	execErr     error
+	rollback    error
 	executed    bool
-	rolledBack bool
+	rolledBack  bool
 }
 
 func (m *mockStage) Name() string { return m.name }

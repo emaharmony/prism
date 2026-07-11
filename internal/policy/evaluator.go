@@ -11,10 +11,10 @@ import (
 // Rules are evaluated in registration order (first match wins).
 // If no rule matches, the default decision is applied.
 type Evaluator struct {
-	registry       *Registry
+	registry        *Registry
 	defaultDecision Decision
-	defaultReason  string
-	emitter        EventEmitter
+	defaultReason   string
+	emitter         EventEmitter
 }
 
 // EventEmitter is the interface for emitting policy events.
@@ -28,7 +28,7 @@ func NewEvaluator(registry *Registry) *Evaluator {
 	return &Evaluator{
 		registry:        registry,
 		defaultDecision: DecisionDenied,
-		defaultReason:  "No matching policy rule; default deny.",
+		defaultReason:   "No matching policy rule; default deny.",
 	}
 }
 

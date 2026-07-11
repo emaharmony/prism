@@ -56,7 +56,7 @@ func (s *ApprovalStage) Execute(ctx context.Context, rc *RunContext) (*RunContex
 		Success:   true,
 		Data: map[string]any{
 			"approvals_created": 0,
-			"note":             "approval logic will be fully extracted from runner.go",
+			"note":              "approval logic will be fully extracted from runner.go",
 		},
 	}, nil
 }

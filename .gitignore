@@ -50,6 +50,11 @@ tmp/
 dist/
 build/
 coverage/
+.cache/
+coverage.out
+coverage.html
+quality-report.md
+test-results/
 prism-agent.exe
 prism-bus.exe
 prism.exe

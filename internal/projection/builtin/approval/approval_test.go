@@ -26,10 +26,10 @@ func TestApprovalStateProjection_FullLifecycle(t *testing.T) {
 
 	// Approval requested
 	p.Apply(event.NewEvent("prism.approval.requested", "test", map[string]any{
-		"approval_id": "appr_001",
-		"mutation_type": "write_file",
-		"target_path": "/src/main.go",
-		"requested_by": "lumi",
+		"approval_id":     "appr_001",
+		"mutation_type":   "write_file",
+		"target_path":     "/src/main.go",
+		"requested_by":    "lumi",
 		"policy_decision": "requires_approval",
 	}))
 	snap := p.Snapshot()

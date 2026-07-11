@@ -115,10 +115,10 @@ func TestManagerCRUD(t *testing.T) {
 
 	// Create a plan
 	plan := Plan{
-		Title:       "V32 Phase 2: Plan-First tracking",
-		Description: "Add plan tracking and guard checks before code execution",
-		Reasoning:   "Ema called out that code gets written without plans",
-		Scope:       "Plan package only — no guard rail yet",
+		Title:        "V32 Phase 2: Plan-First tracking",
+		Description:  "Add plan tracking and guard checks before code execution",
+		Reasoning:    "Ema called out that code gets written without plans",
+		Scope:        "Plan package only — no guard rail yet",
 		Deliverables: []string{"internal/plan package", "plan.json state file", "tests"},
 	}
 	if err := m.CreatePlan(plan); err != nil {
@@ -312,7 +312,7 @@ func TestManagerExplicitApprovalLevel(t *testing.T) {
 		Title:         "Small fix",
 		Scope:         "Bug fix only",
 		ApprovalLevel: ApprovalRequired, // Explicitly require approval even though it's a bug fix
-		Status:        StatusDraft,        // Explicitly set draft
+		Status:        StatusDraft,      // Explicitly set draft
 	}
 	m.CreatePlan(plan)
 
@@ -334,8 +334,8 @@ func TestManagerConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(i int) {
 			plan := Plan{
-				Title:       fmt.Sprintf("Concurrent plan %d", i),
-				Scope:       "Bug fix",
+				Title: fmt.Sprintf("Concurrent plan %d", i),
+				Scope: "Bug fix",
 			}
 			m.CreatePlan(plan)
 			done <- true

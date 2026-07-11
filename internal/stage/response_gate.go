@@ -185,9 +185,9 @@ func isEmojiRune(r rune) bool {
 		(r >= 0x1F300 && r <= 0x1F5FF) || // Misc Symbols and Pictographs
 		(r >= 0x1F680 && r <= 0x1F6FF) || // Transport and Map
 		(r >= 0x1F1E6 && r <= 0x1F1FF) || // Flags
-		(r >= 0x2600 && r <= 0x26FF) ||   // Misc symbols
-		(r >= 0x2700 && r <= 0x27BF) ||   // Dingbats
-		(r >= 0xFE00 && r <= 0xFE0F) ||   // Variation selectors
+		(r >= 0x2600 && r <= 0x26FF) || // Misc symbols
+		(r >= 0x2700 && r <= 0x27BF) || // Dingbats
+		(r >= 0xFE00 && r <= 0xFE0F) || // Variation selectors
 		(r >= 0x1F900 && r <= 0x1F9FF) || // Supplemental symbols
 		(r >= 0x1FA00 && r <= 0x1FA6F) || // Chess symbols
 		(r >= 0x1FA70 && r <= 0x1FAFF) || // Symbols and pictographs extended

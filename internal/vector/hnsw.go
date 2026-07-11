@@ -51,7 +51,7 @@ func NewHNSWIndex(dimension, neighbors int) *HNSWIndex {
 		neighbors:  neighbors,
 		dim:        dimension,
 		rng:        rand.New(rand.NewSource(42)), // deterministic for reproducibility
-		smallGraph: neighbors * 2,                 // fallback threshold
+		smallGraph: neighbors * 2,                // fallback threshold
 	}
 }
 
@@ -69,7 +69,10 @@ func (h *HNSWIndex) Insert(id string, vector []float64) {
 // InsertBulk adds multiple vectors to the index efficiently under a single lock.
 // This is significantly faster than individual Insert calls for bulk loading
 // because it acquires the write lock only once.
-func (h *HNSWIndex) InsertBulk(entries []struct{ ID string; Vector []float64 }) {
+func (h *HNSWIndex) InsertBulk(entries []struct {
+	ID     string
+	Vector []float64
+}) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, e := range entries {

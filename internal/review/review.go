@@ -95,17 +95,17 @@ func (r *Reviewer) emit(eventType, source string, payload map[string]any) {
 func (r *Reviewer) Generate(runID, correlationID string, mutationStatus string, filesChanged []string, validationResults []ValidationInfo, mutationSummaries []event.MutationSummary) (*Review, error) {
 	// Emit review.requested
 	r.emit(ReviewEventTypes.ReviewRequested, "prism-review", map[string]any{
-		"run_id":           runID,
-		"correlation_id":    correlationID,
-		"reviewer":         r.name,
-		"mutation_status":  mutationStatus,
+		"run_id":          runID,
+		"correlation_id":  correlationID,
+		"reviewer":        r.name,
+		"mutation_status": mutationStatus,
 	})
 
 	// Emit review.started
 	r.emit(ReviewEventTypes.ReviewStarted, "prism-review", map[string]any{
-		"run_id":           runID,
-		"correlation_id":    correlationID,
-		"reviewer":         r.name,
+		"run_id":         runID,
+		"correlation_id": correlationID,
+		"reviewer":       r.name,
 	})
 
 	// Determine overall validation status
@@ -181,11 +181,11 @@ func (r *Reviewer) Generate(runID, correlationID string, mutationStatus string, 
 
 	// Emit review.completed
 	r.emit(ReviewEventTypes.ReviewCompleted, "prism-review", map[string]any{
-		"run_id":          runID,
-		"correlation_id":   correlationID,
-		"reviewer":        r.name,
-		"recommendation":  string(recommendation),
-		"review_id":       reviewID,
+		"run_id":         runID,
+		"correlation_id": correlationID,
+		"reviewer":       r.name,
+		"recommendation": string(recommendation),
+		"review_id":      reviewID,
 	})
 
 	return review, nil

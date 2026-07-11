@@ -263,7 +263,9 @@ func TestIsWithinRoot_BlocksSymlinkEscape(t *testing.T) {
 
 	// Create symlink inside workspace pointing outside
 	linkPath := filepath.Join(tmpDir, "escape_link")
-	os.Symlink(outsideDir, linkPath)
+	if err := os.Symlink(outsideDir, linkPath); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
 
 	absRoot, _ := filepath.Abs(tmpDir)
 
@@ -318,7 +320,9 @@ func TestIsWithinRoot_BlocksDirectSymlinkEscape(t *testing.T) {
 
 	// Create symlink inside workspace pointing directly to outside file
 	linkPath := filepath.Join(tmpDir, "secret_link")
-	os.Symlink(outsideFile, linkPath)
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
 
 	absRoot, _ := filepath.Abs(tmpDir)
 	absPath := filepath.Clean(filepath.Join(absRoot, "secret_link"))

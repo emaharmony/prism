@@ -20,7 +20,7 @@ type RateLimiter struct {
 	mu         sync.Mutex
 	tokens     int
 	maxTokens  int
-	refillRate int       // tokens per second
+	refillRate int // tokens per second
 	lastRefill time.Time
 }
 
@@ -72,7 +72,7 @@ type UserRateLimiter struct {
 func NewUserRateLimiter(maxPerUser, refillPerUser, globalMax, globalRefill int) *UserRateLimiter {
 	return &UserRateLimiter{
 		userLimits:       make(map[string]*RateLimiter),
-		globalLimit:       NewRateLimiter(globalMax, globalRefill),
+		globalLimit:      NewRateLimiter(globalMax, globalRefill),
 		maxTokensPerUser: maxPerUser,
 		refillPerUser:    refillPerUser,
 	}

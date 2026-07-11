@@ -1,7 +1,7 @@
 # Natural Gates Workflow System (V2)
 
 > **Status:** Phase 1-6 Complete
-> **Design:** [docs/natural-gates-workflow-design.json](../../docs/natural-gates-workflow-design.json)
+> **Design:** This document is the retained design record.
 > **Designed by:** Mango
 > **Implemented by:** Lumi
 
@@ -95,7 +95,7 @@ Tasks in PROJECT_STATE.md can have risk levels:
 - All assumptions, confidence, delegations, and feedback preserved
 
 ## Configuration
-Default config: [examples/workflows/natural-gates-default.yaml](../../examples/workflows/natural-gates-default.yaml)
+Default config: [examples/workflows/natural-gates-default.yaml](../examples/workflows/natural-gates-default.yaml)
 
 ```yaml
 phases:

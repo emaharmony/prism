@@ -86,7 +86,7 @@ func TestAgentActivityFailed(t *testing.T) {
 	evt := event.NewEvent(agent.EventAgentFailed, "agent-coder", map[string]any{
 		"agent_name": "coder",
 		"subtask":    "implement feature X",
-		"error":     "timeout",
+		"error":      "timeout",
 	})
 	if err := p.Apply(evt); err != nil {
 		t.Fatalf("Apply failed: %v", err)

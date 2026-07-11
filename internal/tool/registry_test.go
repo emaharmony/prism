@@ -11,9 +11,9 @@ type mockTool struct {
 	description string
 }
 
-func (m *mockTool) Name() string                  { return m.name }
-func (m *mockTool) Description() string           { return m.description }
-func (m *mockTool) Schema() ToolSchema            { return ToolSchema{} }
+func (m *mockTool) Name() string        { return m.name }
+func (m *mockTool) Description() string { return m.description }
+func (m *mockTool) Schema() ToolSchema  { return ToolSchema{} }
 func (m *mockTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
 	return ToolResult{Success: true, Output: map[string]any{"echo": m.name}}, nil
 }

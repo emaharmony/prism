@@ -19,11 +19,12 @@ import (
 // then "un-approved" after the file is already on disk.
 //
 // State transitions:
-//   pending → approved (human says yes, mutation is applied)
-//   pending → denied  (human says no, mutation is NOT applied)
-//   pending → expired (optional: approval request timed out, mutation is NOT applied)
-//   approved → ✗ (locked — cannot be reversed)
-//   denied → ✗ (locked — cannot be reversed)
+//
+//	pending → approved (human says yes, mutation is applied)
+//	pending → denied  (human says no, mutation is NOT applied)
+//	pending → expired (optional: approval request timed out, mutation is NOT applied)
+//	approved → ✗ (locked — cannot be reversed)
+//	denied → ✗ (locked — cannot be reversed)
 const (
 	StatusPending  = "pending"  // Awaiting human decision
 	StatusApproved = "approved" // Human approved — mutation can be applied

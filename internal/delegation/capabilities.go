@@ -66,11 +66,11 @@ var RoleDefaults = map[string][]string{
 // Rules:
 // 1. The delegating agent must have the "delegate" capability (or be primary).
 // 2. The target agent must have a capability matching the task type.
-//    - Task type "code_implementation" requires "code" capability.
-//    - Task type "code" requires "code" capability.
-//    - Task type "review" requires "review" capability.
-//    - Task type "research" requires "search" capability.
-//    - Task type "general" is always allowed (any agent can handle it).
+//   - Task type "code_implementation" requires "code" capability.
+//   - Task type "code" requires "code" capability.
+//   - Task type "review" requires "review" capability.
+//   - Task type "research" requires "search" capability.
+//   - Task type "general" is always allowed (any agent can handle it).
 func CanDelegate(delegator *orchestrator.AgentConfig, target *orchestrator.AgentConfig, taskType string) error {
 	// Nil guards
 	if delegator == nil {
@@ -162,6 +162,7 @@ func hasCapability(agent *orchestrator.AgentConfig, cap string) bool {
 
 	return false
 }
+
 // ValidateCapabilities checks that all capability strings in an agent config
 // are known capabilities. Returns an error for unknown capabilities.
 func ValidateCapabilities(agent *orchestrator.AgentConfig) error {

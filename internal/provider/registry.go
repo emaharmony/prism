@@ -31,8 +31,8 @@ type ModelInfo struct {
 // Thread-safe. Use Register() to add providers, Get() to look them up.
 type ProviderRegistry struct {
 	mu        sync.RWMutex
-	providers map[string]Provider   // model ID → provider
-	models    map[string]ModelInfo  // model ID → metadata
+	providers map[string]Provider       // model ID → provider
+	models    map[string]ModelInfo      // model ID → metadata
 	chains    map[string]*ChainProvider // chain name → chain
 }
 

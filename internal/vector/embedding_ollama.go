@@ -48,8 +48,8 @@ type ollamaEmbedResponse struct {
 
 // ollamaEmbedBatchRequest is the request body for Ollama's /api/embed endpoint (batch).
 type ollamaEmbedBatchRequest struct {
-	Model  string   `json:"model"`
-	Input  []string `json:"input"`
+	Model string   `json:"model"`
+	Input []string `json:"input"`
 }
 
 // ollamaEmbedBatchResponse is the batch response from Ollama's /api/embed endpoint.

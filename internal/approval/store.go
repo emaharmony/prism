@@ -11,7 +11,7 @@ import (
 // Store provides file-based persistence for approvals under
 // runs/<run_id>/approvals/<approval_id>.json.
 type Store struct {
-	mu    sync.RWMutex
+	mu      sync.RWMutex
 	runsDir string
 }
 

@@ -20,11 +20,11 @@ import (
 
 // configSummary is the validated, human/JSON view of a loaded config.
 type configSummary struct {
-	InstanceID    string `json:"instance_id"`
-	Agents        int    `json:"agents"`
-	PrimaryAgent  string `json:"primary_agent,omitempty"`
-	Channels      int    `json:"channels"`
-	Projects      int    `json:"projects"`
+	InstanceID   string `json:"instance_id"`
+	Agents       int    `json:"agents"`
+	PrimaryAgent string `json:"primary_agent,omitempty"`
+	Channels     int    `json:"channels"`
+	Projects     int    `json:"projects"`
 	// IsolatedProjects counts projects with worktree_isolation enabled (V56).
 	IsolatedProjects int    `json:"isolated_projects,omitempty"`
 	MCPServers       int    `json:"mcp_servers"`

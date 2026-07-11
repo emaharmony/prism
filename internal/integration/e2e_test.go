@@ -1,7 +1,8 @@
 // Package integration provides end-to-end tests for the V20 orchestrator.
 //
 // These tests verify the full pipeline:
-//   Config → Agent Registration → Session → Router → Action → Discord Bot
+//
+//	Config → Agent Registration → Session → Router → Action → Discord Bot
 //
 // They do NOT require a live Discord connection (bot is mocked).
 package integration
@@ -83,8 +84,8 @@ func TestE2E_ConfigToSessionToRouter(t *testing.T) {
 
 	// 6. Test routing
 	tests := []struct {
-		content   string
-		wantAgent string
+		content    string
+		wantAgent  string
 		wantMethod string
 	}{
 		{"Lumi, fix this bug", "lumi", "direct"},
@@ -291,8 +292,8 @@ func TestE2E_ActionWildcardMatching(t *testing.T) {
 	// Test action matching with real events
 	testEvents := []struct {
 		eventType string
-		wantCost bool
-		wantMem  bool
+		wantCost  bool
+		wantMem   bool
 	}{
 		{"lumi.tool.completed", true, false},
 		{"mango.agent.output", false, true},

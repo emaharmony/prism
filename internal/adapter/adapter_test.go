@@ -13,7 +13,7 @@ type testAdapter struct {
 	caps    []Capability
 }
 
-func (t *testAdapter) Name() string              { return t.name }
+func (t *testAdapter) Name() string               { return t.name }
 func (t *testAdapter) Version() string            { return t.version }
 func (t *testAdapter) Capabilities() []Capability { return t.caps }
 func (t *testAdapter) Execute(ctx context.Context, action string, input map[string]any) (*Result, error) {
