@@ -667,6 +667,7 @@ func executeServe(args []string) {
 		AutoPatch:          autopatcher,
 		NATS:               natsConn,
 		Providers:          provReg,
+		InvokeIdleTimeout:  time.Duration(cfg.Sessions.InvokeIdleTimeoutHours) * time.Hour,
 		AuthToken:          cfg.API.ResolveAuthToken(),
 		AllowedOrigins:     cfg.API.AllowedOrigins,
 		ConfigDir:          filepath.Dir(*configPath),

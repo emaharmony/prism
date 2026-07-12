@@ -324,6 +324,14 @@ agents:
   # Prism's internal Go packages. Requires api.auth_token or
   # api.auth_token_env to be set — see the `api:` block above. No agent is
   # invocable via API by default; this must be explicitly enabled per agent.
+  #
+  # By default each invoke is single-shot (no memory). To hold a multi-turn
+  # conversation, send a stable "conversation_id" on each request (e.g. the
+  # Discord channel id); prior turns are then threaded into the prompt and the
+  # reply is remembered. The conversation stays open until the user says
+  # "stop"/"new topic" (auto-detected), until you send "reset": true, or until
+  # sessions.invoke_idle_timeout_hours of inactivity. Example request body:
+  #   {"prompt": "...", "conversation_id": "1491622581348864162"}
   # - id: clippy
   #   role: stream-clip-judge
   #   provider: anthropic
@@ -402,6 +410,11 @@ sessions:
   # long-term semantic memory, not active-session continuity.
   short_term_window_days: 7
   verbatim_recent_messages: 40
+  # Safety net for stateful Agent Invocation API conversations (invoke calls that
+  # carry a conversation_id — see the invocable agent above). A conversation stays
+  # open across calls until an explicit stop/switch, or until it has been idle this
+  # many hours. 0 disables the safety net (open until explicitly reset).
+  invoke_idle_timeout_hours: 36
 
 remembrance:
   enabled: false
