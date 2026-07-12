@@ -304,6 +304,67 @@ func (m *Manager) FindActive(channel, channelID, userID string) (*Session, error
 	return &s, nil
 }
 
+// FindActiveWithin finds the newest session for (channel, channelID, userID) and
+// applies the caller-supplied maxIdle window instead of the manager's global
+// idle/persistence settings. maxIdle <= 0 means no idle limit. Returns nil when
+// none match or the newest is older than maxIdle.
+//
+// This exists for the Agent Invocation API's stateful conversations, which want a
+// long, self-contained idle window (e.g. 36h) decoupled from the built-in chat
+// pipeline's IdleTimeoutMinutes.
+func (m *Manager) FindActiveWithin(channel, channelID, userID string, maxIdle time.Duration) (*Session, error) {
+	stale := func(lastActive time.Time) bool {
+		return maxIdle > 0 && time.Since(lastActive) > maxIdle
+	}
+
+	m.mu.RLock()
+	var newest *Session
+	for _, s := range m.sessions {
+		if s.Channel == channel && s.ChannelID == channelID && s.UserID == userID {
+			if newest == nil || s.LastActive.After(newest.LastActive) {
+				newest = s
+			}
+		}
+	}
+	m.mu.RUnlock()
+	if newest != nil {
+		if stale(newest.LastActive) {
+			return nil, nil
+		}
+		return newest, nil
+	}
+
+	// Not cached — load the newest matching row from SQLite.
+	row := m.db.QueryRow(
+		"SELECT id, agent_id, channel, channel_id, user_id, started_at, last_active, compacted_at FROM sessions WHERE channel = ? AND channel_id = ? AND user_id = ? ORDER BY last_active DESC LIMIT 1",
+		channel, channelID, userID,
+	)
+	var s Session
+	var compactedAt sql.NullTime
+	err := row.Scan(&s.ID, &s.AgentID, &s.Channel, &s.ChannelID, &s.UserID, &s.StartedAt, &s.LastActive, &compactedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("session: find active within: %w", err)
+	}
+	if stale(s.LastActive) {
+		return nil, nil
+	}
+
+	msgs, err := m.loadMessages(s.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.Messages = msgs
+
+	m.mu.Lock()
+	m.sessions[s.ID] = &s
+	m.mu.Unlock()
+
+	return &s, nil
+}
+
 // FindOwnerAgent finds the newest session for an owner+agent continuity scope
 // and assembles recent local transcript from matching legacy channel sessions at
 // read time. The returned session ID is the writable latest session; old rows are

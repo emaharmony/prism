@@ -692,6 +692,14 @@ type SessionConfig struct {
 	// VerbatimRecentMessages caps exact recent local memory injected from other
 	// sessions. Current session history remains controlled by MaxContextMessages.
 	VerbatimRecentMessages int `yaml:"verbatim_recent_messages"`
+
+	// InvokeIdleTimeoutHours resets a stateful Agent Invocation API conversation
+	// (POST /api/v1/agents/{id}/invoke with a conversation_id) after this many idle
+	// hours, as a safety net so abandoned threads don't linger forever. Distinct
+	// from IdleTimeoutMinutes, which governs the built-in chat/bot pipeline. 0
+	// disables the safety net (a conversation stays open until an explicit
+	// stop/switch or the MaxContextMessages compaction cap).
+	InvokeIdleTimeoutHours int `yaml:"invoke_idle_timeout_hours"`
 }
 
 // RemembranceConfig configures the memory service connection.
@@ -734,6 +742,7 @@ func DefaultConfig() *Config {
 			RecallTimezone:         "Local",
 			ShortTermWindowDays:    7,
 			VerbatimRecentMessages: 40,
+			InvokeIdleTimeoutHours: 36,
 		},
 		Remembrance: RemembranceConfig{
 			Enabled:        false,

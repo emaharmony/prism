@@ -62,6 +62,7 @@ import (
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/provider"
 	"github.com/emaharmony/prism/internal/session"
+	"github.com/emaharmony/prism/internal/sessionreset"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/workflow"
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
@@ -85,6 +86,9 @@ type Server struct {
 	editorWS    *editor.EditorState
 	providers   *provider.ProviderRegistry
 	invocations *invocation.Store
+	// invokeIdleTimeout resets a stateful invoke conversation after this idle
+	// window (0 = no idle safety net). See SessionConfig.InvokeIdleTimeoutHours.
+	invokeIdleTimeout time.Duration
 
 	// authToken, when non-empty, is the bearer token required on
 	// state-changing endpoints and the SSE stream. Empty disables auth
@@ -129,6 +133,9 @@ type Config struct {
 	// single-shot invocations (POST /api/v1/agents/{id}/invoke). Nil disables
 	// the invocation endpoints (503).
 	Providers *provider.ProviderRegistry
+	// InvokeIdleTimeout resets a stateful invoke conversation (a call carrying a
+	// conversation_id) after this idle window. Zero disables the safety net.
+	InvokeIdleTimeout time.Duration
 
 	// AuthToken is the bearer token required on mutating endpoints + SSE.
 	AuthToken string
@@ -173,6 +180,7 @@ func NewServer(cfg Config) *Server {
 		staticUI:           cfg.StaticUI,
 		providers:          cfg.Providers,
 		invocations:        invocation.NewStore(),
+		invokeIdleTimeout:  cfg.InvokeIdleTimeout,
 		mux:                http.NewServeMux(),
 	}
 	s.routes()
@@ -432,7 +440,23 @@ type invokeRequest struct {
 	Prompt    string         `json:"prompt"`
 	MaxTokens int            `json:"max_tokens,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+	// ConversationID, when set, turns the call into a multi-turn conversation:
+	// prior turns for this id are threaded into the prompt and the new turn is
+	// persisted. Empty preserves the original single-shot, memoryless behavior.
+	// If empty, metadata["conversation_id"] then metadata["channel_id"] are used
+	// as fallbacks, so callers already sending channel context need no change.
+	ConversationID string `json:"conversation_id,omitempty"`
+	// Reset forces a fresh conversation (drops prior memory) before this turn.
+	Reset bool `json:"reset,omitempty"`
 }
+
+// invokeResetAck is the reply returned for a bare "stop/reset" message, which
+// clears memory without spending an LLM call.
+const invokeResetAck = "Okay — starting fresh. What would you like to talk about?"
+
+// invokeChannel is the synthetic session channel used to key stateful invoke
+// conversations, keeping them separate from real chat/bot channels.
+const invokeChannel = "invoke"
 
 func (s *Server) handleAgentInvoke(w http.ResponseWriter, r *http.Request, agentID string) {
 	if r.Method != http.MethodPost {
@@ -472,9 +496,56 @@ func (s *Server) handleAgentInvoke(w http.ResponseWriter, r *http.Request, agent
 		maxTokens = invocation.DefaultMaxTokens
 	}
 
-	inv := s.invocations.Create(agentID)
-	go s.runInvocation(*agentCfg, inv.ID, req.Prompt, maxTokens)
+	conversationID := resolveConversationID(req)
 
+	// Stateless path (no conversation id, or sessions unavailable): unchanged
+	// single-shot behavior — one prompt in, one result out, nothing persisted.
+	if conversationID == "" || s.sessions == nil {
+		inv := s.invocations.Create(agentID)
+		go s.runInvocation(*agentCfg, inv.ID, singleShotMessages(*agentCfg, req.Prompt), "", maxTokens)
+		s.writeInvocationAccepted(w, inv)
+		return
+	}
+
+	// Stateful path: resume (or start) a conversation keyed by conversationID.
+	kind := sessionreset.Classify(req.Prompt)
+	reset := req.Reset || kind != sessionreset.None
+	sess, err := s.resolveInvokeSession(agentID, conversationID, reset)
+	if err != nil {
+		log.Printf("[API] resolve invoke session: %v", err)
+		writeJSONError(w, "could not load conversation", http.StatusInternalServerError)
+		return
+	}
+
+	// A bare "stop/reset" command clears memory and acknowledges without an LLM
+	// call. A "switch" carries the new topic, so it falls through to a normal turn
+	// on the now-fresh session.
+	if kind == sessionreset.Stop {
+		inv := s.invocations.Create(agentID)
+		result := map[string]any{"text": invokeResetAck}
+		s.invocations.Complete(inv.ID, result)
+		s.publishInvocationEvent(agentID, inv.ID, invocation.StatusCompleted, result, "")
+		s.writeInvocationAccepted(w, inv)
+		return
+	}
+
+	if _, err := s.sessions.AddMessage(sess.ID, "user", req.Prompt, ""); err != nil {
+		log.Printf("[API] add invoke user message: %v", err)
+		writeJSONError(w, "could not save your message", http.StatusInternalServerError)
+		return
+	}
+
+	// Build the message list synchronously (sess.Messages now includes this turn)
+	// so the background call doesn't race concurrent session mutation.
+	messages := invokeSessionMessages(*agentCfg, sess)
+
+	inv := s.invocations.Create(agentID)
+	go s.runInvocation(*agentCfg, inv.ID, messages, sess.ID, maxTokens)
+	s.writeInvocationAccepted(w, inv)
+}
+
+// writeInvocationAccepted returns the 202 + pending invocation body.
+func (s *Server) writeInvocationAccepted(w http.ResponseWriter, inv *invocation.Invocation) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	if err := json.NewEncoder(w).Encode(inv); err != nil {
@@ -482,11 +553,77 @@ func (s *Server) handleAgentInvoke(w http.ResponseWriter, r *http.Request, agent
 	}
 }
 
-// runInvocation performs the actual LLM call in the background and records
-// the outcome. Deliberately the lightest-weight LLM call path in the
-// codebase: no session, no tool loop, no approval gate — just a resolved
-// provider/model, mirroring how wake_handler.go makes its own one-off calls.
-func (s *Server) runInvocation(agentCfg orchestrator.AgentConfig, invocationID, prompt string, maxTokens int) {
+// resolveConversationID reads the conversation key from the dedicated field,
+// falling back to common metadata keys so callers already sending channel
+// context enable memory without changing their request shape.
+func resolveConversationID(req invokeRequest) string {
+	if id := strings.TrimSpace(req.ConversationID); id != "" {
+		return id
+	}
+	for _, key := range []string{"conversation_id", "channel_id"} {
+		if v, ok := req.Metadata[key].(string); ok {
+			if id := strings.TrimSpace(v); id != "" {
+				return id
+			}
+		}
+	}
+	return ""
+}
+
+// resolveInvokeSession returns the conversation's live session, creating a fresh
+// one when reset is requested, when none exists, or when the existing one has
+// been idle past the configured safety-net window.
+func (s *Server) resolveInvokeSession(agentID, conversationID string, reset bool) (*session.Session, error) {
+	if !reset {
+		sess, err := s.sessions.FindActiveWithin(invokeChannel, conversationID, conversationID, s.invokeIdleTimeout)
+		if err != nil {
+			return nil, err
+		}
+		if sess != nil {
+			return sess, nil
+		}
+	}
+	return s.sessions.Create(agentID, invokeChannel, conversationID, conversationID)
+}
+
+// singleShotMessages builds the classic memoryless prompt: optional system
+// postfix + the single user turn.
+func singleShotMessages(agentCfg orchestrator.AgentConfig, prompt string) []provider.ChatMessage {
+	messages := make([]provider.ChatMessage, 0, 2)
+	if agentCfg.ConversationPostfix != "" {
+		messages = append(messages, provider.ChatMessage{Role: "system", Content: agentCfg.ConversationPostfix})
+	}
+	return append(messages, provider.ChatMessage{Role: "user", Content: prompt})
+}
+
+// invokeSessionMessages builds the prompt from persisted conversation history,
+// mapping session roles to chat roles the same way the built-in chat pipeline
+// does (see buildMessages in cmd/prism-cli/tool_loop_chat.go). The current user
+// turn is already the last message in sess.Messages.
+func invokeSessionMessages(agentCfg orchestrator.AgentConfig, sess *session.Session) []provider.ChatMessage {
+	messages := make([]provider.ChatMessage, 0, len(sess.Messages)+1)
+	if agentCfg.ConversationPostfix != "" {
+		messages = append(messages, provider.ChatMessage{Role: "system", Content: agentCfg.ConversationPostfix})
+	}
+	for _, m := range sess.Messages {
+		switch m.Role {
+		case "user":
+			messages = append(messages, provider.ChatMessage{Role: "user", Content: m.Content})
+		case "agent":
+			messages = append(messages, provider.ChatMessage{Role: "assistant", Content: m.Content})
+		case "system":
+			messages = append(messages, provider.ChatMessage{Role: "system", Content: m.Content})
+		}
+	}
+	return messages
+}
+
+// runInvocation performs the LLM call in the background and records the outcome.
+// It is the lightweight call path: a resolved provider/model, no tool loop, no
+// approval gate. When sessionID is non-empty the call is part of a stateful
+// conversation, so the assistant reply is persisted back to that session for the
+// next turn; when empty the call is single-shot and nothing is saved.
+func (s *Server) runInvocation(agentCfg orchestrator.AgentConfig, invocationID string, messages []provider.ChatMessage, sessionID string, maxTokens int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -496,12 +633,6 @@ func (s *Server) runInvocation(agentCfg orchestrator.AgentConfig, invocationID, 
 		s.publishInvocationEvent(agentCfg.ID, invocationID, invocation.StatusFailed, nil, err.Error())
 		return
 	}
-
-	messages := make([]provider.ChatMessage, 0, 2)
-	if agentCfg.ConversationPostfix != "" {
-		messages = append(messages, provider.ChatMessage{Role: "system", Content: agentCfg.ConversationPostfix})
-	}
-	messages = append(messages, provider.ChatMessage{Role: "user", Content: prompt})
 
 	resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
 		RunID:     "invoke-" + invocationID,
@@ -514,6 +645,12 @@ func (s *Server) runInvocation(agentCfg orchestrator.AgentConfig, invocationID, 
 		s.invocations.Fail(invocationID, err.Error())
 		s.publishInvocationEvent(agentCfg.ID, invocationID, invocation.StatusFailed, nil, err.Error())
 		return
+	}
+
+	if sessionID != "" && s.sessions != nil {
+		if _, aerr := s.sessions.AddMessage(sessionID, "agent", resp.Content, agentCfg.ID); aerr != nil {
+			log.Printf("[API] persist invoke agent reply: %v", aerr)
+		}
 	}
 
 	result := invocation.ParseResult(resp.Content)
