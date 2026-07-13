@@ -22,7 +22,6 @@ package main
 
 import (
 	ctxcontext "context"
-	stdctx "context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -644,7 +643,7 @@ func executeServe(args []string) {
 			TaskTimeout:   10 * time.Minute,
 			CheckInterval: 1 * time.Minute,
 		})
-		go delegTracker.Start(stdctx.Background())
+		go delegTracker.Start(ctxcontext.Background())
 	}
 
 	apiPort := servePort + 1 // API on port+1 (default 8322)
@@ -1349,6 +1348,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 } // sendError sends a user-friendly error message to a Discord channel.
+//lint:ignore U1000 retained for channel error reporting integration
 func (cc *conversationContext) sendError(channelID, message string) {
 	err := cc.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
@@ -1792,6 +1792,7 @@ func createCodexProvider(agentCfg orchestrator.AgentConfig, cxCfg orchestrator.C
 	}
 	c = codexcli.Normalize(c)
 	if _, err := exec.LookPath(c.Executable); err != nil {
+		//lint:ignore ST1005 Codex is a product name in a user-facing diagnostic.
 		return nil, fmt.Errorf("Codex CLI executable %q not found (install Codex or set codex.executable): %w", c.Executable, err)
 	}
 	return codexcli.New(c), nil

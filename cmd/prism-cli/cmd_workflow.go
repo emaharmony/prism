@@ -2,18 +2,20 @@
 //
 // Workflows are named sequences of steps that an AI agent can execute.
 // Instead of a single LLM call, a workflow defines a pipeline:
-//   Step 1: tool call (read_file)
-//   Step 2: condition (check if output contains error)
-//   Step 3: tool call (write_file_proposal) — only if step 2 matched
+//
+//	Step 1: tool call (read_file)
+//	Step 2: condition (check if output contains error)
+//	Step 3: tool call (write_file_proposal) — only if step 2 matched
 //
 // Workflows are defined in YAML files under examples/workflows/.
 // The runner executes them step by step, tracking state and emitting events.
 //
 // Commands:
-//   prism workflow list                    — Show registered workflows
-//   prism workflow show <name>            — Show workflow steps
-//   prism workflow run <name> --input {}  — Execute a workflow
-//   prism workflow status <run_id>        — Check workflow run state
+//
+//	prism workflow list                    — Show registered workflows
+//	prism workflow show <name>            — Show workflow steps
+//	prism workflow run <name> --input {}  — Execute a workflow
+//	prism workflow status <run_id>        — Check workflow run state
 package main
 
 import (

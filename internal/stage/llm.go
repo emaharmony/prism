@@ -120,14 +120,14 @@ func (s *LLMStage) executeSync(ctx context.Context, rc *RunContext) (*RunContext
 
 	// LLM completed successfully
 	completeEvt := event.NewEvent(event.V1EventTypes.AgentCompleted, rc.Agent, map[string]any{
-		"run_id":         rc.RunID,
-		"agent":          rc.Agent,
-		"model":          resp.Model,
-		"provider":       resp.Provider,
-		"latency_ms":     resp.LatencyMS,
-		"prompt_tokens":  resp.PromptTokens,
-		"output_tokens":  resp.OutputTokens,
-		"duration_ms":    duration,
+		"run_id":        rc.RunID,
+		"agent":         rc.Agent,
+		"model":         resp.Model,
+		"provider":      resp.Provider,
+		"latency_ms":    resp.LatencyMS,
+		"prompt_tokens": resp.PromptTokens,
+		"output_tokens": resp.OutputTokens,
+		"duration_ms":   duration,
 	})
 	newRC := rc.WithEvent(completeEvt).WithLLMResponse(resp.Text)
 
@@ -135,13 +135,13 @@ func (s *LLMStage) executeSync(ctx context.Context, rc *RunContext) (*RunContext
 		StageName: s.Name(),
 		Success:   true,
 		Data: map[string]any{
-			"response":       resp.Text,
-			"model":          resp.Model,
-			"provider":       resp.Provider,
-			"latency_ms":     resp.LatencyMS,
-			"prompt_tokens":  resp.PromptTokens,
-			"output_tokens":  resp.OutputTokens,
-			"duration_ms":    duration,
+			"response":      resp.Text,
+			"model":         resp.Model,
+			"provider":      resp.Provider,
+			"latency_ms":    resp.LatencyMS,
+			"prompt_tokens": resp.PromptTokens,
+			"output_tokens": resp.OutputTokens,
+			"duration_ms":   duration,
 		},
 	}, nil
 }
@@ -220,13 +220,13 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 
 	// Emit completion event (this IS persisted to events.jsonl)
 	resultData := map[string]any{
-		"response":       fullResponse,
-		"model":          rc.Model,
-		"provider":       rc.ProviderName,
-		"duration_ms":    duration,
-		"output_tokens":  totalTokens,
-		"streamed":       true,
-		"token_batches":  tokenBatches,
+		"response":      fullResponse,
+		"model":         rc.Model,
+		"provider":      rc.ProviderName,
+		"duration_ms":   duration,
+		"output_tokens": totalTokens,
+		"streamed":      true,
+		"token_batches": tokenBatches,
 	}
 
 	if callbackErr != nil {
@@ -234,15 +234,15 @@ func (s *LLMStage) executeStreaming(ctx context.Context, rc *RunContext, sp prov
 	}
 
 	completeEvt := event.NewEvent(event.V1EventTypes.AgentCompleted, rc.Agent, map[string]any{
-		"run_id":         rc.RunID,
-		"agent":          rc.Agent,
-		"model":          rc.Model,
-		"provider":       rc.ProviderName,
-		"latency_ms":     duration,
-		"output_tokens":   totalTokens,
-		"streamed":       true,
-		"token_batches":  tokenBatches,
-		"duration_ms":    duration,
+		"run_id":        rc.RunID,
+		"agent":         rc.Agent,
+		"model":         rc.Model,
+		"provider":      rc.ProviderName,
+		"latency_ms":    duration,
+		"output_tokens": totalTokens,
+		"streamed":      true,
+		"token_batches": tokenBatches,
+		"duration_ms":   duration,
 	})
 	newRC := rc.WithEvent(completeEvt).WithLLMResponse(fullResponse)
 

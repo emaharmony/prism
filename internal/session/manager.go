@@ -903,6 +903,7 @@ func (m *Manager) GetLocalSummary(ownerID, agentID string, weekStart time.Time) 
 	}, nil
 }
 
+//lint:ignore U1000 retained for local summary fallback integration
 func (m *Manager) localSummary(agentID string, aliases []string, cutoff time.Time, recent []Message) (string, error) {
 	if len(recent) == 0 {
 		return "", nil

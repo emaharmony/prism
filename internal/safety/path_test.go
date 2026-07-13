@@ -65,7 +65,9 @@ func TestIsWithinRoot_SymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	// Create a symlink inside root that points to the system temp dir (outside root)
 	linkPath := filepath.Join(root, "escape_link")
-	os.Symlink(os.TempDir(), linkPath)
+	if err := os.Symlink(os.TempDir(), linkPath); err != nil {
+		t.Skipf("symlink creation is unavailable on this host: %v", err)
+	}
 
 	target := filepath.Join(linkPath, "file.txt")
 	if IsWithinRoot(target, root) {

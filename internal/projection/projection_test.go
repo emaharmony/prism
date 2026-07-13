@@ -17,9 +17,9 @@ type testProjection struct {
 	applied   []string // tracks which event types were applied
 }
 
-func (t *testProjection) Name() string              { return t.name }
-func (t *testProjection) Subscribe() []string       { return t.subscribe }
-func (t *testProjection) Snapshot() map[string]any  { return t.state }
+func (t *testProjection) Name() string             { return t.name }
+func (t *testProjection) Subscribe() []string      { return t.subscribe }
+func (t *testProjection) Snapshot() map[string]any { return t.state }
 
 func (t *testProjection) Apply(evt event.Event) error {
 	t.applied = append(t.applied, evt.Type)

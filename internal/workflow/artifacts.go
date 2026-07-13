@@ -83,9 +83,9 @@ func UpdateSummaryWithWorkflow(runDir string, result *RunResult) error {
 	}
 
 	summary["workflow"] = map[string]any{
-		"name":    result.WorkflowName,
-		"status":  result.Status,
-		"run_id":  result.RunID,
+		"name":   result.WorkflowName,
+		"status": result.Status,
+		"run_id": result.RunID,
 	}
 
 	updated, err := json.MarshalIndent(summary, "", "  ")
@@ -99,12 +99,12 @@ func UpdateSummaryWithWorkflow(runDir string, result *RunResult) error {
 // buildWorkflowSummary creates a summary map from workflow state and result.
 func buildWorkflowSummary(w *Workflow, state WorkflowState, result *RunResult) map[string]any {
 	summary := map[string]any{
-		"workflow":      w.Name,
-		"version":      w.Version,
-		"status":       state.Status,
-		"run_id":       state.RunID,
+		"workflow":       w.Name,
+		"version":        w.Version,
+		"status":         state.Status,
+		"run_id":         state.RunID,
 		"correlation_id": state.CorrelationID,
-		"step_count":   len(state.StepStates),
+		"step_count":     len(state.StepStates),
 	}
 
 	steps := make([]map[string]any, 0, len(state.StepStates))

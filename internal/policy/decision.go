@@ -27,12 +27,12 @@ const (
 
 // PolicyDecision is the result of evaluating a policy request.
 type PolicyDecision struct {
-	Decision          Decision               `json:"decision"`
-	Reason            string                 `json:"reason"`
-	RuleID            string                 `json:"rule_id"`
-	Severity          Severity               `json:"severity"`
-	RequiresApproval  bool                   `json:"requires_approval"`
-	Metadata          map[string]any         `json:"metadata,omitempty"`
-	EvaluationID      string                 `json:"evaluation_id"`
-	MatchedRuleIndex  int                    `json:"matched_rule_index,omitempty"`
+	Decision         Decision       `json:"decision"`
+	Reason           string         `json:"reason"`
+	RuleID           string         `json:"rule_id"`
+	Severity         Severity       `json:"severity"`
+	RequiresApproval bool           `json:"requires_approval"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	EvaluationID     string         `json:"evaluation_id"`
+	MatchedRuleIndex int            `json:"matched_rule_index,omitempty"`
 }

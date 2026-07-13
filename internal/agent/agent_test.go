@@ -35,10 +35,10 @@ func TestAgentValidation_InvalidName(t *testing.T) {
 	tests := []struct {
 		name string
 	}{
-		{"my.agent"},   // dot not allowed
-		{"my agent"},   // space not allowed
-		{"agent/1"},    // slash not allowed
-		{""},           // empty not allowed
+		{"my.agent"}, // dot not allowed
+		{"my agent"}, // space not allowed
+		{"agent/1"},  // slash not allowed
+		{""},         // empty not allowed
 	}
 	for _, tt := range tests {
 		a := &Agent{
@@ -116,8 +116,8 @@ func TestRegistryResolve_NotFound(t *testing.T) {
 
 func TestRegistryList(t *testing.T) {
 	reg := NewRegistry()
-	reg.Register(&Agent{Name: "coder", Version: "1.0.0", Role: "impl", Capabilities: []AgentCapability{{Action: "write", Description: "Write"}}})   //nolint:errcheck
-	reg.Register(&Agent{Name: "planner", Version: "1.0.0", Role: "plan", Capabilities: []AgentCapability{{Action: "plan", Description: "Plan"}}})   //nolint:errcheck
+	reg.Register(&Agent{Name: "coder", Version: "1.0.0", Role: "impl", Capabilities: []AgentCapability{{Action: "write", Description: "Write"}}})        //nolint:errcheck
+	reg.Register(&Agent{Name: "planner", Version: "1.0.0", Role: "plan", Capabilities: []AgentCapability{{Action: "plan", Description: "Plan"}}})        //nolint:errcheck
 	reg.Register(&Agent{Name: "reviewer", Version: "1.0.0", Role: "review", Capabilities: []AgentCapability{{Action: "review", Description: "Review"}}}) //nolint:errcheck
 
 	names := reg.List()

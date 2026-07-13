@@ -63,15 +63,7 @@ func FuzzyResolvePath(tp ToolPaths, inputPath string) (string, error) {
 	// Step 4: Strip remaining ~ prefix for fuzzy matching.
 	// E.g., ~/projects/repos/bassbook → fuzzy match "bassbook".
 	if strings.HasPrefix(inputPath, "~") {
-		stripped := inputPath
-		if strings.HasPrefix(stripped, "~/") {
-			stripped = stripped[2:]
-		} else {
-			stripped = strings.TrimPrefix(stripped, "~")
-			if strings.HasPrefix(stripped, "/") {
-				stripped = stripped[1:]
-			}
-		}
+		stripped := strings.TrimPrefix(strings.TrimPrefix(inputPath, "~"), "/")
 		if stripped != "" {
 			inputPath = stripped
 		}

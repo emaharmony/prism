@@ -65,6 +65,7 @@ import (
 	"github.com/emaharmony/prism/internal/provider/mock"
 	"github.com/emaharmony/prism/internal/provider/ollama"
 	"github.com/emaharmony/prism/internal/provider/openai"
+	"github.com/emaharmony/prism/internal/version"
 )
 
 func main() {
@@ -109,6 +110,9 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "help", "-h", "--help":
+		printUsage()
+		return
 	case "run":
 		runCmd.Parse(os.Args[2:])
 
@@ -221,18 +225,18 @@ func main() {
 			WorkspaceContext: workspaceContext,
 			Project:          *projectFlag,
 			Agent:            *agentFlag,
-			BusURL:        *busURL,
-			MemoryEnabled: *memoryEnabled,
-			RequireMemory: *requireMemory,
-			MemoryURL:     *memoryURL,
-			RunDir:        *runDir,
-			Provider:      p,
-			ProviderName:  providerName,
-			Model:         model,
-			Temperature:   *temperatureFlag,
-			MaxTokens:     *maxTokensFlag,
-			Timeout:       *timeoutFlag,
-			DryRunPrompt:  *dryRunPrompt,
+			BusURL:           *busURL,
+			MemoryEnabled:    *memoryEnabled,
+			RequireMemory:    *requireMemory,
+			MemoryURL:        *memoryURL,
+			RunDir:           *runDir,
+			Provider:         p,
+			ProviderName:     providerName,
+			Model:            model,
+			Temperature:      *temperatureFlag,
+			MaxTokens:        *maxTokensFlag,
+			Timeout:          *timeoutFlag,
+			DryRunPrompt:     *dryRunPrompt,
 		})
 	case "tool":
 		if len(os.Args) < 3 {
@@ -607,7 +611,7 @@ func main() {
 	case "remembrance":
 		executeRemembrance(os.Args[2:])
 	case "version":
-		fmt.Println("prism v0.24.0")
+		fmt.Println(version.String())
 	default:
 		printUsage()
 		os.Exit(1)
@@ -638,6 +642,13 @@ func commandUsage() string {
 			"prism tool list | run <name> --input '{...}'  List / run built-in tools",
 			"prism validation list | run <name>            List / run validation profiles",
 			"prism context show [--context soul,agents]    Show context that would be injected",
+			"prism policy list | evaluate --input <file>   Inspect deterministic policy decisions",
+		}},
+		{"Workflows", []string{
+			"prism workflow list | show <name>             Inspect registered workflows",
+			"prism workflow run <name> [--input <file>]    Run a named workflow",
+			"prism workflow start --project <id> --prompt  Start a gated-loop workflow",
+			"prism workflow status <run_id>                Inspect workflow state",
 		}},
 		{"Observe runs", []string{
 			"prism watch [--config prism.yaml]             Live view of a running gated-loop workflow",
@@ -645,6 +656,7 @@ func commandUsage() string {
 			"prism cost <run_id>                           Show token usage and cost report",
 			"prism trace <run_id>                          Show event trace (causal DAG)",
 			"prism dashboard [--port 8080]                 Start the local read-only dashboard",
+			"prism status [--config prism.yaml]            Show persistent-service status",
 		}},
 		{"Self-patching", []string{
 			"prism scan [--severity ...] [--json] [--start] Scan for issues (--start fixes the top one)",

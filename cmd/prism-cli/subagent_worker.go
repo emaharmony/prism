@@ -32,7 +32,9 @@ const (
 )
 
 // subAgentResolver resolves an agent id to its runtime from the loaded config.
-type subAgentResolver struct{ agents map[string]subagent.AgentRuntime }
+type subAgentResolver struct {
+	agents map[string]subagent.AgentRuntime
+}
 
 func newSubAgentResolver(cfg *orchestrator.Config) *subAgentResolver {
 	m := make(map[string]subagent.AgentRuntime, len(cfg.Agents))

@@ -19,10 +19,10 @@ import (
 
 // Bridge manages connections to remote Prism instances.
 type Bridge struct {
-	localNC    *nats.Conn
-	remotes    map[string]*remoteConn
-	mu         sync.RWMutex
-	eventCh    chan BridgedEvent
+	localNC *nats.Conn
+	remotes map[string]*remoteConn
+	mu      sync.RWMutex
+	eventCh chan BridgedEvent
 }
 
 // BridgedEvent is an event that crossed a bridge from a remote Prism.
@@ -65,11 +65,11 @@ type RemoteConfig struct {
 
 // remoteConn represents a connection to a remote Prism's NATS server.
 type remoteConn struct {
-	config   RemoteConfig
-	conn     *nats.Conn
-	subs     []*nats.Subscription
-	localNC  *nats.Conn
-	eventCh  chan BridgedEvent
+	config  RemoteConfig
+	conn    *nats.Conn
+	subs    []*nats.Subscription
+	localNC *nats.Conn
+	eventCh chan BridgedEvent
 }
 
 // NewBridge creates a new bridge for inter-Prism communication.

@@ -9,9 +9,10 @@
 // adapters can be loaded from YAML manifests (see adapters/ directory).
 //
 // Commands:
-//   prism adapter list          — Show all registered adapters
-//   prism adapter show <name>   — Show adapter details and capabilities
-//   prism adapter health <name> — Check if an adapter is ready
+//
+//	prism adapter list          — Show all registered adapters
+//	prism adapter show <name>   — Show adapter details and capabilities
+//	prism adapter health <name> — Check if an adapter is ready
 package main
 
 import (

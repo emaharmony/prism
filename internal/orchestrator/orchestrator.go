@@ -56,12 +56,12 @@ func New(cfg *Config) (*Orchestrator, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Orchestrator{
-		Config:   cfg,
-		Agents:   agent.NewRegistry(),
-		natsURL:  cfg.Prism.NATSURL,
-		ctx:      ctx,
-		cancel:   cancel,
-		healthy:  false,
+		Config:  cfg,
+		Agents:  agent.NewRegistry(),
+		natsURL: cfg.Prism.NATSURL,
+		ctx:     ctx,
+		cancel:  cancel,
+		healthy: false,
 	}, nil
 }
 
@@ -134,10 +134,10 @@ func (o *Orchestrator) Status() *Status {
 // Status represents the orchestrator's current state.
 type Status struct {
 	Healthy   bool          `json:"healthy"`
-	StartedAt time.Time      `json:"started_at"`
-	Uptime    time.Duration  `json:"uptime"`
-	Agents    []string       `json:"agents"`
-	NATSURL   string         `json:"nats_url"`
+	StartedAt time.Time     `json:"started_at"`
+	Uptime    time.Duration `json:"uptime"`
+	Agents    []string      `json:"agents"`
+	NATSURL   string        `json:"nats_url"`
 }
 
 // GetAgent returns the config for a specific agent by ID.

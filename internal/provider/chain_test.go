@@ -25,7 +25,7 @@ func (m *mockProvider) Generate(ctx context.Context, req provider.GenerateReques
 	return m.response, nil
 }
 
-func (m *mockProvider) Name() string             { return "mock" }
+func (m *mockProvider) Name() string                { return "mock" }
 func (m *mockProvider) Tier() provider.ProviderTier { return m.tier }
 
 func TestChainProvider_SingleProvider_Success(t *testing.T) {

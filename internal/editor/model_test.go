@@ -552,6 +552,18 @@ func TestValidateWritePath(t *testing.T) {
 	}
 }
 
+func TestValidateWritePathRejectsSymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(base, "outside-link")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable on this host: %v", err)
+	}
+	if err := validateWritePath(filepath.Join(link, "config.yaml"), base); err == nil {
+		t.Fatal("symlink escape was accepted")
+	}
+}
+
 func sp(s string) *string { return &s }
 
 func TestEditorEdgeActionRoundTrip(t *testing.T) {

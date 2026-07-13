@@ -7,6 +7,7 @@ package approval
 import (
 	"crypto/rand"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -19,11 +20,12 @@ import (
 // then "un-approved" after the file is already on disk.
 //
 // State transitions:
-//   pending → approved (human says yes, mutation is applied)
-//   pending → denied  (human says no, mutation is NOT applied)
-//   pending → expired (optional: approval request timed out, mutation is NOT applied)
-//   approved → ✗ (locked — cannot be reversed)
-//   denied → ✗ (locked — cannot be reversed)
+//
+//	pending → approved (human says yes, mutation is applied)
+//	pending → denied  (human says no, mutation is NOT applied)
+//	pending → expired (optional: approval request timed out, mutation is NOT applied)
+//	approved → ✗ (locked — cannot be reversed)
+//	denied → ✗ (locked — cannot be reversed)
 const (
 	StatusPending  = "pending"  // Awaiting human decision
 	StatusApproved = "approved" // Human approved — mutation can be applied
@@ -115,6 +117,9 @@ func NewApproval(runID, correlationID, requestedBy, project, mutationType, targe
 // Approve transitions the approval from pending to approved.
 // Returns an error if the status is not pending or is already denied.
 func (a *Approval) Approve(approvedBy string) error {
+	if strings.TrimSpace(approvedBy) == "" {
+		return fmt.Errorf("approved_by is required")
+	}
 	if a.Status == StatusDenied {
 		return fmt.Errorf("cannot approve approval %s: already denied", a.ApprovalID)
 	}
@@ -138,6 +143,9 @@ func (a *Approval) Approve(approvedBy string) error {
 // Deny transitions the approval from pending to denied.
 // Returns an error if the status is not pending or is already approved.
 func (a *Approval) Deny(deniedBy, reason string) error {
+	if strings.TrimSpace(deniedBy) == "" {
+		return fmt.Errorf("denied_by is required")
+	}
 	if a.Status == StatusApproved {
 		return fmt.Errorf("cannot deny approval %s: already approved", a.ApprovalID)
 	}

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -47,17 +46,17 @@ def _get_stores(config_path: Optional[str] = None):
 def init():
     """Initialize Remembrance storage (create DB and vector store)."""
     config = load_config()
-    typer.echo(f"Initializing Remembrance...")
+    typer.echo("Initializing Remembrance...")
     typer.echo(f"  Metadata DB: {config.database.metadata_path}")
     typer.echo(f"  Vector store: {config.database.vector_path}")
 
-    metadata = MetadataStore(config.database.metadata_path)
-    vectors = LanceDBStore(config.database.vector_path)
+    MetadataStore(config.database.metadata_path).close()
+    LanceDBStore(config.database.vector_path)
 
     typer.echo("OK Metadata DB initialized")
     typer.echo("OK Vector store initialized")
-    typer.echo(f"")
-    typer.echo(f"Run 'remembrance ingest --file seed.jsonl' to load seed memories.")
+    typer.echo("")
+    typer.echo("Run 'remembrance ingest --file seed.jsonl' to load seed memories.")
 
 
 @app.command()

@@ -43,15 +43,19 @@ func TestE2E_DelegationFlow(t *testing.T) {
 	engine := delegation.NewEngine(taskStore, conn)
 
 	// 4. Register Mango as a subscriber
-	var receivedTask *task.Task
+	receivedTasks := make(chan task.Task, 1)
 	mangoHandler := func(ctx context.Context, t *task.Task) error {
-		receivedTask = t
+		receivedTask := *t
 		// Mango "completes" the task
 		result := map[string]any{
 			"status":        "done",
 			"lines_changed": 42,
 		}
-		return engine.Complete(ctx, t.ID, result)
+		if err := engine.Complete(ctx, t.ID, result); err != nil {
+			return err
+		}
+		receivedTasks <- receivedTask
+		return nil
 	}
 
 	if err := engine.Subscribe("mango", mangoHandler); err != nil {
@@ -87,13 +91,15 @@ func TestE2E_DelegationFlow(t *testing.T) {
 		t.Error("expected delegation marker to be stripped from response")
 	}
 
-	// 6. Wait for Mango to process the task via NATS
-	time.Sleep(500 * time.Millisecond)
-
-	// 7. Verify Mango received the task
-	if receivedTask == nil {
-		t.Fatal("expected Mango to receive the delegated task")
+	// 6. Wait for Mango to process the task via NATS.
+	var receivedTask task.Task
+	select {
+	case receivedTask = <-receivedTasks:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for Mango to receive the delegated task")
 	}
+
+	// 7. Verify Mango received the task.
 	if receivedTask.DelegatedBy != "lumi" {
 		t.Errorf("expected delegated_by lumi, got %s", receivedTask.DelegatedBy)
 	}

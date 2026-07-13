@@ -74,10 +74,10 @@ func TestE2E_RemembranceCaptureContext(t *testing.T) {
 
 	// --- Turn 1: Agent produces output → capture it ---
 	rc1 := &stage.RunContext{
-		RunID:   "run_e2e_001",
-		Task:    "what is prism",
-		Agent:   "lumi",
-		Project: "prism",
+		RunID:       "run_e2e_001",
+		Task:        "what is prism",
+		Agent:       "lumi",
+		Project:     "prism",
 		LLMResponse: "Prism is an event-native agentic environment that orchestrates AI agents through a NATS bus.",
 	}
 
@@ -107,10 +107,10 @@ func TestE2E_RemembranceCaptureContext(t *testing.T) {
 
 	// --- Turn 2: Next turn → context should be available ---
 	rc2 := &stage.RunContext{
-		RunID:   "run_e2e_002",
-		Task:    "tell me more about prism",
-		Agent:   "lumi",
-		Project: "prism",
+		RunID:       "run_e2e_002",
+		Task:        "tell me more about prism",
+		Agent:       "lumi",
+		Project:     "prism",
 		LLMResponse: "", // No new output yet, just context retrieval
 	}
 
@@ -142,11 +142,11 @@ func TestE2E_RemembranceGracefulDegradation(t *testing.T) {
 	)
 
 	rc := &stage.RunContext{
-		RunID:        "run_graceful_001",
-		Task:         "test task",
-		Agent:        "lumi",
-		Project:      "prism",
-		LLMResponse:  "This is a test response.",
+		RunID:       "run_graceful_001",
+		Task:        "test task",
+		Agent:       "lumi",
+		Project:     "prism",
+		LLMResponse: "This is a test response.",
 	}
 
 	newRC, result, err := s.Execute(context.Background(), rc)
@@ -175,11 +175,11 @@ func TestE2E_RemembranceDisabled(t *testing.T) {
 	)
 
 	rc := &stage.RunContext{
-		RunID:        "run_disabled_001",
-		Task:         "test task",
-		Agent:        "lumi",
-		Project:      "prism",
-		LLMResponse:  "Response text.",
+		RunID:       "run_disabled_001",
+		Task:        "test task",
+		Agent:       "lumi",
+		Project:     "prism",
+		LLMResponse: "Response text.",
 	}
 
 	_, result, err := s.Execute(context.Background(), rc)
@@ -198,19 +198,19 @@ func TestE2E_RemembranceDisabled(t *testing.T) {
 // Remembrance is required but unavailable.
 func TestE2E_RemembranceRequiredFailure(t *testing.T) {
 	s := stage.NewRemembranceStage(
-		true,  // memoryEnabled
-		true,  // requireMemory
+		true,                     // memoryEnabled
+		true,                     // requireMemory
 		"http://localhost:59998", // not running
 		stage.WithCapture(true),
 		stage.WithContext(true),
 	)
 
 	rc := &stage.RunContext{
-		RunID:        "run_required_001",
-		Task:         "test task",
-		Agent:        "lumi",
-		Project:      "prism",
-		LLMResponse:  "Response text.",
+		RunID:       "run_required_001",
+		Task:        "test task",
+		Agent:       "lumi",
+		Project:     "prism",
+		LLMResponse: "Response text.",
 	}
 
 	_, result, err := s.Execute(context.Background(), rc)

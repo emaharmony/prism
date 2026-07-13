@@ -89,11 +89,16 @@ func (s *Store) Get(id string) (*Invocation, bool) {
 	return inv.clone(), true
 }
 
-// clone returns a shallow copy of the invocation. The Result map and CompletedAt
-// pointer are only ever replaced wholesale (never mutated in place) under the
-// store lock, so a shallow copy taken under that lock is a consistent snapshot.
+// clone returns an independent snapshot of the invocation. Copying Result
+// prevents callers from mutating the map held by the store.
 func (inv *Invocation) clone() *Invocation {
 	cp := *inv
+	if inv.Result != nil {
+		cp.Result = make(map[string]any, len(inv.Result))
+		for key, value := range inv.Result {
+			cp.Result[key] = value
+		}
+	}
 	return &cp
 }
 

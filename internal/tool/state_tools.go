@@ -94,8 +94,10 @@ type ClearActiveTaskTool struct {
 	Mgr StateManager
 }
 
-func (t *ClearActiveTaskTool) Name() string        { return "clear_active_task" }
-func (t *ClearActiveTaskTool) Description() string { return "Clear the current active task. Use when work is complete or abandoned." }
+func (t *ClearActiveTaskTool) Name() string { return "clear_active_task" }
+func (t *ClearActiveTaskTool) Description() string {
+	return "Clear the current active task. Use when work is complete or abandoned."
+}
 func (t *ClearActiveTaskTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input:  map[string]ParamSpec{},
@@ -171,9 +173,9 @@ func (t *AddBlockedTool) Description() string {
 func (t *AddBlockedTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"item":        {Type: "string", Description: "What's blocked", Required: true},
-			"waiting_on":  {Type: "string", Description: "What it's waiting for (ema approval, mango review, etc.)", Required: true},
-			"task_ref":    {Type: "string", Description: "Reference to the active task or ticket"},
+			"item":       {Type: "string", Description: "What's blocked", Required: true},
+			"waiting_on": {Type: "string", Description: "What it's waiting for (ema approval, mango review, etc.)", Required: true},
+			"task_ref":   {Type: "string", Description: "Reference to the active task or ticket"},
 		},
 		Output: ParamSpec{Type: "string", Description: "Confirmation with blocked item ID"},
 	}
@@ -210,8 +212,10 @@ type UnblockTool struct {
 	Mgr StateManager
 }
 
-func (t *UnblockTool) Name() string        { return "unblock" }
-func (t *UnblockTool) Description() string { return "Remove a blocked item by ID. Use when the blocker has been resolved." }
+func (t *UnblockTool) Name() string { return "unblock" }
+func (t *UnblockTool) Description() string {
+	return "Remove a blocked item by ID. Use when the blocker has been resolved."
+}
 func (t *UnblockTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{

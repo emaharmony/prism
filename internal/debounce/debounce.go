@@ -14,10 +14,10 @@ const DefaultInterval = 500 * time.Millisecond
 // Tracker tracks the last processed time for each key and determines
 // whether a new message should be processed or skipped.
 type Tracker struct {
-	mu        sync.RWMutex
-	lastSeen  map[string]time.Time
-	interval  time.Duration
-	onDrop    func(key string)
+	mu       sync.RWMutex
+	lastSeen map[string]time.Time
+	interval time.Duration
+	onDrop   func(key string)
 }
 
 // Option configures a Tracker.

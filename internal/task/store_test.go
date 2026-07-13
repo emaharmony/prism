@@ -15,16 +15,16 @@ func TestStore_CreateAndGet(t *testing.T) {
 
 	now := time.Now()
 	task := &Task{
-		ID:           "task-001",
-		Type:         "code_implementation",
-		Status:       StatusCreated,
-		DelegatedBy:  "lumi",
-		DelegatedTo:  "mango",
-		Description:  "Implement the X feature",
-		Context:      map[string]any{"file": "internal/stage/llm.go"},
-		Priority:     "high",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:          "task-001",
+		Type:        "code_implementation",
+		Status:      StatusCreated,
+		DelegatedBy: "lumi",
+		DelegatedTo: "mango",
+		Description: "Implement the X feature",
+		Context:     map[string]any{"file": "internal/stage/llm.go"},
+		Priority:    "high",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	err = store.Create(task)
@@ -127,14 +127,14 @@ func TestStore_ListByAgent(t *testing.T) {
 	now := time.Now()
 	for i, taskType := range []string{"code", "review", "research"} {
 		task := &Task{
-			ID:           fmt.Sprintf("task-%d", i+1),
-			Type:         taskType,
-			Status:       StatusCreated,
-			DelegatedBy:  "lumi",
-			DelegatedTo:  "mango",
-			Description:  "Task " + fmt.Sprintf("%d", i+1),
-			CreatedAt:    now.Add(time.Duration(i) * time.Minute),
-			UpdatedAt:    now.Add(time.Duration(i) * time.Minute),
+			ID:          fmt.Sprintf("task-%d", i+1),
+			Type:        taskType,
+			Status:      StatusCreated,
+			DelegatedBy: "lumi",
+			DelegatedTo: "mango",
+			Description: "Task " + fmt.Sprintf("%d", i+1),
+			CreatedAt:   now.Add(time.Duration(i) * time.Minute),
+			UpdatedAt:   now.Add(time.Duration(i) * time.Minute),
 		}
 		if err := store.Create(task); err != nil {
 			t.Fatalf("failed to create task %d: %v", i+1, err)
@@ -312,7 +312,7 @@ func TestStore_NilContext(t *testing.T) {
 		t.Fatalf("failed to get task: %v", err)
 	}
 	// Nil context should deserialize as nil or empty map
-	if got.Context != nil && len(got.Context) != 0 {
+	if len(got.Context) != 0 {
 		t.Errorf("expected nil or empty context, got %v", got.Context)
 	}
 }

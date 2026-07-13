@@ -35,7 +35,7 @@ func (m *mockLifecycleAdapter) Stop() error {
 
 func (m *mockLifecycleAdapter) Name() string               { return m.name }
 func (m *mockLifecycleAdapter) Version() string            { return m.version }
-func (m *mockLifecycleAdapter) Capabilities() []Capability  { return nil }
+func (m *mockLifecycleAdapter) Capabilities() []Capability { return nil }
 func (m *mockLifecycleAdapter) Execute(ctx context.Context, action string, input map[string]any) (*Result, error) {
 	return &Result{Output: map[string]any{"status": "ok"}}, nil
 }

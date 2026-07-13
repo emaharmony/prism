@@ -6,8 +6,9 @@
 // yet), so the list is determined by what's built into the binary.
 //
 // Commands:
-//   prism agent list          — Show all registered agents
-//   prism agent show <name>   — Show agent details and capabilities
+//
+//	prism agent list          — Show all registered agents
+//	prism agent show <name>   — Show agent details and capabilities
 package main
 
 import (
@@ -23,9 +24,9 @@ import (
 func newAgentRegistry() *agent.Registry {
 	reg := agent.NewRegistry()
 	reg.Register(&agent.Agent{
-		Name:         "planner",
-		Version:      "1.0.0",
-		Role:         "planning",
+		Name:    "planner",
+		Version: "1.0.0",
+		Role:    "planning",
 		Capabilities: []agent.AgentCapability{
 			{Action: "plan_task", Description: "Break down a task into steps"},
 		},
@@ -33,9 +34,9 @@ func newAgentRegistry() *agent.Registry {
 		Model:        "mock-model",
 	}) //nolint:errcheck // built-in, known good
 	reg.Register(&agent.Agent{
-		Name:         "coder",
-		Version:      "1.0.0",
-		Role:         "implementation",
+		Name:    "coder",
+		Version: "1.0.0",
+		Role:    "implementation",
 		Capabilities: []agent.AgentCapability{
 			{Action: "write_code", Description: "Write implementation code"},
 			{Action: "fix_code", Description: "Fix bugs in existing code"},
@@ -44,9 +45,9 @@ func newAgentRegistry() *agent.Registry {
 		Model:        "mock-model",
 	}) //nolint:errcheck // built-in, known good
 	reg.Register(&agent.Agent{
-		Name:         "reviewer",
-		Version:      "1.0.0",
-		Role:         "review",
+		Name:    "reviewer",
+		Version: "1.0.0",
+		Role:    "review",
 		Capabilities: []agent.AgentCapability{
 			{Action: "review_code", Description: "Review code for quality and safety"},
 		},

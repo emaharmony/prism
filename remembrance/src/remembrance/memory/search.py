@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
-from ..models import MemorySearchRequest, MemorySearchResponse, MemorySearchResult
+from ..models import MemorySearchRequest, MemorySearchResponse
 from ..stores.metadata_store import MetadataStore
 from ..stores.lancedb_store import LanceDBStore
 from ..embeddings.ollama_provider import OllamaEmbeddingProvider

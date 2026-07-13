@@ -25,13 +25,13 @@ type OpenClawProviderConfig struct {
 
 // OpenClawModelConfig represents a model entry within a provider.
 type OpenClawModelConfig struct {
-	ID            string               `json:"id"`
-	Name          string               `json:"name"`
-	ContextWindow int                  `json:"contextWindow"`
-	Input         []string             `json:"input"`
-	Reasoning     bool                 `json:"reasoning"`
-	MaxTokens     int                  `json:"maxTokens"`
-	Cost          OpenClawCostConfig   `json:"cost"`
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	ContextWindow int                `json:"contextWindow"`
+	Input         []string           `json:"input"`
+	Reasoning     bool               `json:"reasoning"`
+	MaxTokens     int                `json:"maxTokens"`
+	Cost          OpenClawCostConfig `json:"cost"`
 }
 
 // OpenClawCostConfig represents per-token pricing.
@@ -44,7 +44,7 @@ type OpenClawCostConfig struct {
 
 // OpenClawModelsConfig represents the models section of openclaw.json.
 type OpenClawModelsConfig struct {
-	Mode      string                         `json:"mode"`
+	Mode      string                            `json:"mode"`
 	Providers map[string]OpenClawProviderConfig `json:"providers"`
 }
 
