@@ -37,11 +37,11 @@ type ActiveTask struct {
 
 // Decision records a decision that was made, with context about why.
 type Decision struct {
-	ID           string    `json:"id"`            // Unique ID (e.g., "D-001")
-	Decision     string    `json:"decision"`      // What was decided
-	Reasoning    string    `json:"reasoning"`     // Why
-	Alternatives string    `json:"alternatives"`  // What was considered and rejected
-	Author       string    `json:"author"`        // Who made it ("lumi", "ema", "guard")
+	ID           string    `json:"id"`           // Unique ID (e.g., "D-001")
+	Decision     string    `json:"decision"`     // What was decided
+	Reasoning    string    `json:"reasoning"`    // Why
+	Alternatives string    `json:"alternatives"` // What was considered and rejected
+	Author       string    `json:"author"`       // Who made it ("lumi", "ema", "guard")
 	Timestamp    time.Time `json:"timestamp"`
 }
 
@@ -51,17 +51,17 @@ type BlockedItem struct {
 	Item      string    `json:"item"`       // What's blocked
 	WaitingOn string    `json:"waiting_on"` // What it's waiting for ("ema approval", "mango review")
 	Since     time.Time `json:"since"`      // When it became blocked
-	TaskRef   string    `json:"task_ref"`  // Reference to active task
+	TaskRef   string    `json:"task_ref"`   // Reference to active task
 }
 
 // WorkingContext holds the current working context — files, branch, recent actions.
 type WorkingContext struct {
-	Branch       string    `json:"branch"`        // Current git branch
-	LastAction   string    `json:"last_action"`   // What was just done
+	Branch       string    `json:"branch"`      // Current git branch
+	LastAction   string    `json:"last_action"` // What was just done
 	LastActionAt time.Time `json:"last_action_at"`
-	OpenFiles    []string  `json:"open_files"`     // Files currently being worked on
-	PR           string    `json:"pr"`             // Current PR if any
-	Notes        string    `json:"notes"`          // Freeform context notes
+	OpenFiles    []string  `json:"open_files"` // Files currently being worked on
+	PR           string    `json:"pr"`         // Current PR if any
+	Notes        string    `json:"notes"`      // Freeform context notes
 }
 
 // Manager handles reading and writing state files in a workspace directory.

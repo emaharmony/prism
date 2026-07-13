@@ -40,10 +40,10 @@ type SearchResult struct {
 
 // SearchOptions controls vector search behavior.
 type SearchOptions struct {
-	TopK         int            `json:"top_k"`          // Number of results (default 10)
-	MinScore     float64        `json:"min_score"`      // Minimum similarity (default 0.5)
-	SourceFilter string         `json:"source_filter"`  // Filter by source type
-	Metadata     map[string]any `json:"metadata"`       // Filter by metadata
+	TopK         int            `json:"top_k"`         // Number of results (default 10)
+	MinScore     float64        `json:"min_score"`     // Minimum similarity (default 0.5)
+	SourceFilter string         `json:"source_filter"` // Filter by source type
+	Metadata     map[string]any `json:"metadata"`      // Filter by metadata
 }
 
 // DefaultSearchOptions returns sensible defaults.

@@ -70,7 +70,7 @@ func (cc *conversationContext) runToolLoop(
 		}
 
 		// Parse the response — is it a tool request or a final response?
-		parsed := agent.ParseAgentOutput(responseText)
+		parsed := agent.ParseAgentOutputWithFallback(responseText)
 
 		if parsed.Type == agent.ResponseFinal {
 			// Final text response — we're done
@@ -152,7 +152,7 @@ func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt st
 	}
 
 	// Use the provider from the registry
-	prov, err := cc.providers.Get(agentCfg.Model)
+	prov, err := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		return "", fmt.Errorf("no provider for model %s: %w", agentCfg.Model, err)
 	}

@@ -40,70 +40,70 @@ type DiagramConfig struct {
 // DefaultConfig returns sensible defaults for diagram generation.
 func DefaultConfig() DiagramConfig {
 	return DiagramConfig{
-		Width:           800,
-		Height:          600,
-		DarkTheme:       true,
+		Width:            800,
+		Height:           600,
+		DarkTheme:        true,
 		ShowCapabilities: true,
-		ShowEvents:      false,
+		ShowEvents:       false,
 	}
 }
 
 // Color palette for dark theme.
 type palette struct {
-	bg          string
-	box         string
-	boxBorder   string
-	text        string
-	textDim     string
-	arrow       string
-	arrowDash   string
-	arrowDot    string
-	arrowBold   string
-	lead        string
-	coder       string
-	researcher  string
+	bg           string
+	box          string
+	boxBorder    string
+	text         string
+	textDim      string
+	arrow        string
+	arrowDash    string
+	arrowDot     string
+	arrowBold    string
+	lead         string
+	coder        string
+	researcher   string
 	orchestrator string
-	approval    string
-	system      string
+	approval     string
+	system       string
 }
 
 func darkPalette() palette {
 	return palette{
-		bg:          "#0a0a0f",
-		box:         "#16161f",
-		boxBorder:   "#2a2a3a",
-		text:        "#e0e0e8",
-		textDim:     "#888",
-		arrow:       "#a78bfa",
-		arrowDash:   "#6366f1",
-		arrowDot:    "#818cf8",
-		arrowBold:   "#f59e0b",
-		lead:        "#3b82f6",
-		coder:       "#10b981",
-		researcher:  "#f97316",
+		bg:           "#0a0a0f",
+		box:          "#16161f",
+		boxBorder:    "#2a2a3a",
+		text:         "#e0e0e8",
+		textDim:      "#888",
+		arrow:        "#a78bfa",
+		arrowDash:    "#6366f1",
+		arrowDot:     "#818cf8",
+		arrowBold:    "#f59e0b",
+		lead:         "#3b82f6",
+		coder:        "#10b981",
+		researcher:   "#f97316",
 		orchestrator: "#8b5cf6",
-		approval:    "#f59e0b",
-		system:      "#6b7280",
+		approval:     "#f59e0b",
+		system:       "#6b7280",
 	}
 }
 
 func lightPalette() palette {
 	return palette{
-		bg:          "#ffffff",
-		box:         "#f8fafc",
-		boxBorder:   "#e2e8f0",
-		text:        "#1e293b",
-		textDim:     "#64748b",
-		arrow:       "#7c3aed",
-		arrowDash:   "#6366f1",
-		arrowDot:    "#818cf8",
-		arrowBold:   "#d97706",
-		lead:        "#2563eb",
-		coder:       "#059669",
-		researcher:  "#ea580c",
+		bg:           "#ffffff",
+		box:          "#f8fafc",
+		boxBorder:    "#e2e8f0",
+		text:         "#1e293b",
+		textDim:      "#64748b",
+		arrow:        "#7c3aed",
+		arrowDash:    "#6366f1",
+		arrowDot:     "#818cf8",
+		arrowBold:    "#d97706",
+		lead:         "#2563eb",
+		coder:        "#059669",
+		researcher:   "#ea580c",
 		orchestrator: "#7c3aed",
-		approval:    "#d97706",
-		system:      "#94a3b8",
+		approval:     "#d97706",
+		system:       "#94a3b8",
 	}
 }
 
@@ -135,8 +135,8 @@ func AgentTopology(w io.Writer, agents []orchestrator.AgentConfig, cfg DiagramCo
 		fmt.Sprintf(".box{fill:%s;stroke:%s;stroke-width:2}", p.box, p.boxBorder),
 		fmt.Sprintf(".text{fill:%s;font-family:system-ui,sans-serif;font-size:14px}", p.text),
 		fmt.Sprintf(".text-dim{fill:%s;font-family:system-ui,sans-serif;font-size:11px}", p.textDim),
-		fmt.Sprintf(".badge{rx:4;ry:4;stroke-width:1}"),
-		fmt.Sprintf(".badge-text{font-family:system-ui,sans-serif;font-size:10px}"),
+		".badge{rx:4;ry:4;stroke-width:1}",
+		".badge-text{font-family:system-ui,sans-serif;font-size:10px}",
 		fmt.Sprintf(".primary{stroke:%s;stroke-width:3}", p.lead),
 	)
 
@@ -186,7 +186,7 @@ func AgentTopology(w io.Writer, agents []orchestrator.AgentConfig, cfg DiagramCo
 		canvas.Rect(x+10, y+40, 70, 20,
 			fmt.Sprintf("fill:%s;rx:4;ry:4", borderColor))
 		canvas.Text(x+45, y+54, agent.Role,
-			fmt.Sprintf("text-anchor:middle;font-family:system-ui,sans-serif;font-size:11px;fill:white"))
+			"text-anchor:middle;font-family:system-ui,sans-serif;font-size:11px;fill:white")
 
 		// Model
 		canvas.Text(x+10, y+75, fmt.Sprintf("Model: %s", agent.Model),
@@ -350,8 +350,8 @@ func DelegationFlow(w io.Writer, agents []orchestrator.AgentConfig, cfg DiagramC
 
 	// Pipeline stages
 	stages := []struct {
-		name string
-		desc string
+		name  string
+		desc  string
 		color string
 	}{
 		{"LLMStage", "LLM call +\nstreaming", p.arrow},
@@ -435,7 +435,7 @@ func DelegationFlow(w io.Writer, agents []orchestrator.AgentConfig, cfg DiagramC
 	canvas.Polygon([]int{diamondX, diamondX + 60, diamondX, diamondX - 60},
 		[]int{diamondY - 25, diamondY + 15, diamondY + 55, diamondY + 15},
 		fmt.Sprintf("fill:%s;stroke:%s;stroke-width:2", p.box, p.approval))
-	canvas.Text(diamondX, diamondY + 18, "Approve?",
+	canvas.Text(diamondX, diamondY+18, "Approve?",
 		fmt.Sprintf("text-anchor:middle;font-family:system-ui,sans-serif;font-size:12px;font-weight:bold;fill:%s", p.text))
 
 	// ✅ path
@@ -487,7 +487,7 @@ func ApprovalGate(w io.Writer, cfg DiagramConfig) {
 	canvas.Polygon([]int{diamondX, diamondX + 60, diamondX, diamondX - 60},
 		[]int{diamondY - 25, diamondY + 15, diamondY + 55, diamondY + 15},
 		fmt.Sprintf("fill:%s;stroke:%s;stroke-width:3;rx:4", p.box, p.approval))
-	canvas.Text(diamondX, diamondY + 18, "Approve?",
+	canvas.Text(diamondX, diamondY+18, "Approve?",
 		fmt.Sprintf("text-anchor:middle;font-family:system-ui,sans-serif;font-size:13px;font-weight:bold;fill:%s", p.text))
 
 	// User decision

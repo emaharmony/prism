@@ -1,8 +1,5 @@
 """Tests for MetadataStore — ensure_project and FK-safe store_memory."""
 
-import os
-import sqlite3
-import tempfile
 from datetime import datetime, timezone
 
 import pytest

@@ -75,9 +75,9 @@ type ollamaFunctionCall struct {
 
 type chatResponse struct {
 	Message struct {
-		Role      string             `json:"role"`
-		Content   string             `json:"content"`
-		ToolCalls []ollamaToolCall   `json:"tool_calls,omitempty"`
+		Role      string           `json:"role"`
+		Content   string           `json:"content"`
+		ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 	} `json:"message"`
 	Model           string `json:"model"`
 	PromptEvalCount int    `json:"prompt_eval_count"`

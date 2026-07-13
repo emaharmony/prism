@@ -71,12 +71,12 @@ func (p *Provider) Tier() provider.ProviderTier { return p.TierVal }
 // ---------- Anthropic request/response types ----------
 
 type messagesRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	Messages  []anthropicMessage `json:"messages"`
-	System    string        `json:"system,omitempty"`
-	Temperature float64     `json:"temperature,omitempty"`
-	Stream    bool          `json:"stream,omitempty"`
+	Model       string             `json:"model"`
+	MaxTokens   int                `json:"max_tokens"`
+	Messages    []anthropicMessage `json:"messages"`
+	System      string             `json:"system,omitempty"`
+	Temperature float64            `json:"temperature,omitempty"`
+	Stream      bool               `json:"stream,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -85,13 +85,13 @@ type anthropicMessage struct {
 }
 
 type messagesResponse struct {
-	ID      string              `json:"id"`
-	Type    string              `json:"type"`
-	Role    string              `json:"role"`
-	Content []contentBlock      `json:"content"`
-	Model   string              `json:"model"`
-	Usage   anthropicUsage      `json:"usage"`
-	StopReason string           `json:"stop_reason"`
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	Role       string         `json:"role"`
+	Content    []contentBlock `json:"content"`
+	Model      string         `json:"model"`
+	Usage      anthropicUsage `json:"usage"`
+	StopReason string         `json:"stop_reason"`
 }
 
 type contentBlock struct {
@@ -111,9 +111,9 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	start := time.Now()
 
 	anthReq := messagesRequest{
-		Model:     req.Model,
-		MaxTokens: req.MaxTokens,
-		Messages:  []anthropicMessage{{Role: "user", Content: req.Prompt}},
+		Model:       req.Model,
+		MaxTokens:   req.MaxTokens,
+		Messages:    []anthropicMessage{{Role: "user", Content: req.Prompt}},
 		Temperature: req.Temperature,
 	}
 
@@ -177,10 +177,10 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 		PromptTokens: msgResp.Usage.InputTokens,
 		OutputTokens: msgResp.Usage.OutputTokens,
 		Raw: map[string]any{
-			"id":           msgResp.ID,
-			"stop_reason":  msgResp.StopReason,
-			"model":        msgResp.Model,
-			"input_tokens": msgResp.Usage.InputTokens,
+			"id":            msgResp.ID,
+			"stop_reason":   msgResp.StopReason,
+			"model":         msgResp.Model,
+			"input_tokens":  msgResp.Usage.InputTokens,
 			"output_tokens": msgResp.Usage.OutputTokens,
 		},
 	}, nil

@@ -50,7 +50,7 @@ func (cc *conversationContext) handleCodebaseSummaryRequest(msg *discordbot.Inbo
 	model := ""
 	if agentCfg != nil {
 		model = agentCfg.Model
-		if p, err := cc.providers.Get(agentCfg.Model); err == nil {
+		if p, err := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model); err == nil {
 			llm = p
 		} else {
 			log.Printf("[SUMMARY] provider unavailable for %s: %v; using deterministic report only", agentCfg.Model, err)

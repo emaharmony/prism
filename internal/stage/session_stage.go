@@ -82,13 +82,13 @@ func (s *SessionStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 
 	// Emit session resolved event
 	evt := event.NewEvent("prism.session.resolved", "session-stage", map[string]any{
-		"run_id":      rc.RunID,
-		"session_id":  sess.ID,
-		"agent_id":    rc.Agent,
+		"run_id":       rc.RunID,
+		"session_id":   sess.ID,
+		"agent_id":     rc.Agent,
 		"channel_type": s.ChannelType,
-		"channel_id":  s.ChannelID,
-		"user_id":     s.UserID,
-		"duration_ms": duration,
+		"channel_id":   s.ChannelID,
+		"user_id":      s.UserID,
+		"duration_ms":  duration,
 	})
 
 	newRC := rc.WithEvent(evt).WithSessionID(sess.ID)
@@ -97,8 +97,8 @@ func (s *SessionStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 		StageName: s.Name(),
 		Success:   true,
 		Data: map[string]any{
-			"session_id":   sess.ID,
-			"duration_ms":  duration,
+			"session_id":  sess.ID,
+			"duration_ms": duration,
 		},
 	}, nil
 }

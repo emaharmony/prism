@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from prism.client import PrismClient
@@ -56,7 +55,6 @@ def on(subject: str, durable: str = "", queue: str = ""):
             ...
     """
     def decorator(func):
-        client = _get_client()
         # Register the handler — we'll subscribe in run()
         if not hasattr(on, "_handlers"):
             on._handlers = []  # type: ignore[attr-defined]

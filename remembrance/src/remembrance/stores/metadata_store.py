@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from ..models import Memory, MemoryCreate, AuditLogEntry
+from ..models import Memory, AuditLogEntry
 
 
 class MetadataStore:

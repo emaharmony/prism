@@ -1,11 +1,11 @@
 // cmd_run.go implements the `prism run` command (V1→V5).
 //
 // This is Prism's main command — it runs the full agent pipeline:
-//   1. Create a task event (V1)
-//   2. Call the LLM provider to generate a response (V2)
-//   3. Execute tools the LLM requests (V3)
-//   4. Create approvals for file writes (V4)
-//   5. Run validation and review on approved mutations (V5)
+//  1. Create a task event (V1)
+//  2. Call the LLM provider to generate a response (V2)
+//  3. Execute tools the LLM requests (V3)
+//  4. Create approvals for file writes (V4)
+//  5. Run validation and review on approved mutations (V5)
 //
 // Each step emits events to the event log. The run produces artifacts:
 //   - events.jsonl: every event emitted during the run
@@ -34,12 +34,12 @@ type runConfig struct {
 	Task             string // The task description (required)
 	WorkspaceContext string // Pre-built workspace context (V19 --context flags) injected into the prompt
 	Project          string // Project name for event metadata
-	Agent         string // Agent name for event metadata
-	BusURL        string // NATS bus URL for event publishing
-	MemoryEnabled bool   // Enable the Remembrance context hook
-	RequireMemory bool   // Fail if Remembrance is unavailable
-	MemoryURL     string // Remembrance service URL
-	RunDir        string // Directory for run artifacts
+	Agent            string // Agent name for event metadata
+	BusURL           string // NATS bus URL for event publishing
+	MemoryEnabled    bool   // Enable the Remembrance context hook
+	RequireMemory    bool   // Fail if Remembrance is unavailable
+	MemoryURL        string // Remembrance service URL
+	RunDir           string // Directory for run artifacts
 
 	// LLM fields
 	Provider     provider.Provider // The LLM provider (mock or ollama)
@@ -66,19 +66,19 @@ func executeRun(cfg runConfig) {
 		Task:             cfg.Task,
 		WorkspaceContext: cfg.WorkspaceContext,
 		Project:          cfg.Project,
-		Agent:          cfg.Agent,
-		BusURL:         cfg.BusURL,
-		MemoryEnabled:  cfg.MemoryEnabled,
-		RequireMemory:  cfg.RequireMemory,
-		MemoryURL:      cfg.MemoryURL,
-		RunDir:         cfg.RunDir,
-		Provider:       cfg.Provider,
-		ProviderName:   cfg.ProviderName,
-		Model:          cfg.Model,
-		Temperature:    cfg.Temperature,
-		MaxTokens:      cfg.MaxTokens,
-		Timeout:        cfg.Timeout,
-		DryRunPrompt:   cfg.DryRunPrompt,
+		Agent:            cfg.Agent,
+		BusURL:           cfg.BusURL,
+		MemoryEnabled:    cfg.MemoryEnabled,
+		RequireMemory:    cfg.RequireMemory,
+		MemoryURL:        cfg.MemoryURL,
+		RunDir:           cfg.RunDir,
+		Provider:         cfg.Provider,
+		ProviderName:     cfg.ProviderName,
+		Model:            cfg.Model,
+		Temperature:      cfg.Temperature,
+		MaxTokens:        cfg.MaxTokens,
+		Timeout:          cfg.Timeout,
+		DryRunPrompt:     cfg.DryRunPrompt,
 	})
 
 	result, err := runner.Run()

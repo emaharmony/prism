@@ -106,12 +106,12 @@ func TestDiscordAdapter_PostRunSummary(t *testing.T) {
 
 	d := NewWithClient(server.URL, server.Client())
 	result, err := d.Execute(context.Background(), "post_run_summary", map[string]any{
-		"run_id":       "run_abc123",
-		"status":       "completed",
-		"agent":        "lumi",
-		"project":      "prism",
-		"task":         "Implement V14e",
-		"duration_ms":  15000,
+		"run_id":      "run_abc123",
+		"status":      "completed",
+		"agent":       "lumi",
+		"project":     "prism",
+		"task":        "Implement V14e",
+		"duration_ms": 15000,
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -141,12 +141,12 @@ func TestDiscordAdapter_PostRunSummary_Failed(t *testing.T) {
 
 	d := NewWithClient(server.URL, server.Client())
 	d.Execute(context.Background(), "post_run_summary", map[string]any{
-		"run_id":       "run_fail",
-		"status":       "failed",
-		"agent":        "lumi",
-		"project":      "prism",
-		"task":         "Fix the bug",
-		"duration_ms":  5000,
+		"run_id":      "run_fail",
+		"status":      "failed",
+		"agent":       "lumi",
+		"project":     "prism",
+		"task":        "Fix the bug",
+		"duration_ms": 5000,
 	})
 
 	if len(receivedPayload.Embeds) != 1 {
@@ -167,9 +167,9 @@ func TestDiscordAdapter_PostAlert(t *testing.T) {
 
 	d := NewWithClient(server.URL, server.Client())
 	result, err := d.Execute(context.Background(), "post_alert", map[string]any{
-		"run_id":    "run_alert",
-		"message":   "Run exceeded token limit",
-		"severity":  "error",
+		"run_id":   "run_alert",
+		"message":  "Run exceeded token limit",
+		"severity": "error",
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)

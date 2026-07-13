@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from ..models import Memory, MemoryCreate, IngestResponse, AuditLogEntry
 from ..stores.metadata_store import MetadataStore
@@ -81,7 +80,7 @@ class MemoryIngester:
             return IngestResponse(memory_id=memory.id, status="ingested_metadata_only")
 
         # Log audit
-        self._log_audit(memory.id, "ingest", actor, f"Memory ingested successfully")
+        self._log_audit(memory.id, "ingest", actor, "Memory ingested successfully")
 
         return IngestResponse(memory_id=memory.id, status="ingested")
 

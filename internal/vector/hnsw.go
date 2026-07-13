@@ -51,14 +51,14 @@ func NewHNSWIndex(dimension, neighbors int) *HNSWIndex {
 		neighbors:  neighbors,
 		dim:        dimension,
 		rng:        rand.New(rand.NewSource(42)), // deterministic for reproducibility
-		smallGraph: neighbors * 2,                 // fallback threshold
+		smallGraph: neighbors * 2,                // fallback threshold
 	}
 }
 
 // Insert adds a vector to the index, connecting it to its nearest neighbors.
 // Silently ignores nil or empty vectors, or vectors with wrong dimension.
 func (h *HNSWIndex) Insert(id string, vector []float64) {
-	if vector == nil || len(vector) == 0 || len(vector) != h.dim {
+	if len(vector) == 0 || len(vector) != h.dim {
 		return
 	}
 	h.mu.Lock()
@@ -69,7 +69,10 @@ func (h *HNSWIndex) Insert(id string, vector []float64) {
 // InsertBulk adds multiple vectors to the index efficiently under a single lock.
 // This is significantly faster than individual Insert calls for bulk loading
 // because it acquires the write lock only once.
-func (h *HNSWIndex) InsertBulk(entries []struct{ ID string; Vector []float64 }) {
+func (h *HNSWIndex) InsertBulk(entries []struct {
+	ID     string
+	Vector []float64
+}) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, e := range entries {
@@ -137,7 +140,7 @@ func (h *HNSWIndex) Delete(id string) {
 // ef controls the beam width — higher = better recall, slower.
 // Returns nil for empty index, nil/empty query, or dimension mismatch.
 func (h *HNSWIndex) Search(query []float64, k int, ef int) []SearchResult {
-	if query == nil || len(query) == 0 || len(query) != h.dim {
+	if len(query) == 0 || len(query) != h.dim {
 		return nil
 	}
 	if ef < k {

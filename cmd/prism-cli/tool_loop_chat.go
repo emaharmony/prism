@@ -187,7 +187,7 @@ func (cc *conversationContext) callChatLLM(
 	chatTools []provider.ChatTool,
 	agentCfg *orchestrator.AgentConfig,
 ) (provider.ChatGenerateResponse, error) {
-	chatProv, err := cc.providers.GetChatProvider(agentCfg.Model)
+	chatProv, err := cc.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		return provider.ChatGenerateResponse{}, fmt.Errorf("get chat provider: %w", err)
 	}

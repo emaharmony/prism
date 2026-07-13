@@ -9,8 +9,9 @@
 // the policy engine into allowing a denied action.
 //
 // Commands:
-//   prism policy list                   — Show all loaded policy rules
-//   prism policy evaluate --input <file> — Evaluate a specific policy request
+//
+//	prism policy list                   — Show all loaded policy rules
+//	prism policy evaluate --input <file> — Evaluate a specific policy request
 package main
 
 import (

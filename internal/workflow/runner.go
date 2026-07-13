@@ -24,9 +24,9 @@ type DispatchRunFunc func(ctx context.Context, adapterName string, input map[str
 // Only set the handlers for step types your workflows use.
 // If a handler is nil and a workflow step requires it, the step will fail with a clear error.
 type StepHandlers struct {
-	ToolExecute   ToolExecuteFunc
-	GateEvaluate  GateEvaluateFunc
-	DispatchRun   DispatchRunFunc
+	ToolExecute  ToolExecuteFunc
+	GateEvaluate GateEvaluateFunc
+	DispatchRun  DispatchRunFunc
 }
 
 // RunResult holds the outcome of a workflow run.
@@ -85,9 +85,9 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 	r.emit(V7EventTypes.WorkflowStarted, map[string]any{
 		"workflow_name":    w.Name,
 		"workflow_version": w.Version,
-		"run_id":          runID,
-		"correlation_id":  correlationID,
-		"step_count":      len(w.Steps),
+		"run_id":           runID,
+		"correlation_id":   correlationID,
+		"step_count":       len(w.Steps),
 	})
 
 	// Track step outputs for condition evaluation
@@ -119,11 +119,11 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 				r.emit(V7EventTypes.WorkflowStepSkipped, map[string]any{
 					"workflow_name":    w.Name,
 					"workflow_version": w.Version,
-					"step_id":         step.ID,
-					"step_type":       step.Type,
-					"run_id":          runID,
-					"correlation_id":  correlationID,
-					"reason":          fmt.Sprintf("condition not met: %s", step.When),
+					"step_id":          step.ID,
+					"step_type":        step.Type,
+					"run_id":           runID,
+					"correlation_id":   correlationID,
+					"reason":           fmt.Sprintf("condition not met: %s", step.When),
 				})
 				continue
 			}
@@ -133,10 +133,10 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 		r.emit(V7EventTypes.WorkflowStepStarted, map[string]any{
 			"workflow_name":    w.Name,
 			"workflow_version": w.Version,
-			"step_id":         step.ID,
-			"step_type":       step.Type,
-			"run_id":          runID,
-			"correlation_id":  correlationID,
+			"step_id":          step.ID,
+			"step_type":        step.Type,
+			"run_id":           runID,
+			"correlation_id":   correlationID,
 		})
 
 		stepState := StepState{
@@ -157,10 +157,10 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 			r.emit(V7EventTypes.WorkflowStepCompleted, map[string]any{
 				"workflow_name":    w.Name,
 				"workflow_version": w.Version,
-				"step_id":         step.ID,
-				"step_type":       step.Type,
-				"run_id":          runID,
-				"correlation_id":  correlationID,
+				"step_id":          step.ID,
+				"step_type":        step.Type,
+				"run_id":           runID,
+				"correlation_id":   correlationID,
 			})
 
 			state.Status = "completed"
@@ -168,9 +168,9 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 			r.emit(V7EventTypes.WorkflowCompleted, map[string]any{
 				"workflow_name":    w.Name,
 				"workflow_version": w.Version,
-				"run_id":          runID,
-				"correlation_id":  correlationID,
-				"stopped_at_step": step.ID,
+				"run_id":           runID,
+				"correlation_id":   correlationID,
+				"stopped_at_step":  step.ID,
 			})
 
 			return &RunResult{
@@ -193,11 +193,11 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 			r.emit(V7EventTypes.WorkflowPaused, map[string]any{
 				"workflow_name":    w.Name,
 				"workflow_version": w.Version,
-				"step_id":         step.ID,
-				"step_type":       step.Type,
-				"run_id":          runID,
-				"correlation_id":  correlationID,
-				"reason":          "step requires approval that is not yet granted",
+				"step_id":          step.ID,
+				"step_type":        step.Type,
+				"run_id":           runID,
+				"correlation_id":   correlationID,
+				"reason":           "step requires approval that is not yet granted",
 			})
 
 			return &RunResult{
@@ -218,11 +218,11 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 			r.emit(V7EventTypes.WorkflowStepFailed, map[string]any{
 				"workflow_name":    w.Name,
 				"workflow_version": w.Version,
-				"step_id":         step.ID,
-				"step_type":       step.Type,
-				"run_id":          runID,
-				"correlation_id":  correlationID,
-				"error":           err.Error(),
+				"step_id":          step.ID,
+				"step_type":        step.Type,
+				"run_id":           runID,
+				"correlation_id":   correlationID,
+				"error":            err.Error(),
 			})
 
 			state.Status = "failed"
@@ -231,10 +231,10 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 			r.emit(V7EventTypes.WorkflowFailed, map[string]any{
 				"workflow_name":    w.Name,
 				"workflow_version": w.Version,
-				"run_id":          runID,
-				"correlation_id":  correlationID,
-				"failed_at_step":  step.ID,
-				"error":           err.Error(),
+				"run_id":           runID,
+				"correlation_id":   correlationID,
+				"failed_at_step":   step.ID,
+				"error":            err.Error(),
 			})
 
 			return &RunResult{
@@ -259,10 +259,10 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 		r.emit(V7EventTypes.WorkflowStepCompleted, map[string]any{
 			"workflow_name":    w.Name,
 			"workflow_version": w.Version,
-			"step_id":         step.ID,
-			"step_type":       step.Type,
-			"run_id":          runID,
-			"correlation_id":  correlationID,
+			"step_id":          step.ID,
+			"step_type":        step.Type,
+			"run_id":           runID,
+			"correlation_id":   correlationID,
 		})
 	}
 
@@ -273,8 +273,8 @@ func (r *Runner) Run(ctx context.Context, w *Workflow, input map[string]any) (*R
 	r.emit(V7EventTypes.WorkflowCompleted, map[string]any{
 		"workflow_name":    w.Name,
 		"workflow_version": w.Version,
-		"run_id":          runID,
-		"correlation_id":  correlationID,
+		"run_id":           runID,
+		"correlation_id":   correlationID,
 	})
 
 	return &RunResult{

@@ -79,9 +79,10 @@ func isValidAgentName(name string) bool {
 // Registry holds registered agents. Thread-safe.
 //
 // Usage:
-//   reg := agent.NewRegistry()
-//   reg.Register(&agent.Agent{Name: "coder", ...})
-//   a, err := reg.Resolve("coder")
+//
+//	reg := agent.NewRegistry()
+//	reg.Register(&agent.Agent{Name: "coder", ...})
+//	a, err := reg.Resolve("coder")
 type Registry struct {
 	agents map[string]*Agent
 	mu     sync.RWMutex

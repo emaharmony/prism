@@ -32,8 +32,8 @@ $env:OPENAI_API_KEY="..."
 
 OpenAI ChatGPT subscriptions and OpenAI API platform billing are separate. Prism can use OpenAI API models through `OPENAI_API_KEY`; it cannot spend a ChatGPT web subscription directly as an API model entitlement. Official references:
 
-- https://help.openai.com/en/articles/9039756-managing-billing-settings-on-chatgpt-web-and-platform
-- https://platform.openai.com/docs/api-reference/responses/create
+- <https://help.openai.com/en/articles/9039756-managing-billing-settings-on-chatgpt-web-and-platform>
+- <https://platform.openai.com/docs/api-reference/responses/create>
 
 ## Protocol Subjects
 

@@ -143,7 +143,7 @@ func (m *MockProvider) GenerateStream(ctx context.Context, req provider.Generate
 
 // Compile-time interface checks.
 var (
-	_ provider.Provider           = (*MockProvider)(nil)
-	_ provider.StreamingProvider  = (*MockProvider)(nil)
-	_ provider.Provider           = (*ToolRequestProvider)(nil)
+	_ provider.Provider          = (*MockProvider)(nil)
+	_ provider.StreamingProvider = (*MockProvider)(nil)
+	_ provider.Provider          = (*ToolRequestProvider)(nil)
 )

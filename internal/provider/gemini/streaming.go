@@ -26,7 +26,7 @@ func (p *Provider) GenerateStream(ctx context.Context, req provider.GenerateRequ
 			{Role: "user", Parts: []geminiPart{{Text: req.Prompt}}},
 		},
 		GenerationConfig: &generationConfig{
-			Temperature:    req.Temperature,
+			Temperature:     req.Temperature,
 			MaxOutputTokens: req.MaxTokens,
 		},
 	}

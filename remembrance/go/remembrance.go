@@ -37,18 +37,18 @@ func NewRemembranceClient(baseURL string) *HTTPRemembranceClient {
 // ── Request/Response Types ──────────────────────────────────────────
 
 type BuildContextRequest struct {
-	ProjectID          string `json:"project_id"`
+	ProjectID         string `json:"project_id"`
 	AgentID           string `json:"agent_id"`
-	Task               string `json:"task"`
-	MaxTokens          int    `json:"max_tokens"`
-	IncludeUserMemory  bool   `json:"include_user_memory"`
-	UserID             string `json:"user_id,omitempty"`
-	OutputFormat       string `json:"output_format"`
+	Task              string `json:"task"`
+	MaxTokens         int    `json:"max_tokens"`
+	IncludeUserMemory bool   `json:"include_user_memory"`
+	UserID            string `json:"user_id,omitempty"`
+	OutputFormat      string `json:"output_format"`
 }
 
 type BuildContextResponse struct {
 	ProjectID        string   `json:"project_id"`
-	AgentID         string   `json:"agent_id"`
+	AgentID          string   `json:"agent_id"`
 	Task             string   `json:"task"`
 	SelectedMemories []string `json:"selected_memories"`
 	ContextMarkdown  string   `json:"context_markdown,omitempty"`
@@ -58,12 +58,12 @@ type BuildContextResponse struct {
 }
 
 type SearchMemoryRequest struct {
-	ProjectID          string `json:"project_id"`
-	Query              string `json:"query"`
-	Scope              string `json:"scope"`
-	Limit              int    `json:"limit"`
-	IncludeUserMemory  bool   `json:"include_user_memory"`
-	UserID             string `json:"user_id,omitempty"`
+	ProjectID         string `json:"project_id"`
+	Query             string `json:"query"`
+	Scope             string `json:"scope"`
+	Limit             int    `json:"limit"`
+	IncludeUserMemory bool   `json:"include_user_memory"`
+	UserID            string `json:"user_id,omitempty"`
 }
 
 type SearchMemoryResult struct {
@@ -76,24 +76,24 @@ type SearchMemoryResult struct {
 
 type SearchMemoryResponse struct {
 	Results []SearchMemoryResult `json:"results"`
-	Total   int                   `json:"total"`
-	Query   string                `json:"query"`
+	Total   int                  `json:"total"`
+	Query   string               `json:"query"`
 }
 
 type IngestMemoryRequest struct {
-	ProjectID      string   `json:"project_id"`
-	UserID         string   `json:"user_id,omitempty"`
-	Scope          string   `json:"scope"`
-	Category       string   `json:"category"`
-	Title          string   `json:"title"`
-	Summary        string   `json:"summary"`
-	Content        string   `json:"content"`
-	Tags           []string `json:"tags"`
+	ProjectID       string   `json:"project_id"`
+	UserID          string   `json:"user_id,omitempty"`
+	Scope           string   `json:"scope"`
+	Category        string   `json:"category"`
+	Title           string   `json:"title"`
+	Summary         string   `json:"summary"`
+	Content         string   `json:"content"`
+	Tags            []string `json:"tags"`
 	ImportanceScore float64  `json:"importance_score"`
 	ConfidenceScore float64  `json:"confidence_score"`
-	SourceType     string   `json:"source_type"`
-	SourceRef      string   `json:"source_ref,omitempty"`
-	SourceAgent    string   `json:"source_agent"`
+	SourceType      string   `json:"source_type"`
+	SourceRef       string   `json:"source_ref,omitempty"`
+	SourceAgent     string   `json:"source_agent"`
 }
 
 type IngestMemoryResponse struct {

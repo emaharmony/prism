@@ -788,7 +788,7 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 		}
 		responseContent, promptTokens, completionTokens = wh.runToolLoopWake(ctx, systemPrompt, userPrompt, model, agentCfg, autoExec)
 	} else {
-		chatProv, chatErr := wh.providers.GetChatProvider(model)
+		chatProv, chatErr := wh.providers.GetChatProviderForAgent(agentCfg.ID, model)
 		if chatErr == nil {
 			// Use ChatProvider (preferred path — same as Discord serve)
 			resp, err := chatProv.ChatGenerate(ctx, provider.ChatGenerateRequest{
@@ -818,7 +818,7 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 		} else {
 			// Fall back to text provider
 			log.Printf("[WAKE] WARN no chat provider for %q: %v, falling back to text provider", model, chatErr)
-			prov, err := wh.providers.Get(model)
+			prov, err := wh.providers.GetForAgent(agentCfg.ID, model)
 			if err != nil {
 				log.Printf("[WAKE] ERROR no provider for model %q: %v", model, err)
 				return
@@ -1314,6 +1314,8 @@ func cleanForDiscord(text string) string {
 }
 
 // postToDiscord posts a message to the manager-room channel.
+//
+//lint:ignore U1000 retained for manager-room notification integration
 func (wh *WakeHandler) postToDiscord(message string) {
 	if wh.bot == nil {
 		log.Printf("[V2-NATURAL-GATES] no bot, cannot post to Discord")
@@ -1438,7 +1440,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
 
-	chatProv, chatErr := wh.providers.GetChatProvider(model)
+	chatProv, chatErr := wh.providers.GetChatProviderForAgent(agentCfg.ID, model)
 
 	// V36: Run state tracking
 	type RunState struct {
@@ -1613,7 +1615,7 @@ func (wh *WakeHandler) runToolLoopWake(ctx stdcontext.Context, systemPrompt, use
 			}
 		} else {
 			// Fall back to text provider
-			prov, provErr := wh.providers.Get(model)
+			prov, provErr := wh.providers.GetForAgent(agentCfg.ID, model)
 			if provErr != nil {
 				return fmt.Sprintf("Project work failed: no provider for %q", model), totalPromptTokens, totalCompletionTokens
 			}
@@ -2460,7 +2462,7 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 	userPromptFull := fmt.Sprintf("Begin the gated loop. Task: %s", taskPrompt)
 
 	// LLM callback — prefer the tool-calling chat provider, fall back to text.
-	chatProv, chatErr := wh.providers.GetChatProvider(model)
+	chatProv, chatErr := wh.providers.GetChatProviderForAgent(agentCfg.ID, model)
 	llm := func(c stdcontext.Context, msgs []v2.Message) (string, int, int, error) {
 		if chatErr == nil {
 			cm := make([]provider.ChatMessage, len(msgs))
@@ -2474,9 +2476,13 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 			if err != nil {
 				return "", 0, 0, err
 			}
+			if local, _ := resp.Raw["local_fallback"].(bool); local {
+				pt, ct := v2.MarkLocalUsage(resp.PromptTokens, resp.OutputTokens)
+				return resp.Content, pt, ct, nil
+			}
 			return resp.Content, resp.PromptTokens, resp.OutputTokens, nil
 		}
-		prov, provErr := wh.providers.Get(model)
+		prov, provErr := wh.providers.GetForAgent(agentCfg.ID, model)
 		if provErr != nil {
 			return "", 0, 0, provErr
 		}
@@ -2491,6 +2497,10 @@ func (wh *WakeHandler) RunGatedLoop(ctx stdcontext.Context, project *orchestrato
 		})
 		if err != nil {
 			return "", 0, 0, err
+		}
+		if local, _ := resp.Raw["local_fallback"].(bool); local {
+			pt, ct := v2.MarkLocalUsage(resp.PromptTokens, resp.OutputTokens)
+			return resp.Text, pt, ct, nil
 		}
 		return resp.Text, resp.PromptTokens, resp.OutputTokens, nil
 	}
@@ -2594,7 +2604,7 @@ You may include declarations (ASSUMPTION:, CONFIDENCE:, TASK:) and the phase com
 
 // formatWorkflowReport creates a human-readable report from workflow state.
 func formatWorkflowReport(state *v2.WorkflowState) string {
-	report := fmt.Sprintf("## Natural Gates Workflow Report\n\n")
+	report := "## Natural Gates Workflow Report\n\n"
 	report += fmt.Sprintf("**Status:** %s\n", state.Status)
 	report += fmt.Sprintf("**Run ID:** %s\n\n", state.RunID)
 

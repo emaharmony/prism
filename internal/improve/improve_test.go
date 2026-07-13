@@ -146,9 +146,9 @@ func TestShouldAutoPR(t *testing.T) {
 		{CategoryErrorPattern, 2, true},
 		{CategoryTestCoverage, 3, true},
 		{CategoryDocUpdate, 4, true},
-		{CategoryRefactor, 3, true},  // Low priority refactor = auto
-		{CategoryRefactor, 2, false}, // High priority refactor = needs approval
-		{CategoryProcessFix, 1, false}, // Process fixes always need approval
+		{CategoryRefactor, 3, true},     // Low priority refactor = auto
+		{CategoryRefactor, 2, false},    // High priority refactor = needs approval
+		{CategoryProcessFix, 1, false},  // Process fixes always need approval
 		{CategoryPerformance, 3, true},  // Low priority perf = auto
 		{CategoryPerformance, 1, false}, // Critical perf = needs approval
 	}

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+version=$(tr -d '[:space:]' < VERSION)
+[[ $version =~ ^0\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION is not pre-1.0 SemVer: $version" >&2; exit 1; }
+
+grep -Fq "var Version = \"$version\"" internal/version/version.go
+grep -Fq "version = \"$version\"" sdk/pyproject.toml
+grep -Fq "version = \"$version\"" remembrance/pyproject.toml
+grep -Fq "__version__ = \"$version\"" sdk/prism/__init__.py
+grep -Fq "__version__ = \"$version\"" remembrance/src/remembrance/__init__.py
+grep -Fq "## [$version]" CHANGELOG.md
+
+actual=$(go run ./cmd/prism-cli version)
+[[ $actual == "prism v$version" ]] || { echo "CLI version mismatch: $actual" >&2; exit 1; }
+echo "version contract: v$version"

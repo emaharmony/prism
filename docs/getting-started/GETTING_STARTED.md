@@ -70,13 +70,22 @@ For a static binary:
 CGO_ENABLED=0 go build -o prism ./cmd/prism-cli
 ```
 
-> Checked-in root binaries can lag behind source. Always build from
+> Local root binaries can lag behind source and are ignored by Git. Always build from
 > `cmd/prism-cli` and treat the source tree as authoritative.
 
 ## Run Tests
 
 ```bash
 go test ./... -count=1 -race
+```
+
+On systems without a C compiler, run `go test ./... -count=1` locally and rely
+on CI for the required full race pass; do not report the race check as passed.
+
+Run the model-free preflight:
+
+```bash
+go run ./cmd/prism-cli doctor --json
 ```
 
 Or via Make:

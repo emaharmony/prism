@@ -201,14 +201,14 @@ func TestEngine_HandleTaskCreated(t *testing.T) {
 	// First create a task directly in the store
 	now := time.Now()
 	delegateTask := &task.Task{
-		ID:           "task-handle-test",
-		Type:         "code",
-		Status:       task.StatusAssigned,
-		DelegatedBy:  "lumi",
-		DelegatedTo:  "mango",
-		Description:  "Handle this task",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:          "task-handle-test",
+		Type:        "code",
+		Status:      task.StatusAssigned,
+		DelegatedBy: "lumi",
+		DelegatedTo: "mango",
+		Description: "Handle this task",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if err := store.Create(delegateTask); err != nil {
 		t.Fatalf("failed to create task: %v", err)
@@ -227,12 +227,12 @@ func TestEngine_HandleTaskCreated(t *testing.T) {
 
 	// Simulate an incoming NATS message
 	eventData, _ := json.Marshal(map[string]any{
-		"v":             1,
-		"task_id":       "task-handle-test",
-		"delegated_by":  "lumi",
-		"delegated_to":  "mango",
-		"task_type":     "code",
-		"description":   "Handle this task",
+		"v":            1,
+		"task_id":      "task-handle-test",
+		"delegated_by": "lumi",
+		"delegated_to": "mango",
+		"task_type":    "code",
+		"description":  "Handle this task",
 	})
 
 	msg := &nats.Msg{
@@ -287,8 +287,8 @@ func TestEngine_HandleTaskCreated_HandlerFailure(t *testing.T) {
 	}
 
 	eventData, _ := json.Marshal(map[string]any{
-		"v":        1,
-		"task_id":  "task-fail-handler",
+		"v":       1,
+		"task_id": "task-fail-handler",
 	})
 
 	msg := &nats.Msg{
