@@ -341,6 +341,10 @@ type AgentConfig struct {
 	// Model is the model identifier: glm-5.1:cloud, gpt-4o, etc.
 	Model string `yaml:"model"`
 
+	// Fallbacks are attempted in order after the primary model fails. Each
+	// fallback names its provider explicitly so a model ID never silently routes
+	// through the wrong backend.
+	Fallbacks []ModelFallback `yaml:"fallbacks,omitempty"`
 	// Context lists which context sources to inject: soul, agents, user, etc.
 	Context []string `yaml:"context"`
 
@@ -378,6 +382,12 @@ type AgentConfig struct {
 	// must opt in explicitly, since this is a new network-reachable surface
 	// that lets any caller with API access trigger a real (billed) LLM call.
 	InvocableViaAPI bool `yaml:"invocable_via_api"`
+}
+
+// ModelFallback describes one ordered provider/model fallback for an agent.
+type ModelFallback struct {
+	Provider string `yaml:"provider"`
+	Model    string `yaml:"model"`
 }
 
 // ProjectConfig describes an assignable project the gated loop can work on.
@@ -874,6 +884,17 @@ func (c *Config) Validate() error {
 
 		if a.Model == "" {
 			return fmt.Errorf("config: agent[%d] %q missing model", i, id)
+		}
+		seenTargets := map[string]bool{a.Provider + "::" + a.Model: true}
+		for j, fallback := range a.Fallbacks {
+			if fallback.Provider == "" || fallback.Model == "" {
+				return fmt.Errorf("config: agent[%d] %q fallback[%d] requires provider and model", i, id, j)
+			}
+			key := fallback.Provider + "::" + fallback.Model
+			if seenTargets[key] {
+				return fmt.Errorf("config: agent[%d] %q fallback[%d] duplicates a prior target", i, id, j)
+			}
+			seenTargets[key] = true
 		}
 	}
 

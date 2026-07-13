@@ -223,6 +223,8 @@ func formatTokenBudgetReport(state *WorkflowState) string {
 	state.mu.RLock()
 	prompt := state.TotalPromptTokens
 	completion := state.TotalCompletionTokens
+	localPrompt := state.LocalPromptTokens
+	localCompletion := state.LocalCompletionTokens
 	max := state.MaxTotalTokens
 	type phaseUsage struct {
 		name       string
@@ -246,6 +248,9 @@ func formatTokenBudgetReport(state *WorkflowState) string {
 	var sb strings.Builder
 	sb.WriteString("### Token Budget\n")
 	sb.WriteString(fmt.Sprintf("- Total: %d tokens (prompt %d / completion %d)\n", total, prompt, completion))
+	if localPrompt+localCompletion > 0 {
+		sb.WriteString(fmt.Sprintf("- Local fallback (excluded from ceiling): %d tokens (prompt %d / completion %d)\n", localPrompt+localCompletion, localPrompt, localCompletion))
+	}
 	switch {
 	case max == UnlimitedTokens:
 		sb.WriteString("- Ceiling: unlimited\n")

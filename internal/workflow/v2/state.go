@@ -67,6 +67,8 @@ type WorkflowState struct {
 	AgentRegistry         map[string]*AgentInfo        `json:"agent_registry,omitempty"`
 	TotalPromptTokens     int                          `json:"total_prompt_tokens,omitempty"`
 	TotalCompletionTokens int                          `json:"total_completion_tokens,omitempty"`
+	LocalPromptTokens     int                          `json:"local_prompt_tokens,omitempty"`
+	LocalCompletionTokens int                          `json:"local_completion_tokens,omitempty"`
 	StartedAt             string                       `json:"started_at"`
 	UpdatedAt             string                       `json:"updated_at"`
 	CompletedAt           string                       `json:"completed_at,omitempty"`
@@ -654,6 +656,15 @@ func (s *WorkflowState) AddTokens(prompt, completion int) {
 	defer s.mu.Unlock()
 	s.TotalPromptTokens += prompt
 	s.TotalCompletionTokens += completion
+}
+
+// AddLocalTokens records usage by a loopback Ollama fallback. Local usage is
+// reported separately and deliberately excluded from cloud/subscription caps.
+func (s *WorkflowState) AddLocalTokens(prompt, completion int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LocalPromptTokens += prompt
+	s.LocalCompletionTokens += completion
 }
 
 // AddPhaseTokens accumulates LLM usage on a phase's state (created on demand).
