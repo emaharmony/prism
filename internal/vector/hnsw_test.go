@@ -1,6 +1,7 @@
 package vector
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -243,12 +244,15 @@ func TestHNSWInsertDuplicate(t *testing.T) {
 func TestHNSWInsertBulk(t *testing.T) {
 	idx := NewHNSWIndex(3, 16)
 
-	entries := []struct{ ID string; Vector []float64 }{
+	entries := []struct {
+		ID     string
+		Vector []float64
+	}{
 		{"a", []float64{1.0, 0.0, 0.0}},
 		{"b", []float64{0.0, 1.0, 0.0}},
 		{"c", []float64{0.0, 0.0, 1.0}},
-		{"bad1", nil},          // filtered
-		{"bad2", []float64{}}, // filtered
+		{"bad1", nil},            // filtered
+		{"bad2", []float64{}},    // filtered
 		{"bad3", []float64{1.0}}, // filtered (wrong dim)
 	}
 	idx.InsertBulk(entries)
@@ -302,10 +306,16 @@ func BenchmarkHNSWSearch(b *testing.B) {
 }
 
 func BenchmarkHNSWInsertBulk(b *testing.B) {
-	entries := make([]struct{ ID string; Vector []float64 }, 100)
+	entries := make([]struct {
+		ID     string
+		Vector []float64
+	}, 100)
 	for i := range entries {
 		angle := float64(i) * math.Pi * 2 / 100.0
-		entries[i] = struct{ ID string; Vector []float64 }{
+		entries[i] = struct {
+			ID     string
+			Vector []float64
+		}{
 			ID:     fmt.Sprintf("v%d", i),
 			Vector: []float64{math.Cos(angle), math.Sin(angle), 0.0},
 		}
@@ -321,13 +331,13 @@ func BenchmarkBruteForceSearch(b *testing.B) {
 	store := NewMemoryVectorStore(3)
 	for i := 0; i < 1000; i++ {
 		angle := float64(i) * math.Pi * 2 / 1000.0
-		store.Upsert(nil, VectorEntry{
+		store.Upsert(context.TODO(), VectorEntry{
 			ID:     fmt.Sprintf("v%d", i),
 			Vector: []float64{math.Cos(angle), math.Sin(angle), 0.0},
 		})
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		store.Search(nil, []float64{1.0, 0.0, 0.0}, SearchOptions{TopK: 10, MinScore: 0.0})
+		store.Search(context.TODO(), []float64{1.0, 0.0, 0.0}, SearchOptions{TopK: 10, MinScore: 0.0})
 	}
 }

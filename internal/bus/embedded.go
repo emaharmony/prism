@@ -10,7 +10,6 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 )
@@ -18,8 +17,10 @@ import (
 // EmbeddedBus wraps an in-process NATS server for development use.
 // It eliminates the need for an external NATS installation.
 type EmbeddedBus struct {
+	//lint:ignore U1000 retained for the exported development wrapper contract
 	server *natsserver.Server
-	port   int
+	//lint:ignore U1000 retained for the exported development wrapper contract
+	port int
 }
 
 // StartEmbeddedBus starts an in-process NATS server on the given port.
@@ -110,6 +111,3 @@ func ParsePort(portStr string, defaultPort int) int {
 	}
 	return port
 }
-
-// Ensure server.Options is available at compile time.
-var _ server.Options = natsserver.Options{}

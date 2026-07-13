@@ -20,8 +20,8 @@ func TestResolveChannelRole(t *testing.T) {
 		{"1491622581348864162", "manager-room"},
 		{"1491622824991920231", "build-room"},
 		{"1493297644821283067", "fun"},
-		{"999999999999999999", ""},       // unknown channel
-		{"", ""},                           // empty channel
+		{"999999999999999999", ""}, // unknown channel
+		{"", ""},                   // empty channel
 	}
 
 	for _, tt := range tests {

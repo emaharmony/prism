@@ -9,7 +9,6 @@ package stage
 
 import (
 	"context"
-	
 
 	"github.com/emaharmony/prism/internal/event"
 )

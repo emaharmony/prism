@@ -1,11 +1,11 @@
 // Package safety provides Prism's security infrastructure.
 //
 // Security layers:
-//   1. Path containment (path.go) — file operations stay within workspace root
-//   2. Prompt injection defense (this file) — detect and neutralize injection attempts
-//   3. Input sanitization — strip dangerous content from user inputs
-//   4. Rate limiting — prevent abuse from rapid-fire requests
-//   5. Command injection prevention — validate all tool inputs before execution
+//  1. Path containment (path.go) — file operations stay within workspace root
+//  2. Prompt injection defense (this file) — detect and neutralize injection attempts
+//  3. Input sanitization — strip dangerous content from user inputs
+//  4. Rate limiting — prevent abuse from rapid-fire requests
+//  5. Command injection prevention — validate all tool inputs before execution
 //
 // Design principle: Defense in depth. Each layer catches what the layer above misses.
 // The LLM is treated as untrusted — it can be tricked, so we never let it decide
@@ -19,10 +19,10 @@ import (
 
 // InjectionCheckResult contains the outcome of a prompt injection scan.
 type InjectionCheckResult struct {
-	Clean    bool     `json:"clean"`
-	Severity string   `json:"severity"` // "none", "low", "medium", "high", "critical"
-	Flags    []string `json:"flags"`    // What patterns were detected
-	Sanitized string  `json:"sanitized,omitempty"` // Sanitized version of input
+	Clean     bool     `json:"clean"`
+	Severity  string   `json:"severity"`            // "none", "low", "medium", "high", "critical"
+	Flags     []string `json:"flags"`               // What patterns were detected
+	Sanitized string   `json:"sanitized,omitempty"` // Sanitized version of input
 }
 
 // injectionPatterns are patterns that commonly appear in prompt injection attacks.

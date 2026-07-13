@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/emaharmony/prism/internal/gitx"
@@ -120,7 +119,6 @@ type PatchWorker interface {
 // Service creates tasks and runs autopatch jobs asynchronously.
 type Service struct {
 	cfg Config
-	mu  sync.Mutex
 }
 
 // NewService creates an autopatch service with normalized defaults.

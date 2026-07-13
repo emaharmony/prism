@@ -16,10 +16,10 @@ import (
 
 // Supported step types for V7.
 const (
-	StepTypeToolExecute   = "tool.execute"
-	StepTypeGateEvaluate  = "gate.evaluate"
-	StepTypeDispatchRun   = "dispatch.run"
-	StepTypeWorkflowStop  = "workflow.stop"
+	StepTypeToolExecute  = "tool.execute"
+	StepTypeGateEvaluate = "gate.evaluate"
+	StepTypeDispatchRun  = "dispatch.run"
+	StepTypeWorkflowStop = "workflow.stop"
 )
 
 // Workflow is a named sequence of steps that composes Prism capabilities.

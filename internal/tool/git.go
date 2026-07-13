@@ -293,9 +293,9 @@ func (t *GitCheckoutTool) Description() string {
 func (t *GitCheckoutTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"branch":     {Type: "string", Description: "Branch name to create or switch to (e.g. feature/bb-auth-fix)", Required: true},
-			"create":     {Type: "boolean", Description: "If true, create the branch (-b flag). If false, just switch to existing branch.", Required: false},
-			"repo_path":  {Type: "string", Description: "Absolute path to the git repository", Required: false},
+			"branch":    {Type: "string", Description: "Branch name to create or switch to (e.g. feature/bb-auth-fix)", Required: true},
+			"create":    {Type: "boolean", Description: "If true, create the branch (-b flag). If false, just switch to existing branch.", Required: false},
+			"repo_path": {Type: "string", Description: "Absolute path to the git repository", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "Checkout result"},
 	}
@@ -527,11 +527,11 @@ func (t *GitCreatePRTool) Description() string {
 func (t *GitCreatePRTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"repo_path":  {Type: "string", Required: true, Description: "Absolute path to the git repository"},
-			"title":      {Type: "string", Required: true, Description: "PR title"},
-			"body":       {Type: "string", Required: false, Description: "PR description (markdown)"},
-			"base":       {Type: "string", Required: false, Description: "Base branch (default: main)"},
-			"head":       {Type: "string", Required: false, Description: "Head branch (default: current branch)"},
+			"repo_path": {Type: "string", Required: true, Description: "Absolute path to the git repository"},
+			"title":     {Type: "string", Required: true, Description: "PR title"},
+			"body":      {Type: "string", Required: false, Description: "PR description (markdown)"},
+			"base":      {Type: "string", Required: false, Description: "Base branch (default: main)"},
+			"head":      {Type: "string", Required: false, Description: "Head branch (default: current branch)"},
 		},
 	}
 }

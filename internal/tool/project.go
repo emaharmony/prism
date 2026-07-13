@@ -20,15 +20,15 @@ type SearchFilesTool struct {
 	AllowedPaths  []string
 }
 
-func (t *SearchFilesTool) Name() string        { return "search_files" }
+func (t *SearchFilesTool) Name() string { return "search_files" }
 func (t *SearchFilesTool) Description() string {
 	return "Searches for a text pattern across project files (like grep). Returns matching lines with file paths and line numbers. Use this to find where functions, types, or patterns are defined or used."
 }
 func (t *SearchFilesTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"pattern":    {Type: "string", Description: "The text pattern to search for", Required: true},
-			"path":       {Type: "string", Description: "Directory to search in. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (default: '.')", Required: false},
+			"pattern":     {Type: "string", Description: "The text pattern to search for", Required: true},
+			"path":        {Type: "string", Description: "Directory to search in. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (default: '.')", Required: false},
 			"max_results": {Type: "integer", Description: "Maximum number of matching lines to return (default: 30)", Required: false},
 		},
 		Output: ParamSpec{Type: "array", Description: "List of matches with file, line number, and text"},
@@ -101,9 +101,9 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 						lineText = lineText[:200] + "..."
 					}
 					matches = append(matches, map[string]any{
-						"file":  relPath,
-						"line":  lineNum,
-						"text":  lineText,
+						"file": relPath,
+						"line": lineNum,
+						"text": lineText,
 					})
 				}
 			}
@@ -136,7 +136,7 @@ type ProjectOverviewTool struct {
 	AllowedPaths  []string
 }
 
-func (t *ProjectOverviewTool) Name() string        { return "project_overview" }
+func (t *ProjectOverviewTool) Name() string { return "project_overview" }
 func (t *ProjectOverviewTool) Description() string {
 	return "Provides an overview of a project: reads README, package manifest, config files, and builds a directory tree. Set deep_dive=true to also read key architecture files (Prisma schema, API modules, Program.cs, configs, etc.) and get recent git history for deeper understanding. Always use deep_dive=true when you need to understand a project's architecture and current direction."
 }

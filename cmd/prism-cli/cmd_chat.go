@@ -521,11 +521,11 @@ func (cc *chatContext) processMessage(
 	result := cc.router.Route(userInput)
 
 	// 2. Determine provider path — check ChatProvider availability per-call
-	_, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
+	_, chatErr := cc.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
 	chatAvailable := chatErr == nil
 
 	// 3. Look up provider
-	llmProvider, err := cc.providers.Get(agentCfg.Model)
+	llmProvider, err := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		return "", fmt.Errorf("no provider for model %s: %w", agentCfg.Model, err)
 	}
@@ -553,7 +553,7 @@ func (cc *chatContext) processWithChatProvider(
 	agentCfg *orchestrator.AgentConfig,
 	userInput string,
 ) (string, error) {
-	chatProv, err := cc.providers.GetChatProvider(agentCfg.Model)
+	chatProv, err := cc.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		return "", fmt.Errorf("chat provider unavailable: %w", err)
 	}
@@ -652,7 +652,7 @@ func (cc *chatContext) processWithTextProvider(
 
 	// Check for text-based tool calls
 	if cc.toolExec != nil {
-		parsed := agent.ParseAgentOutput(responseText)
+		parsed := agent.ParseAgentOutputWithFallback(responseText)
 		if parsed.Type == agent.ResponseToolRequest {
 			finalResponse, toolSummaries, toolErr := cc.runTextToolLoop(
 				ctx,
@@ -1119,7 +1119,7 @@ func (cc *chatContext) runTextToolLoop(
 	ctx, cancel := ctxcontext.WithTimeout(parentCtx, chatToolLoopTimeout)
 	defer cancel()
 
-	llmProvider, err := cc.providers.Get(agentCfg.Model)
+	llmProvider, err := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		return "", nil, fmt.Errorf("no provider for model %s: %w", agentCfg.Model, err)
 	}
@@ -1145,7 +1145,7 @@ func (cc *chatContext) runTextToolLoop(
 		}
 
 		responseText := genResp.Text
-		parsed := agent.ParseAgentOutput(responseText)
+		parsed := agent.ParseAgentOutputWithFallback(responseText)
 		if parsed.Type != agent.ResponseToolRequest {
 			return responseText, summaries, nil
 		}

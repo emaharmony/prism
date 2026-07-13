@@ -68,8 +68,8 @@ type RunContext struct {
 
 	// Routing information (populated by RoutingStage)
 	CleanedContent string
-	RouteMethod   string
-	AgentConfig   *AgentConfigSnapshot
+	RouteMethod    string
+	AgentConfig    *AgentConfigSnapshot
 
 	// Streaming callback for real-time token delivery (set by handler)
 	StreamCallback StreamCallbackFunc
@@ -212,28 +212,28 @@ func (p *Pipeline) Run(ctx context.Context, initial *RunContext) (*RunContext, e
 // With* methods use this to avoid field drift when new fields are added.
 func (rc *RunContext) copyBase() RunContext {
 	return RunContext{
-		RunID:            rc.RunID,
-		CorrelationID:    rc.CorrelationID,
-		Task:             rc.Task,
-		Project:          rc.Project,
-		Agent:            rc.Agent,
-		Provider:         rc.Provider,
-		ProviderName:     rc.ProviderName,
-		Model:            rc.Model,
-		Temperature:      rc.Temperature,
-		MaxTokens:        rc.MaxTokens,
-		RunDir:           rc.RunDir,
-		Events:           rc.Events,
-		Results:          rc.Results,
-		LLMResponse:      rc.LLMResponse,
-		ToolResults:      rc.ToolResults,
-		SessionID:        rc.SessionID,
-		CleanedContent:   rc.CleanedContent,
-		RouteMethod:      rc.RouteMethod,
-		AgentConfig:      rc.AgentConfig,
-		StreamCallback:   rc.StreamCallback,
+		RunID:             rc.RunID,
+		CorrelationID:     rc.CorrelationID,
+		Task:              rc.Task,
+		Project:           rc.Project,
+		Agent:             rc.Agent,
+		Provider:          rc.Provider,
+		ProviderName:      rc.ProviderName,
+		Model:             rc.Model,
+		Temperature:       rc.Temperature,
+		MaxTokens:         rc.MaxTokens,
+		RunDir:            rc.RunDir,
+		Events:            rc.Events,
+		Results:           rc.Results,
+		LLMResponse:       rc.LLMResponse,
+		ToolResults:       rc.ToolResults,
+		SessionID:         rc.SessionID,
+		CleanedContent:    rc.CleanedContent,
+		RouteMethod:       rc.RouteMethod,
+		AgentConfig:       rc.AgentConfig,
+		StreamCallback:    rc.StreamCallback,
 		SessionSaveFailed: rc.SessionSaveFailed,
-		DryRunPrompt:     rc.DryRunPrompt,
+		DryRunPrompt:      rc.DryRunPrompt,
 	}
 }
 

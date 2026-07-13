@@ -150,8 +150,8 @@ func (t *PlanApproveTool) Description() string {
 func (t *PlanApproveTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"id":           {Type: "string", Description: "Plan ID (e.g., P-001)", Required: true},
-			"approved_by":  {Type: "string", Description: "Who approved this plan"},
+			"id":          {Type: "string", Description: "Plan ID (e.g., P-001)", Required: true},
+			"approved_by": {Type: "string", Description: "Who approved this plan"},
 		},
 		Output: ParamSpec{Type: "string", Description: "Confirmation message"},
 	}
@@ -269,8 +269,8 @@ type planManagerAdapter struct {
 	Mgr *plan.Manager
 }
 
-func (a *planManagerAdapter) CreatePlan(p plan.Plan) error      { return a.Mgr.CreatePlan(p) }
-func (a *planManagerAdapter) LoadPlans() ([]plan.Plan, error)   { return a.Mgr.LoadPlans() }
-func (a *planManagerAdapter) ApprovePlan(id, by string) error  { return a.Mgr.ApprovePlan(id, by) }
-func (a *planManagerAdapter) CompletePlan(id string) error      { return a.Mgr.CompletePlan(id) }
-func (a *planManagerAdapter) AbandonPlan(id string) error       { return a.Mgr.AbandonPlan(id) }
+func (a *planManagerAdapter) CreatePlan(p plan.Plan) error    { return a.Mgr.CreatePlan(p) }
+func (a *planManagerAdapter) LoadPlans() ([]plan.Plan, error) { return a.Mgr.LoadPlans() }
+func (a *planManagerAdapter) ApprovePlan(id, by string) error { return a.Mgr.ApprovePlan(id, by) }
+func (a *planManagerAdapter) CompletePlan(id string) error    { return a.Mgr.CompletePlan(id) }
+func (a *planManagerAdapter) AbandonPlan(id string) error     { return a.Mgr.AbandonPlan(id) }

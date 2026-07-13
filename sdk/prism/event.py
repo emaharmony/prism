@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _event_id() -> str:
@@ -36,6 +36,8 @@ class Event(BaseModel):
     Every action, decision, and state change in Prism flows as one of these.
     """
 
+    model_config = ConfigDict(extra="allow")
+
     id: str = Field(default_factory=lambda: next(_id_gen))
     type: str = ""                          # e.g. "prism.agent.decision"
     source: str = ""                        # e.g. "lumi", "telegram", "discord"
@@ -44,7 +46,3 @@ class Event(BaseModel):
     parent_id: str = ""                     # Direct causal parent
     payload: dict[str, Any] = Field(default_factory=dict)
     metadata: EventMetadata = Field(default_factory=EventMetadata)
-
-    class Config:
-        # Allow extra fields for forward compatibility
-        extra = "allow"

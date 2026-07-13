@@ -15,7 +15,7 @@ func TestCanDelegate_PrimaryAgent(t *testing.T) {
 		Primary:  true,
 	}
 	target := &orchestrator.AgentConfig{
-		ID:   "mango",
+		ID:    "mango",
 		Role:  "coder",
 		Model: "deepseek-v4-pro:cloud",
 	}
@@ -268,9 +268,9 @@ func TestCanDelegate_NilTarget(t *testing.T) {
 func TestCanDelegate_PrimaryBypassesDelegatorOnly(t *testing.T) {
 	// Primary can delegate, but target must still have the capability
 	primary := &orchestrator.AgentConfig{
-		ID:       "lumi",
-		Role:     "lead",
-		Primary:  true,
+		ID:      "lumi",
+		Role:    "lead",
+		Primary: true,
 	}
 	researcher := &orchestrator.AgentConfig{
 		ID:           "researcher",

@@ -70,9 +70,9 @@ type RemembranceStage struct {
 	client *remcli.Client
 
 	// Cached availability state (avoids health check on every Execute).
-	available    bool
-	lastChecked  time.Time
-	availMu      sync.RWMutex
+	available   bool
+	lastChecked time.Time
+	availMu     sync.RWMutex
 }
 
 // RemembranceStageOption configures a RemembranceStage.
@@ -97,7 +97,7 @@ func NewRemembranceStage(memoryEnabled bool, requireMemory bool, memoryURL strin
 		RequireMemory: requireMemory,
 		MemoryURL:     memoryURL,
 		Capture:       true,
-		Context:        true,
+		Context:       true,
 	}
 	// Initialize client eagerly to avoid data races in getClient()
 	if memoryEnabled && memoryURL != "" {
@@ -271,10 +271,10 @@ func (s *RemembranceStage) buildContext(rc *RunContext) (contextStr string, sour
 			for _, m := range ctxResp.ContextJSON.Memories {
 				memories = append(memories, map[string]any{
 					"memory_id": m.MemoryID,
-					"title":      m.Title,
-					"summary":    m.Summary,
-					"score":       m.Score,
-					"reason":     m.Reason,
+					"title":     m.Title,
+					"summary":   m.Summary,
+					"score":     m.Score,
+					"reason":    m.Reason,
 				})
 			}
 		}
@@ -289,10 +289,10 @@ func (s *RemembranceStage) buildContext(rc *RunContext) (contextStr string, sour
 		}
 		memories = append(memories, map[string]any{
 			"memory_id": m.MemoryID,
-			"title":      m.Title,
-			"summary":    m.Summary,
-			"score":       m.Score,
-			"reason":     m.Reason,
+			"title":     m.Title,
+			"summary":   m.Summary,
+			"score":     m.Score,
+			"reason":    m.Reason,
 		})
 	}
 

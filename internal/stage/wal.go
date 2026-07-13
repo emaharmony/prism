@@ -22,19 +22,19 @@ import (
 // WALEntry represents a single write-ahead log entry.
 // It records stage transitions so the pipeline can recover from crashes.
 type WALEntry struct {
-	Type      string         `json:"type"`       // wal.stage.entered, wal.stage.completed, wal.mutation.applied
-	Source    string         `json:"source"`     // "pipeline"
-	Timestamp string         `json:"timestamp"`  // ISO 8601
+	Type      string         `json:"type"`      // wal.stage.entered, wal.stage.completed, wal.mutation.applied
+	Source    string         `json:"source"`    // "pipeline"
+	Timestamp string         `json:"timestamp"` // ISO 8601
 	Payload   map[string]any `json:"payload"`
 }
 
 // WALWriter writes WAL entries to a file with fsync guarantees.
 // Each entry is a JSON line, making the WAL append-only and recoverable.
 type WALWriter struct {
-	mu       sync.Mutex
-	file     *os.File
-	path     string
-	runID    string
+	mu    sync.Mutex
+	file  *os.File
+	path  string
+	runID string
 }
 
 // NewWALWriter creates a new WAL writer for a run.

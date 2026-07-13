@@ -62,9 +62,9 @@ func (s *RoutingStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 	agentCfg, ok := s.AgentConfigs[result.AgentID]
 	if !ok {
 		evt := event.NewEvent("prism.routing.failed", "routing-stage", map[string]any{
-			"run_id":  rc.RunID,
+			"run_id":   rc.RunID,
 			"agent_id": result.AgentID,
-			"error":   "no configuration for agent",
+			"error":    "no configuration for agent",
 		})
 		newRC := rc.WithEvent(evt)
 		return newRC, &StageResult{
@@ -78,7 +78,7 @@ func (s *RoutingStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 	llmProvider, err := s.Providers.Get(agentCfg.Model)
 	if err != nil {
 		evt := event.NewEvent("prism.routing.failed", "routing-stage", map[string]any{
-			"run_id":  rc.RunID,
+			"run_id":   rc.RunID,
 			"agent_id": result.AgentID,
 			"model":    agentCfg.Model,
 			"error":    err.Error(),
@@ -87,7 +87,7 @@ func (s *RoutingStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 		return newRC, &StageResult{
 			StageName: s.Name(),
 			Success:   false,
-			Error:      fmt.Sprintf("no provider for model %s: %v", agentCfg.Model, err),
+			Error:     fmt.Sprintf("no provider for model %s: %v", agentCfg.Model, err),
 		}, nil
 	}
 
@@ -95,12 +95,12 @@ func (s *RoutingStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 
 	// Emit routing completed event
 	evt := event.NewEvent("prism.routing.completed", "routing-stage", map[string]any{
-		"run_id":    rc.RunID,
-		"agent_id":  result.AgentID,
-		"model":     agentCfg.Model,
-		"provider":   agentCfg.Provider,
-		"method":    result.Method,
-		"clean_text": result.CleanedContent,
+		"run_id":      rc.RunID,
+		"agent_id":    result.AgentID,
+		"model":       agentCfg.Model,
+		"provider":    agentCfg.Provider,
+		"method":      result.Method,
+		"clean_text":  result.CleanedContent,
 		"duration_ms": duration,
 	})
 
@@ -119,10 +119,10 @@ func (s *RoutingStage) Execute(ctx context.Context, rc *RunContext) (*RunContext
 		StageName: s.Name(),
 		Success:   true,
 		Data: map[string]any{
-			"agent_id":   result.AgentID,
-			"model":      agentCfg.Model,
-			"provider":   agentCfg.Provider,
-			"method":     result.Method,
+			"agent_id":    result.AgentID,
+			"model":       agentCfg.Model,
+			"provider":    agentCfg.Provider,
+			"method":      result.Method,
 			"duration_ms": duration,
 		},
 	}, nil

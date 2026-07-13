@@ -20,6 +20,8 @@ import (
 // Key difference from handleDiscordMessage: NO placeholder messages.
 // Placeholders ("✧ ...") are visible to other bots and trigger false responses.
 // Instead, we use only the typing indicator, then send the complete response.
+//
+//lint:ignore U1000 retained for peer-agent routing integration
 func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage) {
 	// Frame the message as coming from a peer agent
 	framedContent := fmt.Sprintf("[Message from agent %s]: %s", msg.UserName, msg.Content)
@@ -129,7 +131,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 
 	if cc.toolExec != nil {
 		// Check if the provider supports native tool calling (ChatProvider)
-		_, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
+		_, chatErr := cc.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
 		supportsChat := chatErr == nil
 
 		if supportsChat {
@@ -163,7 +165,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			}
 		} else {
 			// Text-based tool calling path — first do a direct LLM call, then check for tool intent
-			llmProvider, provErr := cc.providers.Get(agentCfg.Model)
+			llmProvider, provErr := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 			if provErr != nil {
 				log.Printf("[ERROR] no provider for model %s: %v", agentCfg.Model, provErr)
 				return
@@ -181,7 +183,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			response = resp.Text
 
 			// Check if LLM requested a tool
-			parsed := agent.ParseAgentOutput(response)
+			parsed := agent.ParseAgentOutputWithFallback(response)
 			if parsed.Type == agent.ResponseToolRequest {
 				log.Printf("[AGENT-TOOL] LLM requested tool %q", parsed.ToolName)
 				finalResponse, toolSummaries, toolErr := cc.runToolLoop(
@@ -208,7 +210,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 		}
 	} else {
 		// No tools — direct LLM call
-		llmProvider, provErr := cc.providers.Get(agentCfg.Model)
+		llmProvider, provErr := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 		if provErr != nil {
 			log.Printf("[ERROR] no provider for model %s: %v", agentCfg.Model, provErr)
 			return
@@ -271,6 +273,8 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 }
 
 // findPrimaryAgent returns the ID of the primary agent, or the first agent if none is primary.
+//
+//lint:ignore U1000 retained for multi-agent routing integration
 func (cc *conversationContext) findPrimaryAgent() string {
 	for i := range cc.cfg.Agents {
 		if cc.cfg.Agents[i].Primary {

@@ -4,7 +4,7 @@ Prism has a built-in cron scheduler that runs inside `prism serve`. Each job
 fires a NATS event on a cron schedule; the **wake handler** subscribes to those
 events and runs the mapped action (post a digest, run the gated loop, etc.).
 
-```
+```text
 prism.yaml scheduler job ──(cron fires)──▶ NATS event ──▶ wake handler ──▶ action
 ```
 

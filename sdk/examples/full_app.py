@@ -68,8 +68,6 @@ async def main():
 
         # Check encryption flag
         encryption = event.payload.get("encryption_flag", "transport")
-        is_private = event.payload.get("is_private", False)
-
         text = event.payload.get("text", "")
         if text.strip():
             privacy_note = "🔒 E2E" if encryption == "e2e" else "🔓 Transport"

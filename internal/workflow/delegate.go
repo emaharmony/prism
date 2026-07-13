@@ -106,7 +106,7 @@ func ExecuteDelegate(ctx context.Context, cfg DelegationConfig, step Step, input
 	if err != nil {
 		emitEvent(agent.EventAgentFailed, "workflow-runner", map[string]any{
 			"agent_name":  agentName,
-			"subtask":      subtask,
+			"subtask":     subtask,
 			"error":       fmt.Sprintf("provider error: %v", err),
 			"duration_ms": 0,
 		})
@@ -125,7 +125,7 @@ func ExecuteDelegate(ctx context.Context, cfg DelegationConfig, step Step, input
 	if err != nil {
 		emitEvent(agent.EventAgentFailed, "workflow-runner", map[string]any{
 			"agent_name":  agentName,
-			"subtask":      subtask,
+			"subtask":     subtask,
 			"error":       err.Error(),
 			"duration_ms": durationMs,
 		})
@@ -135,8 +135,8 @@ func ExecuteDelegate(ctx context.Context, cfg DelegationConfig, step Step, input
 	// 5. Emit completion event
 	emitEvent(agent.EventAgentCompleted, "agent-"+agentName, map[string]any{
 		"agent_name":  agentName,
-		"subtask":      subtask,
-		"output":       resp.Text,
+		"subtask":     subtask,
+		"output":      resp.Text,
 		"duration_ms": durationMs,
 	})
 

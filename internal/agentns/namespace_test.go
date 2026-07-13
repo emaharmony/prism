@@ -5,8 +5,8 @@ import "testing"
 func TestNamespaceEventType(t *testing.T) {
 	ns := New("lumi")
 	tests := []struct {
-		suffix  string
-		want    string
+		suffix string
+		want   string
 	}{
 		{"agent.started", "lumi.agent.started"},
 		{"tool.completed", "lumi.tool.completed"},

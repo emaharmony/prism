@@ -71,16 +71,35 @@ func (s *Store) Create(agentID string) *Invocation {
 	}
 	s.mu.Lock()
 	s.invocations[inv.ID] = inv
+	snap := inv.clone()
 	s.mu.Unlock()
-	return inv
+	return snap
 }
 
-// Get looks up an invocation by ID.
+// Get looks up an invocation by ID, returning an independent snapshot so callers
+// can read/marshal it without racing a concurrent Complete/Fail on the stored
+// record.
 func (s *Store) Get(id string) (*Invocation, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	inv, ok := s.invocations[id]
-	return inv, ok
+	if !ok {
+		return nil, false
+	}
+	return inv.clone(), true
+}
+
+// clone returns an independent snapshot of the invocation. Copying Result
+// prevents callers from mutating the map held by the store.
+func (inv *Invocation) clone() *Invocation {
+	cp := *inv
+	if inv.Result != nil {
+		cp.Result = make(map[string]any, len(inv.Result))
+		for key, value := range inv.Result {
+			cp.Result[key] = value
+		}
+	}
+	return &cp
 }
 
 // Complete marks an invocation as completed with a result.

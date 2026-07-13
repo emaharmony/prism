@@ -90,8 +90,8 @@ func (o *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 	body := generateRequest{
 		Model:  req.Model,
 		Prompt: req.Prompt,
-		Stream:  false,
-		Think:   boolPtr(false), // disable thinking for simple generate calls
+		Stream: false,
+		Think:  boolPtr(false), // disable thinking for simple generate calls
 		Options: generateOptions{
 			Temperature: req.Temperature,
 			NumPredict:  req.MaxTokens,

@@ -6,5 +6,5 @@ package projection
 const (
 	EventTypeProjectionStarted   = "prism.projection.started"
 	EventTypeProjectionCompleted = "prism.projection.completed"
-	EventTypeProjectionFailed   = "prism.projection.failed"
+	EventTypeProjectionFailed    = "prism.projection.failed"
 )

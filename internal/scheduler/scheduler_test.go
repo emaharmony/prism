@@ -14,7 +14,7 @@ type mockPublisher struct {
 
 type publishedEvent struct {
 	subject string
-	data   map[string]any
+	data    map[string]any
 }
 
 func (m *mockPublisher) Publish(subject string, data []byte) error {
@@ -223,11 +223,11 @@ func TestAddJob(t *testing.T) {
 
 	schedule, _ := ParseCron("0 3 * * *")
 	err := s.AddJob(&Job{
-		Name:    "daily-review",
+		Name:     "daily-review",
 		Schedule: schedule,
-		Event:   "prism.task.scheduled",
-		Payload: map[string]any{"action": "daily_review"},
-		Enabled: true,
+		Event:    "prism.task.scheduled",
+		Payload:  map[string]any{"action": "daily_review"},
+		Enabled:  true,
 	})
 	if err != nil {
 		t.Fatalf("AddJob failed: %v", err)

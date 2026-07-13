@@ -22,7 +22,6 @@ package main
 
 import (
 	ctxcontext "context"
-	stdctx "context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -644,7 +643,7 @@ func executeServe(args []string) {
 			TaskTimeout:   10 * time.Minute,
 			CheckInterval: 1 * time.Minute,
 		})
-		go delegTracker.Start(stdctx.Background())
+		go delegTracker.Start(ctxcontext.Background())
 	}
 
 	apiPort := servePort + 1 // API on port+1 (default 8322)
@@ -667,6 +666,7 @@ func executeServe(args []string) {
 		AutoPatch:          autopatcher,
 		NATS:               natsConn,
 		Providers:          provReg,
+		InvokeIdleTimeout:  time.Duration(cfg.Sessions.InvokeIdleTimeoutHours) * time.Hour,
 		AuthToken:          cfg.API.ResolveAuthToken(),
 		AllowedOrigins:     cfg.API.AllowedOrigins,
 		ConfigDir:          filepath.Dir(*configPath),
@@ -1008,7 +1008,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-	llmProvider, err := cc.providers.Get(agentCfg.Model)
+	llmProvider, err := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		log.Printf("[ERROR] no provider for model %s: %v", agentCfg.Model, err)
 		sendFinal("failed", "I can't reach my language model right now. Please try again in a moment.")
@@ -1172,7 +1172,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 9b: Tool execution loop — branch on ChatProvider vs text-based
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		// Check if the provider supports native tool calling (ChatProvider)
-		chatProv, chatErr := cc.providers.GetChatProvider(agentCfg.Model)
+		chatProv, chatErr := cc.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
 		supportsChat := chatErr == nil
 
 		if supportsChat {
@@ -1226,7 +1226,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		} else {
 			// Text-based tool calling path (fallback for providers without ChatProvider)
 			// P-008: Skip tool loop if gate excluded tools for this message
-			parsed := agent.ParseAgentOutput(finalRC.LLMResponse)
+			parsed := agent.ParseAgentOutputWithFallback(finalRC.LLMResponse)
 			if parsed.Type == agent.ResponseToolRequest && gateResult.Decision != stage.ToolDecisionExclude {
 				log.Printf("[TOOL] LLM requested tool %q, entering tool loop", parsed.ToolName)
 
@@ -1348,6 +1348,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 } // sendError sends a user-friendly error message to a Discord channel.
+//lint:ignore U1000 retained for channel error reporting integration
 func (cc *conversationContext) sendError(channelID, message string) {
 	err := cc.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
@@ -1639,29 +1640,44 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 
 // registerProviders creates LLM providers from agent configs and registers them.
 func registerProviders(cfg *orchestrator.Config, reg *provider.ProviderRegistry) error {
-	// V20: We register providers based on agent configs.
-	// Each agent specifies its provider and model.
-	// For now, we support Ollama (local/cloud), OpenAI, Anthropic, and Gemini.
-	//
-	// V21 will add provider chains, fallbacks, and cost tiers.
-	//
-	// The registry is keyed by model ID, so two agents sharing a model with
-	// DIFFERENT providers would silently overwrite each other (last wins).
-	// Fail closed at startup instead of routing traffic to the wrong provider.
 	seen := make(map[string]string) // model ID → provider name
 	for _, agentCfg := range cfg.Agents {
-		if prev, ok := seen[agentCfg.Model]; ok {
-			if prev != agentCfg.Provider {
-				return fmt.Errorf("agent %s: model %q is already registered with provider %q; agents sharing a model ID must use the same provider", agentCfg.ID, agentCfg.Model, prev)
+		targets := append([]orchestrator.ModelFallback{{Provider: agentCfg.Provider, Model: agentCfg.Model}}, agentCfg.Fallbacks...)
+		for _, target := range targets {
+			if prev, ok := seen[target.Model]; ok {
+				if prev != target.Provider {
+					return fmt.Errorf("agent %s: model %q is already registered with provider %q; agents sharing a model ID must use the same provider", agentCfg.ID, target.Model, prev)
+				}
+				continue
 			}
-			continue // same provider+model already registered — reuse it
+			targetCfg := orchestrator.AgentConfig{Provider: target.Provider, Model: target.Model}
+			p, info, err := createProvider(targetCfg, cfg)
+			if err != nil {
+				return fmt.Errorf("agent %s: %w", agentCfg.ID, err)
+			}
+			reg.Register(target.Model, p, info)
+			seen[target.Model] = target.Provider
 		}
-		p, info, err := createProvider(agentCfg, cfg)
-		if err != nil {
-			return fmt.Errorf("agent %s: %w", agentCfg.ID, err)
+	}
+
+	for _, agentCfg := range cfg.Agents {
+		specs := append([]orchestrator.ModelFallback{{Provider: agentCfg.Provider, Model: agentCfg.Model}}, agentCfg.Fallbacks...)
+		targets := make([]provider.FailoverTarget, 0, len(specs))
+		for _, spec := range specs {
+			p, err := reg.Get(spec.Model)
+			if err != nil {
+				return fmt.Errorf("agent %s: resolve %s: %w", agentCfg.ID, spec.Model, err)
+			}
+			info, err := reg.ModelInfo(spec.Model)
+			if err != nil {
+				return fmt.Errorf("agent %s: inspect %s: %w", agentCfg.ID, spec.Model, err)
+			}
+			if info.ProviderName != spec.Provider {
+				return fmt.Errorf("agent %s: fallback %q resolves to provider %q, not %q", agentCfg.ID, spec.Model, info.ProviderName, spec.Provider)
+			}
+			targets = append(targets, provider.FailoverTarget{Provider: p, ProviderName: spec.Provider, Model: spec.Model})
 		}
-		reg.Register(agentCfg.Model, p, info)
-		seen[agentCfg.Model] = agentCfg.Provider
+		reg.RegisterAgent(agentCfg.ID, provider.NewFailoverProvider(targets))
 	}
 	return nil
 }
@@ -1776,6 +1792,7 @@ func createCodexProvider(agentCfg orchestrator.AgentConfig, cxCfg orchestrator.C
 	}
 	c = codexcli.Normalize(c)
 	if _, err := exec.LookPath(c.Executable); err != nil {
+		//lint:ignore ST1005 Codex is a product name in a user-facing diagnostic.
 		return nil, fmt.Errorf("Codex CLI executable %q not found (install Codex or set codex.executable): %w", c.Executable, err)
 	}
 	return codexcli.New(c), nil

@@ -16,8 +16,14 @@ Please read:
 ## Development Setup
 
 ```bash
-go test ./...
+gofmt -w ./cmd ./internal ./remembrance/go
+go vet ./...
+go build ./...
+go test ./... -count=1
 ```
+
+Run `go test -race ./... -count=1` on a host with CGO and a C compiler, plus
+the Python and documentation jobs described in [CI](docs/operations/ci.md).
 
 If working on Remembrance, follow the Python setup instructions in the Remembrance docs.
 

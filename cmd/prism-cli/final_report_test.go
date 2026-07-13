@@ -22,7 +22,7 @@ func (b *finalReportBot) SendPlaceholder(channelID, content string) (string, err
 func (b *finalReportBot) EditMessage(channelID, messageID, content string) error {
 	return nil
 }
-func (b *finalReportBot) SelfID() string                         { return "bot-self" }
+func (b *finalReportBot) SelfID() string { return "bot-self" }
 func (b *finalReportBot) GetRecentMessages(channelID string, limit int) []discordbot.RecentMessage {
 	return nil
 }

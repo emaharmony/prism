@@ -555,17 +555,17 @@ func TestEvaluatorReasonPreserved(t *testing.T) {
 
 type mockEmitter struct {
 	events []struct {
-	 eventType string
-	 source   string
-	 payload  map[string]any
+		eventType string
+		source    string
+		payload   map[string]any
 	}
 }
 
 func (m *mockEmitter) Emit(eventType, source string, payload map[string]any) {
 	m.events = append(m.events, struct {
-	 eventType string
-	 source   string
-	 payload  map[string]any
+		eventType string
+		source    string
+		payload   map[string]any
 	}{eventType, source, payload})
 }
 

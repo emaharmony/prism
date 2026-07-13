@@ -208,6 +208,27 @@ func TestValidateSessionConfig(t *testing.T) {
 	}
 }
 
+// TestInvokeIdleTimeoutDefault guards the non-obvious "overlay onto DefaultConfig"
+// semantics: an absent key must inherit 36h, while an explicit 0 disables the
+// invoke idle safety net.
+func TestInvokeIdleTimeoutDefault(t *testing.T) {
+	cfg, err := LoadConfigFromBytes([]byte("prism:\n  instance_id: p\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sessions.InvokeIdleTimeoutHours != 36 {
+		t.Errorf("absent key: got %d, want default 36", cfg.Sessions.InvokeIdleTimeoutHours)
+	}
+
+	cfg0, err := LoadConfigFromBytes([]byte("sessions:\n  invoke_idle_timeout_hours: 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg0.Sessions.InvokeIdleTimeoutHours != 0 {
+		t.Errorf("explicit 0: got %d, want 0 (disabled)", cfg0.Sessions.InvokeIdleTimeoutHours)
+	}
+}
+
 func TestPrimaryAgent(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Agents = []AgentConfig{

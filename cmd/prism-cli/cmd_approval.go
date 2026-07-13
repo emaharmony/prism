@@ -12,10 +12,11 @@
 //     OR human runs `prism approval deny <id> --by ema` → file is NOT written
 //
 // Commands:
-//   prism approval list [--run <id>]    — List approvals (optionally filtered by run)
-//   prism approval show <id> --run <id> — Show full approval details
-//   prism approval approve <id>        — Approve a pending mutation (writes file)
-//   prism approval deny <id>           — Deny a pending mutation (no file written)
+//
+//	prism approval list [--run <id>]    — List approvals (optionally filtered by run)
+//	prism approval show <id> --run <id> — Show full approval details
+//	prism approval approve <id>        — Approve a pending mutation (writes file)
+//	prism approval deny <id>           — Deny a pending mutation (no file written)
 package main
 
 import (

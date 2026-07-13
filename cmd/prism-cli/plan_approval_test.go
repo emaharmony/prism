@@ -176,9 +176,9 @@ func TestHandlePlanApproval_InvalidFormat(t *testing.T) {
 		content string
 		handled bool
 	}{
-		{"hello world", false},           // not an approval command
-		{"approve", false},               // no plan ID
-		{"approve X-001", false},          // wrong prefix
+		{"hello world", false},             // not an approval command
+		{"approve", false},                 // no plan ID
+		{"approve X-001", false},           // wrong prefix
 		{"approve P-001 extra text", true}, // extra fields but valid prefix — should handle
 	}
 

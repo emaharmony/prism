@@ -10,9 +10,9 @@ import (
 
 	"github.com/emaharmony/prism/internal/projection"
 	approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
-	"github.com/emaharmony/prism/internal/safety"
 	"github.com/emaharmony/prism/internal/projection/builtin/runstatus"
 	"github.com/emaharmony/prism/internal/projection/builtin/toolhistory"
+	"github.com/emaharmony/prism/internal/safety"
 
 	"gopkg.in/yaml.v3"
 )
@@ -184,7 +184,7 @@ func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 	result := map[string]any{
 		"run_id":      runID,
 		"summary":     summary,
-		"projections":  projections,
+		"projections": projections,
 		"event_count": eventCount,
 	}
 
