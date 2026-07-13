@@ -26,6 +26,30 @@ type Message struct {
 // text plus token usage. The caller owns provider/model selection.
 type LLMFunc func(ctx context.Context, messages []Message) (text string, promptTokens, completionTokens int, err error)
 
+// MarkLocalUsage encodes token usage from a loopback Ollama fallback for the
+// legacy LLMFunc signature. Values are offset so a zero-usage response remains
+// distinguishable from normal provider usage and can still be estimated.
+func MarkLocalUsage(promptTokens, completionTokens int) (int, int) {
+	return -(promptTokens + 1), -(completionTokens + 1)
+}
+
+func decodeLocalUsage(promptTokens, completionTokens int) (prompt, completion int, local bool) {
+	if promptTokens >= 0 && completionTokens >= 0 {
+		return promptTokens, completionTokens, false
+	}
+	if promptTokens < 0 {
+		prompt = -promptTokens - 1
+	} else {
+		prompt = promptTokens
+	}
+	if completionTokens < 0 {
+		completion = -completionTokens - 1
+	} else {
+		completion = completionTokens
+	}
+	return prompt, completion, true
+}
+
 // ToolFunc executes a tool request for the given phase and returns a result
 // string to feed back to the model. A non-nil error means the tool failed.
 type ToolFunc func(ctx context.Context, phase string, req *ToolRequest) (result string, err error)
@@ -300,6 +324,7 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 			}
 
 			text, pt, ct, err := llm(ctx, messages)
+			pt, ct, localUsage := decodeLocalUsage(pt, ct)
 			// Some providers/paths (e.g. certain Ollama/streaming responses) return
 			// no usage. Estimate from message/response length (~4 chars/token) so a
 			// 0-usage provider can't silently defeat the token ceiling.
@@ -310,8 +335,12 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 					log.Printf("[V2] %s: provider reported no token usage; estimated %d prompt + %d completion", phaseName, pt, ct)
 				}
 			}
-			e.state.AddTokens(pt, ct)
-			e.state.AddPhaseTokens(phaseName, pt, ct)
+			if localUsage {
+				e.state.AddLocalTokens(pt, ct)
+			} else {
+				e.state.AddTokens(pt, ct)
+				e.state.AddPhaseTokens(phaseName, pt, ct)
+			}
 			if err != nil {
 				return e.state, fmt.Errorf("llm call in %s: %w", phaseName, err)
 			}
@@ -326,6 +355,7 @@ func (e *Engine) Drive(ctx context.Context, llm LLMFunc, tool ToolFunc, opts Dri
 				"max":         e.config.Global.MaxTotalTokens,
 				"phase_total": e.state.GetPhaseTokens(phaseName),
 				"phase_max":   e.phaseMaxTokens(phaseName),
+				"local_usage": localUsage,
 			})
 			messages = append(messages, Message{Role: "assistant", Content: text})
 

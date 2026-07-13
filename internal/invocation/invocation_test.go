@@ -15,9 +15,13 @@ func TestStoreReturnsSnapshots(t *testing.T) {
 		t.Fatalf("completed snapshot = %#v, found = %v", completed, ok)
 	}
 	completed.Status = StatusFailed
+	completed.Result["ok"] = false
 	again, _ := store.Get(created.ID)
 	if again.Status != StatusCompleted {
 		t.Fatalf("caller mutation changed store status to %q", again.Status)
+	}
+	if again.Result["ok"] != true {
+		t.Fatalf("caller mutation changed store result to %#v", again.Result)
 	}
 }
 

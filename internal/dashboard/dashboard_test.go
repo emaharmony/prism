@@ -118,6 +118,21 @@ func TestHandleIndexHTML(t *testing.T) {
 	}
 }
 
+func TestV2DashboardLinksBackToOriginalDashboard(t *testing.T) {
+	dir := t.TempDir()
+	s := NewServer(":0", dir, "policies")
+	req := httptest.NewRequest(http.MethodGet, "/v2.html", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !contains(w.Body.String(), `href="/index.html">← Original dashboard`) {
+		t.Error("v2.html is missing the original-dashboard return link")
+	}
+}
+
 func TestSanitizePath(t *testing.T) {
 	// Normal path
 	tmpDir := t.TempDir()

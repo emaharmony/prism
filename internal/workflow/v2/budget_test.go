@@ -161,6 +161,29 @@ func TestBudgetExceededTokensOnly(t *testing.T) {
 
 // -1 is the explicit "unlimited" opt-out: it must survive NewEngine normalization
 // and never trip the ceiling, even past the default cap.
+func TestLocalFallbackUsageIsReportedButDoesNotConsumePaidBudget(t *testing.T) {
+	cfg := &WorkflowConfig{
+		Name: "local-fallback", Version: 2,
+		Global: GlobalConfig{MaxTotalIterations: 2, MaxTotalTokens: 1},
+		Phases: []PhaseConfig{{Name: "PROBE", Type: "probe", MaxIterations: 1, Gate: GateConfig{Type: "assumption_threshold", Threshold: 2.0}}},
+	}
+	engine := NewEngine(cfg, nil, nil)
+	llm := func(_ context.Context, _ []Message) (string, int, int, error) {
+		pt, ct := MarkLocalUsage(4, 3)
+		return `{"type":"final","content":"ok"}`, pt, ct, nil
+	}
+	state, err := engine.Drive(context.Background(), llm, noopTool, DriveOptions{SystemPrompt: "s", UserPrompt: "u"})
+	if err != nil {
+		t.Fatalf("Drive returned error: %v", err)
+	}
+	if paid := state.GetTotalTokens(); paid != 0 {
+		t.Fatalf("paid total = %d, want 0", paid)
+	}
+	if got := state.LocalPromptTokens + state.LocalCompletionTokens; got != 7 {
+		t.Fatalf("local total = %d, want 7", got)
+	}
+}
+
 func TestBudgetUnlimitedNeverTrips(t *testing.T) {
 	cfg := execVerifyConfig(false)
 	cfg.Global.MaxTotalTokens = UnlimitedTokens

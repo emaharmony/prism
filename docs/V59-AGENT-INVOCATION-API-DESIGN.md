@@ -49,9 +49,10 @@ infrastructure:
   pipeline. `runInvocation` in `internal/api/server.go` resolves the agent's
   `Provider`/`Model`/`ConversationPostfix` from its `AgentConfig` and calls
   `provider.ChatProvider.ChatGenerate`, the same call shape `wake_handler.go`
-  already uses for its own direct/scripted wake actions. No session persistence, no
-  tool loop, no approval-gate machinery — the invocation itself is read-only (a
-  judgment call), so any consequential action stays entirely on the caller's side.
+  already uses for its own direct/scripted wake actions. No tool loop, no approval-gate
+  machinery — the invocation itself is read-only (a judgment call), so any consequential
+  action stays entirely on the caller's side. Session persistence is off by default and
+  opt-in per request (see "Stateful conversations" below).
 - **Result delivery**: async (`202 Accepted` with an `invocation_id` — LLM calls take
   seconds). Callers either poll `GET .../invocations/{id}` or hold an SSE connection
   on the *existing* `GET /api/v1/events/stream?subject=<agent-id>.invocation.>`
@@ -68,10 +69,41 @@ infrastructure:
   text as `{"text": "..."}` so callers always get a stable response shape rather
   than a parse error.
 
+## Stateful conversations (opt-in via `conversation_id`)
+
+The single-shot default above is memoryless: consecutive calls don't know about each
+other. That's correct for judgment-call consumers like Clippy, but wrong for a
+chat-style consumer (e.g. a Discord addon), where a follow-up such as *"give me a more
+obscure one"* needs the prior turn. So the endpoint is **optionally** stateful, without
+changing the default:
+
+- **Opt-in per request**: include a stable `conversation_id` (the caller's own key —
+  e.g. a Discord channel id, or supplied via `metadata.conversation_id` /
+  `metadata.channel_id`). When present, the call resumes a session keyed on the
+  synthetic `"invoke"` channel via `internal/session` — the *same* SQLite-backed store
+  and history→`ChatMessage` mapping the built-in chat pipeline uses. The new user turn
+  and the model's reply are persisted so the next call sees them. When absent, behavior
+  is exactly the original single-shot path — fully backward compatible.
+- **Stay open until explicitly ended**: a conversation persists across calls until the
+  user explicitly stops or switches topics, detected by `internal/sessionreset`
+  (`Classify` → `Stop` / `Switch`) on spoken phrases ("new topic", "start over",
+  "forget that", "stop", …) **or** an explicit `"reset": true` on the request. A bare
+  "stop" clears memory and returns a canned acknowledgement without spending an LLM
+  call; a "switch" resets and then answers the carried message normally.
+- **Idle safety net**: `sessions.invoke_idle_timeout_hours` (default 36) resets a
+  conversation after that much inactivity so abandoned threads don't linger forever;
+  `0` disables it. Enforced by `session.Manager.FindActiveWithin`, which applies this
+  window independently of the built-in pipeline's `idle_timeout_minutes`.
+- **Known limitation**: two truly-concurrent calls on one `conversation_id` may
+  interleave (the user turn is persisted synchronously before the 202, but the reply is
+  persisted from the background goroutine). Acceptable for the turn-based chat use case.
+
 ## Non-goals
 
-- No tool calling, no multi-turn conversation, no approval gate. If an addon needs
-  those, it should use the full session/workflow surfaces, not this endpoint.
+- No tool calling, no approval gate. If an addon needs those, it should use the full
+  session/workflow surfaces, not this endpoint. (Multi-turn conversation is supported
+  as an opt-in — see "Stateful conversations" above — but tool/approval machinery is
+  still deliberately out of scope.)
 - No new auth mechanism, no new NATS infrastructure, no plugin-loading /
   dynamic-registration system for addons in general — this is intentionally the
   smallest useful primitive, not a general plugin framework.

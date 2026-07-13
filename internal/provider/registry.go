@@ -34,6 +34,7 @@ type ProviderRegistry struct {
 	providers map[string]Provider       // model ID → provider
 	models    map[string]ModelInfo      // model ID → metadata
 	chains    map[string]*ChainProvider // chain name → chain
+	agents    map[string]Provider       // agent ID → per-agent failover provider
 }
 
 // NewProviderRegistry creates an empty registry.
@@ -42,6 +43,7 @@ func NewProviderRegistry() *ProviderRegistry {
 		providers: make(map[string]Provider),
 		models:    make(map[string]ModelInfo),
 		chains:    make(map[string]*ChainProvider),
+		agents:    make(map[string]Provider),
 	}
 }
 
@@ -53,6 +55,42 @@ func (r *ProviderRegistry) Register(modelID string, p Provider, info ModelInfo) 
 	info.ID = modelID
 	r.providers[modelID] = p
 	r.models[modelID] = info
+}
+
+// RegisterAgent associates an agent with its own resolved provider. This lets
+// agents sharing the same primary model use different fallback chains.
+func (r *ProviderRegistry) RegisterAgent(agentID string, p Provider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.agents[agentID] = p
+}
+
+// GetForAgent returns the per-agent provider when one is registered, falling
+// back to the model provider for callers that do not use agent failover.
+func (r *ProviderRegistry) GetForAgent(agentID, modelID string) (Provider, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if p, ok := r.agents[agentID]; ok {
+		return p, nil
+	}
+	p, ok := r.providers[modelID]
+	if !ok {
+		return nil, fmt.Errorf("model %q not found in registry; available: %v", modelID, r.listModelsLocked())
+	}
+	return p, nil
+}
+
+// GetChatProviderForAgent resolves a native-chat capable per-agent provider.
+func (r *ProviderRegistry) GetChatProviderForAgent(agentID, modelID string) (ChatProvider, error) {
+	p, err := r.GetForAgent(agentID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	chatProv, ok := p.(ChatProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider for %s does not support chat generation with tool calling", modelID)
+	}
+	return chatProv, nil
 }
 
 // Get returns the provider for a model ID.
