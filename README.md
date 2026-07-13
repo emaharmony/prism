@@ -1,4 +1,4 @@
-﻿# Prism - Event-Native AI Agent Platform
+# Prism - Event-Native AI Agent Platform
 
 [![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/)
 [![Tests](https://img.shields.io/badge/tests-go%20test%20.%2F...-brightgreen)]()
@@ -115,6 +115,7 @@ New to Prism? Start here:
 10. [Roadmap](docs/ROADMAP.md) — project direction.
 11. [Version History](docs/VERSION_HISTORY.md) — the full V1–V58+ development story.
 12. [Public Preview Checklist](docs/PUBLIC_PREVIEW_CHECKLIST.md) — release-prep status.
+13. [Dashboard Guide](docs/dashboard/README.md) — dashboard architecture, navigation, and UI development.
 
 ---
 

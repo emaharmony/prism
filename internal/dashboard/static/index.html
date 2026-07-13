@@ -3,191 +3,135 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Prism Dashboard</title>
+<meta name="description" content="Prism operational overview">
+<title>Overview · Prism</title>
 <link rel="stylesheet" href="/app.css">
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0f; color: #e0e0e8; }
-  .header { background: #12121a; border-bottom: 1px solid #2a2a3a; padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
-  .header h1 { font-size: 20px; color: #a78bfa; }
-  .header .version { font-size: 12px; color: #666; }
-  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
-  .runs-grid { display: grid; gap: 12px; }
-  .run-card { background: #16161f; border: 1px solid #2a2a3a; border-radius: 8px; padding: 16px; cursor: pointer; transition: border-color 0.2s; }
-  .run-card:hover { border-color: #a78bfa; }
-  .run-card .run-id { font-family: monospace; font-size: 14px; color: #a78bfa; margin-bottom: 8px; }
-  .run-card .run-status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-  .run-card .run-status.completed { background: #064e3b; color: #6ee7b7; }
-  .run-card .run-status.running { background: #1e3a5f; color: #93c5fd; }
-  .run-card .run-status.failed { background: #7f1d1d; color: #fca5a5; }
-  .run-card .run-status.created { background: #3b3b0a; color: #fde68a; }
-  .run-card .run-status.unknown { background: #333; color: #999; }
-  .run-card .run-meta { margin-top: 8px; font-size: 13px; color: #888; }
-  .run-card .task { font-size: 14px; color: #ccc; margin-top: 4px; }
-  .detail { display: none; }
-  .detail.active { display: block; }
-  .detail-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-  .detail-header .back { color: #a78bfa; cursor: pointer; font-size: 14px; }
-  .detail-header .back:hover { text-decoration: underline; }
-  .detail-header h2 { font-size: 18px; }
-  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #2a2a3a; }
-  .tab { padding: 8px 16px; cursor: pointer; font-size: 14px; color: #888; border-bottom: 2px solid transparent; }
-  .tab.active { color: #a78bfa; border-bottom-color: #a78bfa; }
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
-  .event-list { font-family: monospace; font-size: 13px; }
-  .event-item { padding: 8px 12px; border-bottom: 1px solid #1a1a2a; display: flex; gap: 12px; }
-  .event-type { color: #93c5fd; min-width: 260px; }
-  .event-time { color: #666; min-width: 180px; }
-  .event-id { color: #555; }
-  .projection-card { background: #16161f; border: 1px solid #2a2a3a; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .projection-card h3 { color: #a78bfa; font-size: 14px; margin-bottom: 8px; }
-  .projection-card pre { background: #0a0a0f; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto; color: #ccc; }
-  .policy-rule { background: #16161f; border: 1px solid #2a2a3a; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
-  .policy-rule .rule-id { color: #a78bfa; font-family: monospace; font-size: 13px; }
-  .policy-rule .rule-decision { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-left: 8px; }
-  .policy-rule .rule-decision.allowed { background: #064e3b; color: #6ee7b7; }
-  .policy-rule .rule-decision.denied { background: #7f1d1d; color: #fca5a5; }
-  .policy-rule .rule-decision.requires_approval { background: #3b3b0a; color: #fde68a; }
-  .policy-rule .rule-desc { color: #888; font-size: 13px; margin-top: 4px; }
-  .empty { color: #555; text-align: center; padding: 40px; font-size: 14px; }
-</style>
 </head>
 <body>
-<div class="header">
-  <h1>◆ Prism Dashboard</h1>
-  <span class="version">v0.11.0</span>
-</div>
-<nav class="nav">
-  <a href="/index.html" class="active">Runs</a>
-  <a href="/v2.html">Status</a>
-  <a href="/scheduler.html">Cron Jobs</a>
-  <a href="/config.html">Settings</a>
-  <a href="/editor.html">Agent Graph</a>
-  <a href="/workflow-editor.html">Workflow</a>
-</nav>
-
-<div class="container">
-  <!-- Runs List View -->
-  <div id="runs-view">
-    <h2 style="margin-bottom:16px;">Runs</h2>
-    <div id="runs-list" class="runs-grid"></div>
-  </div>
-
-  <!-- Run Detail View -->
-  <div id="detail-view" class="detail">
-    <div class="detail-header">
-      <span class="back" onclick="showRuns()">← Back</span>
-      <h2 id="detail-run-id"></h2>
+<nav class="nav"></nav>
+<main id="main-content" class="container" tabindex="-1">
+  <header class="page-header">
+    <div>
+      <p class="eyebrow">Operational control plane</p>
+      <h1 class="page-title">Prism overview</h1>
+      <p class="page-sub">Monitor what is running, identify blocked work, and move safely into the relevant operational view.</p>
     </div>
-    <div class="tabs">
-      <div class="tab active" data-tab="summary" onclick="switchTab('summary')">Summary</div>
-      <div class="tab" data-tab="events" onclick="switchTab('events')">Events</div>
-      <div class="tab" data-tab="projections" onclick="switchTab('projections')">Projections</div>
-    </div>
-    <div id="tab-summary" class="tab-content active"></div>
-    <div id="tab-events" class="tab-content"></div>
-    <div id="tab-projections" class="tab-content"></div>
-  </div>
-</div>
+    <button class="btn secondary" id="refresh" type="button">Refresh data</button>
+  </header>
 
+  <div id="connection" class="banner" role="alert"></div>
+  <section aria-labelledby="summary-heading">
+    <div class="section-heading"><div><h2 id="summary-heading" class="section-title">Operational summary</h2><p class="section-copy">Current state from Prism’s live service.</p></div><span id="last-updated" class="meta" aria-live="polite"></span></div>
+    <div class="metric-grid" id="metrics" aria-busy="true">
+      <div class="metric"><span class="metric-label">Service</span><div class="skeleton"></div></div>
+      <div class="metric"><span class="metric-label">Active work</span><div class="skeleton"></div></div>
+      <div class="metric"><span class="metric-label">Pending approvals</span><div class="skeleton"></div></div>
+      <div class="metric"><span class="metric-label">Configured agents</span><div class="skeleton"></div></div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="attention-heading">
+    <div class="section-heading"><div><h2 id="attention-heading" class="section-title">Immediate attention</h2><p class="section-copy">Items that may need a human decision or follow-up.</p></div></div>
+    <div class="attention-grid">
+      <div class="card"><div id="attention" class="attention-list" aria-live="polite"></div></div>
+      <aside class="card" aria-labelledby="model-heading"><h2 id="model-heading">How Prism progresses work</h2><p class="card-hint">Every task moves through the same governed lifecycle.</p><ol class="lifecycle"><li>Route</li><li>Policy check</li><li>Approval when required</li><li>Agent or tool execution</li><li>Validation and persistence</li></ol><a class="btn secondary small" href="/workflow-editor.html">Inspect workflow</a></aside>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="tasks-heading">
+    <div class="section-heading"><div><h2 id="tasks-heading" class="section-title">Work queue</h2><p class="section-copy">Tasks are the live operational record available from Prism’s task store.</p></div><span id="task-count" class="meta"></span></div>
+    <div class="toolbar" aria-label="Task filters">
+      <div class="field"><label for="task-search">Search tasks</label><input id="task-search" type="search" placeholder="Task, agent, or ID"></div>
+      <div class="field"><label for="status-filter">Status</label><select id="status-filter"><option value="">All statuses</option><option value="created">Created</option><option value="assigned">Assigned</option><option value="in_progress">In progress</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select></div>
+    </div>
+    <div id="tasks" class="loading-state" aria-live="polite">Loading work queue…</div>
+  </section>
+
+  <section class="section split-grid" aria-label="Recent activity and agents">
+    <div><div class="section-heading"><div><h2 class="section-title">Recent activity</h2><p class="section-copy">The latest task changes, with the important context kept visible.</p></div></div><div id="activity" class="activity-list"></div></div>
+    <div><div class="section-heading"><div><h2 class="section-title">Agent roster</h2><p class="section-copy">Configured agents and their assigned capability.</p></div><a href="/editor.html">Open agent graph</a></div><div id="agents" class="agent-list"></div></div>
+  </section>
+</main>
+<script src="/app.js"></script>
 <script>
-let currentRunId = null;
+(() => {
+  const ui = window.PrismUI;
+  const state = { tasks: [], agents: [], approvals: [], status: null };
+  const $ = selector => document.querySelector(selector);
+  const activeStatuses = new Set(['created', 'assigned', 'in_progress']);
+  const failedStatuses = new Set(['failed', 'cancelled']);
 
-async function fetchJSON(url) {
-  const r = await fetch(url);
-  return r.json();
-}
-
-async function loadRuns() {
-  const runs = await fetchJSON('/api/runs');
-  const list = document.getElementById('runs-list');
-  if (!runs.length) {
-    list.innerHTML = '<div class="empty">No runs found</div>';
-    return;
+  function showBanner(message) {
+    const banner = $('#connection');
+    banner.textContent = message;
+    banner.className = 'banner show err';
   }
-  list.innerHTML = runs.map(r => `
-    <div class="run-card" onclick="showRun('${r.run_id}')">
-      <div class="run-id">${r.run_id}</div>
-      <span class="run-status ${r.status}">${r.status}</span>
-      <div class="task">${r.task || '(no task)'}</div>
-      <div class="run-meta">${r.agent || ''} ${r.project ? '· ' + r.project : ''} ${r.started_at ? '· ' + r.started_at.slice(0,19).replace('T',' ') : ''}</div>
-    </div>
-  `).join('');
-}
-
-async function showRun(runId) {
-  currentRunId = runId;
-  document.getElementById('runs-view').style.display = 'none';
-  document.getElementById('detail-view').classList.add('active');
-  document.getElementById('detail-run-id').textContent = runId;
-  switchTab('summary');
-  loadSummary(runId);
-}
-
-function showRuns() {
-  document.getElementById('runs-view').style.display = 'block';
-  document.getElementById('detail-view').classList.remove('active');
-  currentRunId = null;
-}
-
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === 'tab-' + name));
-  if (name === 'events' && currentRunId) loadEvents(currentRunId);
-  if (name === 'projections' && currentRunId) loadProjections(currentRunId);
-  if (name === 'summary' && currentRunId) loadSummary(currentRunId);
-}
-
-async function loadSummary(runId) {
-  const detail = await fetchJSON('/api/runs/' + runId);
-  const el = document.getElementById('tab-summary');
-  const s = detail.summary || {};
-  el.innerHTML = `
-    <div class="projection-card">
-      <h3>Run Summary</h3>
-      <pre>${JSON.stringify(s, null, 2)}</pre>
-    </div>
-    <p style="color:#888;font-size:13px;margin-top:8px;">${detail.event_count || 0} events · ${(detail.projections || []).length} projections</p>
-  `;
-}
-
-async function loadEvents(runId) {
-  const events = await fetchJSON('/api/events/' + runId);
-  const el = document.getElementById('tab-events');
-  if (!events.length) {
-    el.innerHTML = '<div class="empty">No events</div>';
-    return;
+  function clearBanner() { $('#connection').className = 'banner'; }
+  function metric(label, value, note) {
+    return `<article class="metric"><span class="metric-label">${label}</span><strong class="metric-value">${value}</strong><span class="metric-note">${note || ''}</span></article>`;
   }
-  el.innerHTML = '<div class="event-list">' + events.map(e => `
-    <div class="event-item">
-      <span class="event-type">${e.type}</span>
-      <span class="event-time">${(e.timestamp || '').slice(0,23).replace('T',' ')}</span>
-      <span class="event-id">${e.id || ''}</span>
-    </div>
-  `).join('') + '</div>';
-}
-
-async function loadProjections(runId) {
-  const detail = await fetchJSON('/api/runs/' + runId);
-  const el = document.getElementById('tab-projections');
-  const names = detail.projections || [];
-  if (!names.length) {
-    el.innerHTML = '<div class="empty">No projections — run "prism projection rebuild --run ' + runId + '"</div>';
-    return;
+  function renderMetrics() {
+    const tasks = state.tasks;
+    const active = tasks.filter(t => activeStatuses.has(t.status)).length;
+    const failed = tasks.filter(t => failedStatuses.has(t.status)).length;
+    const running = state.status && state.status.status === 'running';
+    $('#metrics').innerHTML = [
+      metric('Service', running ? 'Healthy' : 'Attention', running ? `API ${state.status.version || ''}` : 'Check diagnostics'),
+      metric('Active work', active, tasks.length ? `${tasks.length} total tasks` : 'No recorded tasks'),
+      metric('Pending approvals', state.approvals.length, state.approvals.length ? 'Decision required' : 'No requests waiting'),
+      metric('Configured agents', state.agents.length || (state.status && state.status.agents) || 0, failed ? `${failed} failed or cancelled task${failed === 1 ? '' : 's'}` : 'No recent task failures')
+    ].join('');
+    $('#metrics').setAttribute('aria-busy', 'false');
   }
-  el.innerHTML = '';
-  for (const name of names) {
-    const proj = await fetchJSON('/api/projections/' + runId + '/' + name);
-    const card = document.createElement('div');
-    card.className = 'projection-card';
-    card.innerHTML = `<h3>${name}</h3><pre>${JSON.stringify(proj, null, 2)}</pre>`;
-    el.appendChild(card);
+  function renderAttention() {
+    const target = $('#attention');
+    const failed = state.tasks.filter(t => failedStatuses.has(t.status));
+    const items = [];
+    state.approvals.slice(0, 3).forEach(a => items.push(`<article class="attention-item"><span class="attention-icon" aria-hidden="true">!</span><div><strong>Approval required</strong><p>${ui.escape(a.mutation_type || 'Mutation')} requested by ${ui.escape(a.requested_by || 'an agent')} for <span class="mono">${ui.escape(a.target_path || a.project || 'a protected resource')}</span>.</p>${ui.badge(a.status)}</div></article>`));
+    failed.slice(0, 3).forEach(t => items.push(`<article class="attention-item danger"><span class="attention-icon" aria-hidden="true">×</span><div><strong>Task needs review</strong><p>${ui.escape(t.description || t.id)} · assigned to ${ui.escape(t.delegated_to || 'unassigned')}</p>${ui.badge(t.status)}</div></article>`));
+    if (!items.length) items.push(`<div class="empty-state"><strong>No immediate action required</strong>There are no pending approvals or failed tasks in the current task store.</div>`);
+    target.innerHTML = items.join('');
   }
-}
-
-loadRuns();
-setInterval(loadRuns, 5000);
+  function filteredTasks() {
+    const query = $('#task-search').value.trim().toLowerCase();
+    const status = $('#status-filter').value;
+    return state.tasks.filter(task => (!status || task.status === status) && (!query || [task.id, task.description, task.delegated_to, task.delegated_by, task.type].some(v => String(v || '').toLowerCase().includes(query))));
+  }
+  function renderTasks() {
+    const target = $('#tasks');
+    const tasks = filteredTasks().sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+    $('#task-count').textContent = `${tasks.length} shown`;
+    if (!tasks.length) { target.innerHTML = `<div class="empty-state"><strong>No matching tasks</strong>Try changing the filters, or wait for Prism to receive work.</div>`; return; }
+    target.innerHTML = `<div class="table-wrap"><table class="data-table"><thead><tr><th>Task</th><th>Status</th><th>Assigned agent</th><th>Priority</th><th>Updated</th></tr></thead><tbody>${tasks.map(t => `<tr><td data-label="Task"><div class="task-title">${ui.escape(t.description || t.id)}</div><div class="meta mono">${ui.escape(t.id || '—')} · ${ui.escape(t.type || 'task')}</div></td><td data-label="Status">${ui.badge(t.status)}</td><td data-label="Assigned agent">${ui.escape(t.delegated_to || 'Unassigned')}</td><td data-label="Priority">${ui.escape(t.priority || 'normal')}</td><td data-label="Updated"><span title="${ui.escape(ui.formatTime(t.updated_at || t.created_at))}">${ui.escape(ui.relativeTime(t.updated_at || t.created_at))}</span></td></tr>`).join('')}</tbody></table></div>`;
+  }
+  function renderActivity() {
+    const target = $('#activity');
+    const recent = [...state.tasks].sort((a,b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0)).slice(0, 6);
+    target.innerHTML = recent.length ? recent.map(t => `<article class="activity-item"><div><strong>${ui.escape(t.description || t.id)}</strong><p>${ui.badge(t.status)} · ${ui.escape(t.delegated_to || 'Unassigned')} · ${ui.escape(ui.relativeTime(t.updated_at || t.created_at))}</p></div></article>`).join('') : `<div class="empty-state"><strong>No activity yet</strong>New tasks and status changes will appear here.</div>`;
+  }
+  function renderAgents() {
+    const target = $('#agents');
+    target.innerHTML = state.agents.length ? state.agents.slice(0, 6).map(a => `<article class="agent-row"><div><strong>${ui.escape(a.name || a.id || a.ID || 'Unnamed agent')}</strong><p>${ui.escape(a.role || a.Role || 'agent')} · ${ui.escape(a.provider || a.Provider || 'provider')} · ${ui.escape(a.model || a.Model || 'default model')}</p></div></article>`).join('') : `<div class="empty-state"><strong>No agent details available</strong>The service has not reported a configured roster.</div>`;
+  }
+  async function load() {
+    $('#metrics').setAttribute('aria-busy', 'true');
+    const [status, tasks, approvals, agents] = await Promise.allSettled([
+      ui.request('/status'), ui.request('/tasks'), ui.request('/approvals'), ui.request('/agents')
+    ]);
+    const failures = [status, tasks, approvals, agents].filter(x => x.status === 'rejected');
+    state.status = status.status === 'fulfilled' ? status.value : null;
+    state.tasks = tasks.status === 'fulfilled' && Array.isArray(tasks.value) ? tasks.value : [];
+    state.approvals = approvals.status === 'fulfilled' && Array.isArray(approvals.value) ? approvals.value : [];
+    state.agents = agents.status === 'fulfilled' && Array.isArray(agents.value) ? agents.value : [];
+    failures.length ? showBanner(`Some live data could not be loaded. Existing data may be incomplete. ${failures[0].reason.message}`) : clearBanner();
+    renderMetrics(); renderAttention(); renderTasks(); renderActivity(); renderAgents();
+    $('#last-updated').textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  $('#refresh').addEventListener('click', load);
+  $('#task-search').addEventListener('input', renderTasks);
+  $('#status-filter').addEventListener('change', renderTasks);
+  load();
+})();
 </script>
 </body>
 </html>

@@ -112,9 +112,42 @@ func TestHandleIndexHTML(t *testing.T) {
 	if body == "" {
 		t.Error("index.html response is empty")
 	}
-	// Check that it contains "Prism Dashboard"
-	if !contains(body, "Prism Dashboard") {
+	// Check that it contains "Prism overview"
+	if !contains(body, "Prism overview") {
 		t.Error("index.html does not contain 'Prism Dashboard'")
+	}
+}
+
+func TestOverviewUsesLiveAPIAndSharedDashboardShell(t *testing.T) {
+	dir := t.TempDir()
+	s := NewServer(":0", dir, "policies")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Prism overview", "/app.js", "/app.css", "Operational summary", "Immediate attention"} {
+		if !contains(body, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+}
+
+func TestV2DashboardLinksBackToOriginalDashboard(t *testing.T) {
+	dir := t.TempDir()
+	s := NewServer(":0", dir, "policies")
+	req := httptest.NewRequest(http.MethodGet, "/v2.html", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !contains(w.Body.String(), `href="/index.html">← Original dashboard`) {
+		t.Error("v2.html is missing the original-dashboard return link")
 	}
 }
 
