@@ -160,14 +160,14 @@ func (s *PersistenceStage) writeJSONFile(path string, data any) error {
 // buildSummary creates a human-readable summary of the run.
 func (s *PersistenceStage) buildSummary(rc *RunContext) map[string]any {
 	summary := map[string]any{
-		"run_id":        rc.RunID,
-		"task":          rc.Task,
-		"project":       rc.Project,
-		"agent":         rc.Agent,
-		"provider":      rc.ProviderName,
-		"model":         rc.Model,
-		"event_count":   len(rc.Events),
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"run_id":      rc.RunID,
+		"task":        rc.Task,
+		"project":     rc.Project,
+		"agent":       rc.Agent,
+		"provider":    rc.ProviderName,
+		"model":       rc.Model,
+		"event_count": len(rc.Events),
+		"timestamp":   time.Now().UTC().Format(time.RFC3339),
 	}
 
 	// Determine status from stage results

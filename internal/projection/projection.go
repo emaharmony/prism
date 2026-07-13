@@ -94,7 +94,7 @@ func (r *Runner) Run(eventsFile, runDir string) error {
 func (r *Runner) RunFromEvents(events []event.Event, runDir string) error {
 	// Build a subscription index for fast filtering
 	subIndex := make(map[string][]int) // event type → projection indices
-	allSubs := []int{}                  // indices of projections that subscribe to "*"
+	allSubs := []int{}                 // indices of projections that subscribe to "*"
 
 	for i, p := range r.projections {
 		subs := p.Subscribe()

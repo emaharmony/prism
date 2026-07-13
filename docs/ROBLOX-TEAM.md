@@ -22,7 +22,7 @@ everyone else is read-only on the codebase.
 
 ## Production pipeline
 
-```
+```text
 idea ──► rubric score ──► plan ──► references ──► assets ──► Factory build ──► validate ──► integrate
  muse       (remote)      muse      scout        chisel        atlas          atlas       astraea
 ```
@@ -49,6 +49,7 @@ locations are checked against the workspace/write roots; delegators may pass a
 safe `output_dir`.
 
 Setup:
+
 ```bash
 ollama pull llama3.2-vision:11b      # vision model for analyze_image
 export PRISM_IMAGE_SEARCH_URL=...    # preferred JSON image-search endpoint
@@ -62,12 +63,14 @@ export PRISM_IMAGEGEN_URL=...        # optional: a text->image endpoint
 > error, either upgrade Ollama, or use a broadly-compatible VLM instead:
 > `ollama pull llava` then `export PRISM_VISION_MODEL=llava`. The default is
 > `llama3.2-vision:11b`; override it anytime with `PRISM_VISION_MODEL`.
+>
 ## Asset pipeline (the Asset Maker → Blender → Factory)
 
 `chisel` drives Blender through MCP (`mcp_blender_*` tools), building models from
 `scout`'s reference brief, then hands exports to the Roblox Factory.
 
 Config in `prism.yaml`:
+
 ```yaml
 mcp_servers:
   - name: "blender"
@@ -76,6 +79,7 @@ mcp_servers:
     enabled: true
 mcp_auto_approve: true
 ```
+
 Requires **`uv`/`uvx` installed** and **Blender running with the MCP addon**
 (ahujasid/blender-mcp). Without them, serve logs `MCP blender: error: ...` and
 continues (the rest of the team is unaffected). Adjust `command`/`args` to your
@@ -85,12 +89,14 @@ Blender MCP install.
 
 `muse` sends ideas to a **second Prism instance holding the rubric** over the
 cross-Prism bridge. Config in `prism.yaml` under `bridge.target_profiles`:
+
 ```yaml
 - name: "rubric"
   instance_id: "REPLACE_WITH_REMOTE_INSTANCE_ID"
   adapter: "generic"
   capabilities: ["plan", "review", "report"]
 ```
+
 `muse` uses `send_cross_message` (`message_type: task_request` or
 `validation_request`) with `request.expected_output: validation_report` and a
 `definition_of_done` drawn from the rubric; the remote replies with the

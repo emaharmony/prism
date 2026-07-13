@@ -34,13 +34,13 @@ type GenerateRequest struct {
 
 // GenerateResponse is the result from a provider's Generate call.
 type GenerateResponse struct {
-	Text          string         `json:"text"`
-	Model         string         `json:"model"`
-	Provider      string         `json:"provider"`
-	LatencyMS     int64          `json:"latency_ms"`
-	PromptTokens  int            `json:"prompt_tokens"`
-	OutputTokens   int            `json:"output_tokens"`
-	Raw           map[string]any `json:"raw,omitempty"`
+	Text         string         `json:"text"`
+	Model        string         `json:"model"`
+	Provider     string         `json:"provider"`
+	LatencyMS    int64          `json:"latency_ms"`
+	PromptTokens int            `json:"prompt_tokens"`
+	OutputTokens int            `json:"output_tokens"`
+	Raw          map[string]any `json:"raw,omitempty"`
 }
 
 // ProviderTier classifies providers by cost.

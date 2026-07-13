@@ -23,10 +23,10 @@ const (
 // AgentResponse represents the parsed output from the LLM. It can be either
 // a final text response or a request to execute a tool.
 type AgentResponse struct {
-	Type       AgentResponseType `json:"type"`
-	Content    string            `json:"content,omitempty"`
-	ToolName   string            `json:"tool,omitempty"`
-	ToolInput  map[string]any   `json:"input,omitempty"`
+	Type      AgentResponseType `json:"type"`
+	Content   string            `json:"content,omitempty"`
+	ToolName  string            `json:"tool,omitempty"`
+	ToolInput map[string]any    `json:"input,omitempty"`
 }
 
 // ParseAgentOutput attempts to parse LLM output as JSON. It recognizes two shapes:

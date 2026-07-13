@@ -6,14 +6,15 @@
 // profiles define what to run, with safety checks to prevent shell injection.
 //
 // The approve-with-validation flow (V5) chains three steps:
-//   1. Approve the mutation (writes the file)
-//   2. Run validation profiles (e.g., go test)
-//   3. Run a deterministic review of the changes
+//  1. Approve the mutation (writes the file)
+//  2. Run validation profiles (e.g., go test)
+//  3. Run a deterministic review of the changes
 //
 // Commands:
-//   prism validation list              — Show available validation profiles
-//   prism validation run <profile>    — Run a specific validation profile
-//   prism approval approve <id> --validate — Approve + validate + review
+//
+//	prism validation list              — Show available validation profiles
+//	prism validation run <profile>    — Run a specific validation profile
+//	prism approval approve <id> --validate — Approve + validate + review
 package main
 
 import (
@@ -124,9 +125,9 @@ func executeValidationRun(profileName, project, runDir, runID string) {
 }
 
 // executeApprovalApproveWithValidation chains three steps (V5 pipeline):
-//   1. Approve the mutation → file is written to disk
-//   2. Run validation profiles → check if the project still builds/tests
-//   3. Run deterministic review → summarize the change
+//  1. Approve the mutation → file is written to disk
+//  2. Run validation profiles → check if the project still builds/tests
+//  3. Run deterministic review → summarize the change
 //
 // If validation fails, the mutation is still applied (no auto-rollback) but
 // the status shows validation_status: failed. This is intentional —

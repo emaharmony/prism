@@ -157,7 +157,7 @@ func (a *ApprovalStateProjection) Snapshot() map[string]any {
 	return map[string]any{
 		"approvals":     approvalsMap,
 		"pending_count": pendingCount,
-		"total_count":  len(a.approvals),
+		"total_count":   len(a.approvals),
 	}
 }
 

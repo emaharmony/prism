@@ -13,10 +13,11 @@
 //   - tool_history:   Tool call history with policy decisions
 //
 // Commands:
-//   prism projection list                          — Show available projections
-//   prism projection rebuild --run <id>             — Rebuild projections for one run
-//   prism projection rebuild --all                   — Rebuild projections for all runs
-//   prism projection query <name> --run <id>         — Query a projection snapshot
+//
+//	prism projection list                          — Show available projections
+//	prism projection rebuild --run <id>             — Rebuild projections for one run
+//	prism projection rebuild --all                   — Rebuild projections for all runs
+//	prism projection query <name> --run <id>         — Query a projection snapshot
 package main
 
 import (
@@ -25,8 +26,8 @@ import (
 	"path/filepath"
 
 	"github.com/emaharmony/prism/internal/projection"
-	approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
 	"github.com/emaharmony/prism/internal/projection/builtin/agentactivity"
+	approvalproj "github.com/emaharmony/prism/internal/projection/builtin/approval"
 	"github.com/emaharmony/prism/internal/projection/builtin/runstatus"
 	"github.com/emaharmony/prism/internal/projection/builtin/toolhistory"
 )

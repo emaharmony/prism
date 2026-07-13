@@ -172,7 +172,7 @@ func TestContainsQuestion(t *testing.T) {
 		{"should I deploy this?", true},
 		{"this is a statement", false},
 		{"the bug is fixed", false},
-		{"What time is it?", true}, // case insensitive
+		{"What time is it?", true},  // case insensitive
 		{"HOW do I do this?", true}, // case insensitive
 	}
 	for _, tt := range tests {

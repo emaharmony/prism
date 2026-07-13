@@ -115,7 +115,7 @@ func TestReviewerCannotApprove(t *testing.T) {
 	}
 
 	// Verify the reviewer does NOT have approve/apply methods
-	// This is verified at compile time — the Reviewer type doesn't 
+	// This is verified at compile time — the Reviewer type doesn't
 	// have Approve() or Apply() methods
 
 	if review.Recommendation == "" {

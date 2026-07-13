@@ -37,9 +37,9 @@ type ParamSpec struct {
 
 // ToolResult is the universal result type returned by every tool execution.
 type ToolResult struct {
-	Success bool              `json:"success"`
-	Output  map[string]any    `json:"output"`
-	Error   string            `json:"error,omitempty"`
+	Success bool           `json:"success"`
+	Output  map[string]any `json:"output"`
+	Error   string         `json:"error,omitempty"`
 }
 
 // PolicyDecision represents the outcome of a policy evaluation for a tool call.

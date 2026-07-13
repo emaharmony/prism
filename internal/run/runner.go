@@ -5,11 +5,12 @@
 // "run" that flows through a deterministic lifecycle of events published to NATS.
 //
 // The V1→V5 versioning represents the platform's evolution, not API versions:
-//   V1 — Mock agent + event emission (the skeleton)
-//   V2 — Real LLM integration (Ollama provider, dry-run mode, context injection)
-//   V3 — Controlled tool execution (the agent can call tools; policy decides what runs)
-//   V4 — Approval-gated mutations (tools that modify files require human approval)
-//   V5 — Validation + deterministic review (run tests, lint, get a verdict)
+//
+//	V1 — Mock agent + event emission (the skeleton)
+//	V2 — Real LLM integration (Ollama provider, dry-run mode, context injection)
+//	V3 — Controlled tool execution (the agent can call tools; policy decides what runs)
+//	V4 — Approval-gated mutations (tools that modify files require human approval)
+//	V5 — Validation + deterministic review (run tests, lint, get a verdict)
 //
 // A single Runner instance represents one invocation. It emits ~15+ events in
 // sequence, each with a parent chain for tracing. Everything is persisted as
@@ -51,11 +52,11 @@ type RunConfig struct {
 	WorkspaceContext string
 	Project          string
 	Agent            string
-	BusURL        string
-	MemoryEnabled bool
-	RequireMemory bool
-	MemoryURL     string
-	RunDir        string // Base directory for run outputs (default: ./runs)
+	BusURL           string
+	MemoryEnabled    bool
+	RequireMemory    bool
+	MemoryURL        string
+	RunDir           string // Base directory for run outputs (default: ./runs)
 
 	// V2 LLM provider configuration
 	Provider     provider.Provider
@@ -132,18 +133,18 @@ func NewRunner(config RunConfig) *Runner {
 
 // Run executes the complete lifecycle pipeline. Here's the 15-step overview:
 //
-//   1. Connect to NATS (event bus)
-//   2. Emit task.created
-//   3. Emit task.started (parent: task.created)
-//   4. Optional: Fetch Remembrance context (memory), emit V1+V2 context events
-//   5. Emit agent.started
-//   6. Build & write prompt.md artifact
-//   7. [dry-run gate] If --dry-run-prompt, stop here and complete
-//   8. Emit llm.requested
-//   9. Call the LLM provider with timeout
+//  1. Connect to NATS (event bus)
+//  2. Emit task.created
+//  3. Emit task.started (parent: task.created)
+//  4. Optional: Fetch Remembrance context (memory), emit V1+V2 context events
+//  5. Emit agent.started
+//  6. Build & write prompt.md artifact
+//  7. [dry-run gate] If --dry-run-prompt, stop here and complete
+//  8. Emit llm.requested
+//  9. Call the LLM provider with timeout
 //  10. Emit llm.completed (or llm.failed → abort)
-//  10b. V3: Parse LLM output for tool requests, execute if present
-//  10c. V4: If tool requires approval, emit mutation.proposed + approval.requested
+//     10b. V3: Parse LLM output for tool requests, execute if present
+//     10c. V4: If tool requires approval, emit mutation.proposed + approval.requested
 //  11. Emit agent.completed (V1 backward compat)
 //  12. Write output.md artifact
 //  13. Determine run status (completed or pending_approval)
@@ -539,7 +540,7 @@ func (r *Runner) Run() (*RunResult, error) {
 				})
 
 				// Build approval summary
-				if toolResult != nil && toolResult.Output != nil {
+				if toolResult.Output != nil {
 					approvalID, _ := toolResult.Output["approval_id"].(string)
 					targetPath, _ := toolResult.Output["target_path"].(string)
 
@@ -573,12 +574,10 @@ func (r *Runner) Run() (*RunResult, error) {
 			})
 
 			// Write tool_result.json
-			if toolResult != nil {
-				toolResultPath := filepath.Join(runDir, "tool_result.json")
-				if toolData, jsonErr := json.MarshalIndent(toolResult, "", "  "); jsonErr == nil {
-					if writeErr := os.WriteFile(toolResultPath, append(toolData, '\n'), 0644); writeErr != nil {
-						log.Printf("prism: failed to write tool_result.json: %v", writeErr)
-					}
+			toolResultPath := filepath.Join(runDir, "tool_result.json")
+			if toolData, jsonErr := json.MarshalIndent(toolResult, "", "  "); jsonErr == nil {
+				if writeErr := os.WriteFile(toolResultPath, append(toolData, '\n'), 0644); writeErr != nil {
+					log.Printf("prism: failed to write tool_result.json: %v", writeErr)
 				}
 			}
 
@@ -586,17 +585,13 @@ func (r *Runner) Run() (*RunResult, error) {
 			var outputBuilder strings.Builder
 			outputBuilder.WriteString(genResp.Text)
 			outputBuilder.WriteString("\n\n---\n**Tool Result:**\n")
-			if toolResult != nil {
-				if toolResult.Success {
-					outputBuilder.WriteString(fmt.Sprintf("Tool `%s` executed successfully.\n", agentResp.ToolName))
-					for k, v := range toolResult.Output {
-						outputBuilder.WriteString(fmt.Sprintf("- %s: %v\n", k, v))
-					}
-				} else {
-					outputBuilder.WriteString(fmt.Sprintf("Tool `%s` failed: %s\n", agentResp.ToolName, toolResult.Error))
+			if toolResult.Success {
+				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` executed successfully.\n", agentResp.ToolName))
+				for k, v := range toolResult.Output {
+					outputBuilder.WriteString(fmt.Sprintf("- %s: %v\n", k, v))
 				}
 			} else {
-				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` execution error: %v\n", agentResp.ToolName, err))
+				outputBuilder.WriteString(fmt.Sprintf("Tool `%s` failed: %s\n", agentResp.ToolName, toolResult.Error))
 			}
 			outputText = outputBuilder.String()
 		}

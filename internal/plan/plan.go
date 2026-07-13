@@ -62,21 +62,21 @@ const (
 
 // Plan represents a task plan with scope, deliverables, and approval status.
 type Plan struct {
-	ID          string        `json:"id"`           // Unique ID (e.g., "P-011")
-	Title       string        `json:"title"`         // Short description
-	Description string        `json:"description"`  // Full description of what we're doing
-	Reasoning   string        `json:"reasoning"`     // Why we're doing it
-	Scope       string        `json:"scope"`         // What's explicitly OUT of scope
-	Deliverables []string     `json:"deliverables"`  // Expected outputs
+	ID            string        `json:"id"`             // Unique ID (e.g., "P-011")
+	Title         string        `json:"title"`          // Short description
+	Description   string        `json:"description"`    // Full description of what we're doing
+	Reasoning     string        `json:"reasoning"`      // Why we're doing it
+	Scope         string        `json:"scope"`          // What's explicitly OUT of scope
+	Deliverables  []string      `json:"deliverables"`   // Expected outputs
 	ApprovalLevel ApprovalLevel `json:"approval_level"` // What level of approval is needed
-	Status      PlanStatus    `json:"status"`         // Current status
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
-	ApprovedBy  string        `json:"approved_by"`     // Who approved (empty if auto)
-	ApprovedAt  *time.Time    `json:"approved_at"`     // When approved
-	CompletedAt *time.Time    `json:"completed_at"`   // When completed
-	Branch      string        `json:"branch"`          // Git branch
-	PR          string        `json:"pr"`              // PR number
+	Status        PlanStatus    `json:"status"`         // Current status
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
+	ApprovedBy    string        `json:"approved_by"`  // Who approved (empty if auto)
+	ApprovedAt    *time.Time    `json:"approved_at"`  // When approved
+	CompletedAt   *time.Time    `json:"completed_at"` // When completed
+	Branch        string        `json:"branch"`       // Git branch
+	PR            string        `json:"pr"`           // PR number
 }
 
 // HasPlan checks if an active (non-completed, non-abandoned) plan exists.

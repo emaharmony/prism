@@ -36,9 +36,9 @@ var DefaultTransport = provider.DefaultTransport
 // 50ms batching for token events.
 type Provider struct {
 	APIKey     string
-	BaseURL    string       // defaults to https://api.openai.com/v1
+	BaseURL    string // defaults to https://api.openai.com/v1
 	HTTPClient *http.Client
-	TierVal     provider.ProviderTier // free or paid
+	TierVal    provider.ProviderTier // free or paid
 }
 
 // New creates a new OpenAI provider with the given API key.
@@ -63,7 +63,7 @@ func NewWithBaseURL(apiKey, baseURL string) *Provider {
 		APIKey:     apiKey,
 		BaseURL:    baseURL,
 		HTTPClient: &http.Client{Timeout: 120 * time.Second, Transport: DefaultTransport},
-		TierVal:     TierPaid,
+		TierVal:    TierPaid,
 	}
 }
 
@@ -90,9 +90,9 @@ type chatMessage struct {
 
 type chatCompletionResponse struct {
 	ID      string                 `json:"id"`
-	Object  string                `json:"object"`
+	Object  string                 `json:"object"`
 	Created int64                  `json:"created"`
-	Model   string                `json:"model"`
+	Model   string                 `json:"model"`
 	Choices []chatCompletionChoice `json:"choices"`
 	Usage   chatCompletionUsage    `json:"usage"`
 }

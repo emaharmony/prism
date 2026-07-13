@@ -100,12 +100,12 @@ type discordWebhookPayload struct {
 
 // discordEmbed represents a Discord rich embed.
 type discordEmbed struct {
-	Title       string                `json:"title,omitempty"`
-	Description string                `json:"description,omitempty"`
-	Color       int                   `json:"color,omitempty"`
-	Fields      []discordEmbedField   `json:"fields,omitempty"`
-	Footer      *discordEmbedFooter   `json:"footer,omitempty"`
-	Timestamp   string                `json:"timestamp,omitempty"`
+	Title       string              `json:"title,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Color       int                 `json:"color,omitempty"`
+	Fields      []discordEmbedField `json:"fields,omitempty"`
+	Footer      *discordEmbedFooter `json:"footer,omitempty"`
+	Timestamp   string              `json:"timestamp,omitempty"`
 }
 
 // discordEmbedField represents a field in a Discord embed.
@@ -171,7 +171,7 @@ func (d *DiscordAdapter) postRunSummary(input map[string]any) (*adapter.Result, 
 			{Name: "Project", Value: project, Inline: true},
 			{Name: "Duration", Value: durationStr, Inline: true},
 		},
-		Footer: &discordEmbedFooter{Text: "Prism"},
+		Footer:    &discordEmbedFooter{Text: "Prism"},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -201,7 +201,7 @@ func (d *DiscordAdapter) postAlert(input map[string]any) (*adapter.Result, error
 			{Name: "Run ID", Value: runID, Inline: true},
 			{Name: "Severity", Value: severity, Inline: true},
 		},
-		Footer: &discordEmbedFooter{Text: "Prism Alert"},
+		Footer:    &discordEmbedFooter{Text: "Prism Alert"},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -228,9 +228,9 @@ func (d *DiscordAdapter) sendWebhook(payload discordWebhookPayload) (*adapter.Re
 
 	return &adapter.Result{
 		Output: map[string]any{
-			"sent":     true,
-			"status":   resp.Status,
-			"embeds":   len(payload.Embeds),
+			"sent":   true,
+			"status": resp.Status,
+			"embeds": len(payload.Embeds),
 		},
 	}, nil
 }

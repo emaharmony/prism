@@ -70,7 +70,7 @@ func (p *Provider) Tier() provider.ProviderTier { return p.TierVal }
 // ---------- Gemini request/response types ----------
 
 type generateContentRequest struct {
-	Contents    []geminiContent    `json:"contents"`
+	Contents         []geminiContent   `json:"contents"`
 	GenerationConfig *generationConfig `json:"generationConfig,omitempty"`
 }
 
@@ -84,33 +84,24 @@ type geminiPart struct {
 }
 
 type generationConfig struct {
-	Temperature float64 `json:"temperature,omitempty"`
-	MaxOutputTokens int  `json:"maxOutputTokens,omitempty"`
+	Temperature     float64 `json:"temperature,omitempty"`
+	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
 }
 
 type generateContentResponse struct {
-	Candidates []geminiCandidate `json:"candidates"`
-	UsageMetadata *geminiUsage   `json:"usageMetadata,omitempty"`
+	Candidates    []geminiCandidate `json:"candidates"`
+	UsageMetadata *geminiUsage      `json:"usageMetadata,omitempty"`
 }
 
 type geminiCandidate struct {
-	Content geminiContent `json:"content"`
-	FinishReason string   `json:"finishReason,omitempty"`
+	Content      geminiContent `json:"content"`
+	FinishReason string        `json:"finishReason,omitempty"`
 }
 
 type geminiUsage struct {
 	PromptTokenCount     int `json:"promptTokenCount"`
 	CandidatesTokenCount int `json:"candidatesTokenCount"`
 	TotalTokenCount      int `json:"totalTokenCount"`
-}
-
-// errorResponse is the Gemini error format.
-type errorResponse struct {
-	Error struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Status  string `json:"status"`
-	} `json:"error"`
 }
 
 // ---------- Generate ----------
@@ -125,7 +116,7 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 		},
 		GenerationConfig: &generationConfig{
 			Temperature:     req.Temperature,
-			MaxOutputTokens:  req.MaxTokens,
+			MaxOutputTokens: req.MaxTokens,
 		},
 	}
 
@@ -199,10 +190,10 @@ func (p *Provider) Generate(ctx context.Context, req provider.GenerateRequest) (
 		PromptTokens: promptTokens,
 		OutputTokens: outputTokens,
 		Raw: map[string]any{
-			"finish_reason":  gemResp.Candidates[0].FinishReason,
-			"model":          req.Model,
-			"prompt_tokens":  promptTokens,
-			"output_tokens":  outputTokens,
+			"finish_reason": gemResp.Candidates[0].FinishReason,
+			"model":         req.Model,
+			"prompt_tokens": promptTokens,
+			"output_tokens": outputTokens,
 		},
 	}, nil
 }

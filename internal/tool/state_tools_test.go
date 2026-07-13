@@ -187,9 +187,9 @@ func TestAddBlockedTool(t *testing.T) {
 	tool := &AddBlockedTool{Mgr: mgr}
 
 	result, err := tool.Execute(context.Background(), map[string]any{
-		"item":        "P-005: Add openclaw-lumi to Astraea",
-		"waiting_on":  "Windows access",
-		"task_ref":    "P-005",
+		"item":       "P-005: Add openclaw-lumi to Astraea",
+		"waiting_on": "Windows access",
+		"task_ref":   "P-005",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

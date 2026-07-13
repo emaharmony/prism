@@ -6,6 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from ..config import load_config
 from ..models import (
@@ -113,10 +114,6 @@ async def build_context(request: BuildContextRequest):
 
     context = _builder.build_context(request)
     return context
-
-
-from pydantic import BaseModel
-from typing import Any
 
 
 class DreamRequest(BaseModel):

@@ -137,12 +137,12 @@ func TestWizardBuildSeededAgentsGetPrimary(t *testing.T) {
 
 func TestSanitizeAgentID(t *testing.T) {
 	cases := map[string]string{
-		"OpenAI":       "openai",
-		"my provider":  "my-provider",
-		"  spaced  ":   "spaced",
-		"":             "agent-",
-		"123":          "agent-123",
-		"a.b/c":        "a-b-c",
+		"OpenAI":      "openai",
+		"my provider": "my-provider",
+		"  spaced  ":  "spaced",
+		"":            "agent-",
+		"123":         "agent-123",
+		"a.b/c":       "a-b-c",
 	}
 	for in, want := range cases {
 		if got := sanitizeAgentID(in); got != want {

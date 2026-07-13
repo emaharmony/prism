@@ -124,11 +124,11 @@ func (t *ToolHistoryProjection) Apply(evt event.Event) error {
 // Snapshot returns the current projection state as a serializable map.
 func (t *ToolHistoryProjection) Snapshot() map[string]any {
 	summary := map[string]int{
-		"total":    len(t.calls),
-		"approved": 0,
-		"denied":   0,
+		"total":     len(t.calls),
+		"approved":  0,
+		"denied":    0,
 		"succeeded": 0,
-		"failed":   0,
+		"failed":    0,
 	}
 
 	callsMap := make([]map[string]any, len(t.calls))

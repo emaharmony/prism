@@ -58,7 +58,7 @@ func (s *ToolStage) Execute(ctx context.Context, rc *RunContext) (*RunContext, *
 
 	// Emit tool stage started event
 	evt := event.NewEvent(event.V1EventTypes.ToolCalled, "tool-stage", map[string]any{
-		"run_id":     rc.RunID,
+		"run_id":       rc.RunID,
 		"has_response": rc.LLMResponse != "",
 	})
 	newRC := rc.WithEvent(evt)
@@ -68,7 +68,7 @@ func (s *ToolStage) Execute(ctx context.Context, rc *RunContext) (*RunContext, *
 		Success:   true,
 		Data: map[string]any{
 			"tool_called": false,
-			"note":       "tool execution will be fully extracted from runner.go",
+			"note":        "tool execution will be fully extracted from runner.go",
 		},
 	}, nil
 }

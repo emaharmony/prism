@@ -13,10 +13,10 @@ import (
 
 // mockStreamCallback captures callback invocations for testing.
 type mockStreamCallback struct {
-	tokens   []string
-	indices  []int
-	finished []bool
-	err      error
+	tokens    []string
+	indices   []int
+	finished  []bool
+	err       error
 	callCount int
 }
 
@@ -162,12 +162,12 @@ func TestPersistenceStage_NonEmptyRunDir_WritesFiles(t *testing.T) {
 	stage := &PersistenceStage{BusURL: ""}
 
 	rc := &RunContext{
-		RunID:      "test-run",
-		Task:       "hello",
-		Agent:       "lumi",
-		Model:       "mock",
+		RunID:        "test-run",
+		Task:         "hello",
+		Agent:        "lumi",
+		Model:        "mock",
 		ProviderName: "mock",
-		RunDir:      tmpDir,
+		RunDir:       tmpDir,
 		Events: []event.Event{
 			{ID: "evt-1", Type: "prism.run.started", Source: "prism"},
 		},

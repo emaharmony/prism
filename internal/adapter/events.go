@@ -4,7 +4,7 @@ package adapter
 
 const (
 	EventTypeAdapterRegistered = "prism.adapter.registered"
-	EventTypeAdapterHealth      = "prism.adapter.health"
+	EventTypeAdapterHealth     = "prism.adapter.health"
 	EventTypeAdapterExecute    = "prism.adapter.execute"
 	EventTypeAdapterSuccess    = "prism.adapter.success"
 	EventTypeAdapterFailed     = "prism.adapter.failed"

@@ -5,11 +5,11 @@
 // multi-agent orchestration fully observable and auditable.
 //
 // Event flow for a delegation:
-//   1. agent.delegated  — workflow delegates a subtask to an agent
-//   2. (agent executes, may emit tool events via V3)
-//   3. agent.completed — agent finishes the subtask successfully
-//   OR
-//   3. agent.failed     — agent fails the subtask
+//  1. agent.delegated  — workflow delegates a subtask to an agent
+//  2. (agent executes, may emit tool events via V3)
+//  3. agent.completed — agent finishes the subtask successfully
+//     OR
+//  3. agent.failed     — agent fails the subtask
 //
 // agent.registered is emitted when an agent is added to the registry
 // at the start of a run.
@@ -60,9 +60,9 @@ func NewAgentDelegatedEvent(agentName, delegatedBy, subtask, stepID string) even
 func NewAgentCompletedEvent(agentName, subtask, output string, durationMs int64) event.Event {
 	return event.NewEvent(EventAgentCompleted, "agent-"+agentName, map[string]any{
 		"agent_name":  agentName,
-		"subtask":      subtask,
-		"output":       output,
-		"duration_ms":  durationMs,
+		"subtask":     subtask,
+		"output":      output,
+		"duration_ms": durationMs,
 	})
 }
 
@@ -70,8 +70,8 @@ func NewAgentCompletedEvent(agentName, subtask, output string, durationMs int64)
 func NewAgentFailedEvent(agentName, subtask, agentErr string, durationMs int64) event.Event {
 	return event.NewEvent(EventAgentFailed, "agent-"+agentName, map[string]any{
 		"agent_name":  agentName,
-		"subtask":      subtask,
+		"subtask":     subtask,
 		"error":       agentErr,
-		"duration_ms":  durationMs,
+		"duration_ms": durationMs,
 	})
 }

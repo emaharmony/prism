@@ -46,17 +46,6 @@ type ollamaEmbedResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
-// ollamaEmbedBatchRequest is the request body for Ollama's /api/embed endpoint (batch).
-type ollamaEmbedBatchRequest struct {
-	Model  string   `json:"model"`
-	Input  []string `json:"input"`
-}
-
-// ollamaEmbedBatchResponse is the batch response from Ollama's /api/embed endpoint.
-type ollamaEmbedBatchResponse struct {
-	Embeddings [][]float64 `json:"embeddings"`
-}
-
 // Embed generates an embedding for a single text.
 func (o *OllamaEmbeddingProvider) Embed(ctx context.Context, text string) ([]float64, error) {
 	reqBody := ollamaEmbedRequest{

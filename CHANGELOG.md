@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Cross-platform coverage gates, release-build smoke tests, SDK contract tests,
+  immutable CI action pins, and deterministic local-link validation.
+
+### Changed
+
+- Centralized the development version at `v0.1.0`; release builds embed and
+  validate the exact semantic-version tag.
+
+### Fixed
+
+- Rejected approval decisions without an actor, preserved correlation safety in
+  SDK tool responses, and corrected the Python SDK build backend.
+
 ## [0.1.0] - 2026-07-07
 
 ### Added
@@ -40,3 +57,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([9010cf8](https://github.com/emaharmony/prism/commit/9010cf8)).
 
 [0.1.0]: https://github.com/emaharmony/prism/commits/HEAD
+[Unreleased]: https://github.com/emaharmony/prism/compare/v0.1.0...HEAD

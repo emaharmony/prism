@@ -8,8 +8,8 @@ type Subject struct {
 
 // Resource identifies what the action targets.
 type Resource struct {
-	Type string `json:"type" yaml:"type"`           // e.g., "tool", "file", "gate"
-	Name string `json:"name" yaml:"name"`           // e.g., "read_file", "trading_gate"
+	Type string `json:"type" yaml:"type"` // e.g., "tool", "file", "gate"
+	Name string `json:"name" yaml:"name"` // e.g., "read_file", "trading_gate"
 }
 
 // Context provides additional context for the policy evaluation.
@@ -21,8 +21,8 @@ type Context struct {
 
 // PolicyRequest is the input to the policy evaluator.
 type PolicyRequest struct {
-	Subject   Subject   `json:"subject" yaml:"subject"`
-	Action    string    `json:"action" yaml:"action"`     // e.g., "tool.execute", "mutation.apply"
-	Resource  Resource  `json:"resource" yaml:"resource"`
-	Context   Context   `json:"context" yaml:"context"`
+	Subject  Subject  `json:"subject" yaml:"subject"`
+	Action   string   `json:"action" yaml:"action"` // e.g., "tool.execute", "mutation.apply"
+	Resource Resource `json:"resource" yaml:"resource"`
+	Context  Context  `json:"context" yaml:"context"`
 }

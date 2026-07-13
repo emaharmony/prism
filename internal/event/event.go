@@ -11,7 +11,9 @@
 // The parent chain concept: every event has an optional ParentID that points to
 // the event that caused it. This creates a causal DAG you can trace from task
 // creation all the way down to the final review artifact. For example:
-//   task.created → task.started → agent.started → llm.requested → llm.completed
+//
+//	task.created → task.started → agent.started → llm.requested → llm.completed
+//
 // If llm.requested fails, the failure event still links back so you know what broke.
 //
 // Versioned event types (V1-V5) represent the platform's evolution, not API
@@ -49,14 +51,14 @@ var V1EventTypes = struct {
 	AgentFailed    string
 
 	// Tool invocations
-	ToolCalled  string
-	ToolResult  string
-	ToolFailed  string
+	ToolCalled string
+	ToolResult string
+	ToolFailed string
 
 	// System
 	SystemHealth string
 }{
-	TaskCreated:             "prism.task.created",
+	TaskCreated:            "prism.task.created",
 	TaskStarted:            "prism.task.started",
 	TaskCompleted:          "prism.task.completed",
 	TaskFailed:             "prism.task.failed",
@@ -65,7 +67,7 @@ var V1EventTypes = struct {
 	MemoryContextFailed:    "prism.memory.context_failed",
 	AgentStarted:           "prism.agent.started",
 	AgentOutput:            "prism.agent.output",
-	AgentCompleted:        "prism.agent.completed",
+	AgentCompleted:         "prism.agent.completed",
 	AgentFailed:            "prism.agent.failed",
 	ToolCalled:             "prism.tool.called",
 	ToolResult:             "prism.tool.result",
@@ -76,12 +78,12 @@ var V1EventTypes = struct {
 // V3EventTypes defines the event types introduced in V3 (controlled tool execution).
 var V3EventTypes = struct {
 	// Tool lifecycle
-	ToolRequested      string
-	ToolApproved       string
-	ToolDenied          string
-	ToolStarted         string
-	ToolCompleted       string
-	ToolFailed          string
+	ToolRequested string
+	ToolApproved  string
+	ToolDenied    string
+	ToolStarted   string
+	ToolCompleted string
+	ToolFailed    string
 }{
 	ToolRequested: "prism.tool.requested",
 	ToolApproved:  "prism.tool.approved",
@@ -137,18 +139,18 @@ type Event struct {
 
 // EventMetadata tracks runtime context, LLM provenance, and cost.
 type EventMetadata struct {
-	RunID       string    `json:"run_id,omitempty"`
-	SessionID   string    `json:"session_id,omitempty"`
-	Project     string    `json:"project,omitempty"`
-	Agent       string    `json:"agent,omitempty"`
-	Model       string    `json:"model,omitempty"`
-	TokenCost   int       `json:"token_cost,omitempty"`     // V1: total tokens (deprecated, use TokenUsage)
-	LatencyMs   int       `json:"latency_ms,omitempty"`    // V1: LLM latency
+	RunID     string `json:"run_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Project   string `json:"project,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	Model     string `json:"model,omitempty"`
+	TokenCost int    `json:"token_cost,omitempty"` // V1: total tokens (deprecated, use TokenUsage)
+	LatencyMs int    `json:"latency_ms,omitempty"` // V1: LLM latency
 
 	// V16: Enriched metadata
-	DurationMs  int64      `json:"duration_ms,omitempty"`   // Wall-clock duration
-	Outcome     string     `json:"outcome,omitempty"`        // "success" | "failure" | "timeout" | "skipped"
-	TokenUsage  *TokenUsage `json:"token_usage,omitempty"` // Detailed token breakdown
+	DurationMs int64       `json:"duration_ms,omitempty"` // Wall-clock duration
+	Outcome    string      `json:"outcome,omitempty"`     // "success" | "failure" | "timeout" | "skipped"
+	TokenUsage *TokenUsage `json:"token_usage,omitempty"` // Detailed token breakdown
 }
 
 // TokenUsage provides a detailed breakdown of LLM token consumption.
@@ -272,11 +274,11 @@ var V16EventTypes = struct {
 // Workspace context reading and injection events.
 var V19EventTypes = struct {
 	// Context injection
-	ContextFileRead  string
-	ContextInjected   string
+	ContextFileRead string
+	ContextInjected string
 }{
-	ContextFileRead:  "prism.context.file_read",
-	ContextInjected:  "prism.context.injected",
+	ContextFileRead: "prism.context.file_read",
+	ContextInjected: "prism.context.injected",
 }
 
 // V4EventTypes defines the event types introduced in V4 (approval-gated mutations).
@@ -326,7 +328,7 @@ type Summary struct {
 	PromptPath    string `json:"prompt_path,omitempty"`
 	MemoryStatus  string `json:"memory_status,omitempty"` // "none", "injected", "failed"
 	LLMLatencyMs  int64  `json:"llm_latency_ms,omitempty"`
-	LLMError      string    `json:"llm_error,omitempty"`
+	LLMError      string `json:"llm_error,omitempty"`
 
 	// V3 tool execution fields
 	ToolCalls []ToolCallSummary `json:"tool_calls,omitempty"`
@@ -379,11 +381,11 @@ type ToolCallSummary struct {
 // (e.g., writing a file), we record the approval ID, what's being changed,
 // and its current status (pending/approved/denied).
 type ApprovalSummary struct {
-	ApprovalID    string `json:"approval_id"`
-	MutationType  string `json:"mutation_type"`
-	TargetPath    string `json:"target_path"`
-	Status        string `json:"status"`
-	RequestedBy   string `json:"requested_by"`
+	ApprovalID     string `json:"approval_id"`
+	MutationType   string `json:"mutation_type"`
+	TargetPath     string `json:"target_path"`
+	Status         string `json:"status"`
+	RequestedBy    string `json:"requested_by"`
 	PolicyDecision string `json:"policy_decision"`
 }
 

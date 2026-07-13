@@ -87,8 +87,8 @@ func (s *DelegationStage) Execute(ctx context.Context, rc *RunContext) (*RunCont
 	cleanedResponse := rc.LLMResponse
 
 	for i, match := range matches {
-		agentID := match[1]     // e.g., "mango"
-		taskType := match[2]    // e.g., "code_implementation" (optional)
+		agentID := match[1]  // e.g., "mango"
+		taskType := match[2] // e.g., "code_implementation" (optional)
 
 		if taskType == "" {
 			taskType = "general"

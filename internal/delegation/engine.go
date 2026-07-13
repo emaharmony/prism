@@ -52,16 +52,16 @@ func NewEngine(store *task.Store, conn *nats.Conn) *Engine {
 func (e *Engine) Delegate(ctx context.Context, delegatedBy, delegatedTo string, taskType, description string, contextData map[string]any) (*task.Task, error) {
 	now := time.Now()
 	t := &task.Task{
-		ID:           generateTaskID(),
-		Type:         taskType,
-		Status:       task.StatusCreated,
-		DelegatedBy:  delegatedBy,
-		DelegatedTo:  delegatedTo,
-		Description:  description,
-		Context:      contextData,
-		Priority:     "normal",
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:          generateTaskID(),
+		Type:        taskType,
+		Status:      task.StatusCreated,
+		DelegatedBy: delegatedBy,
+		DelegatedTo: delegatedTo,
+		Description: description,
+		Context:     contextData,
+		Priority:    "normal",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	// Persist the task
@@ -80,14 +80,14 @@ func (e *Engine) Delegate(ctx context.Context, delegatedBy, delegatedTo string, 
 
 	// Publish the task.created event
 	event := map[string]any{
-		"v":             1,
-		"task_id":       t.ID,
-		"delegated_by":  delegatedBy,
-		"delegated_to":  delegatedTo,
-		"task_type":     taskType,
-		"description":   description,
-		"priority":      t.Priority,
-		"created_at":    now.Format(time.RFC3339),
+		"v":            1,
+		"task_id":      t.ID,
+		"delegated_by": delegatedBy,
+		"delegated_to": delegatedTo,
+		"task_type":    taskType,
+		"description":  description,
+		"priority":     t.Priority,
+		"created_at":   now.Format(time.RFC3339),
 	}
 
 	if contextData != nil {
@@ -148,7 +148,7 @@ func (e *Engine) Complete(ctx context.Context, taskID string, result map[string]
 		"v":            1,
 		"task_id":      taskID,
 		"completed_by": t.DelegatedTo,
-		"status":        string(task.StatusCompleted),
+		"status":       string(task.StatusCompleted),
 	}
 
 	if result != nil {
@@ -177,11 +177,11 @@ func (e *Engine) Fail(ctx context.Context, taskID string, errMsg string) error {
 
 	// Publish task.failed event
 	event := map[string]any{
-		"v":            1,
-		"task_id":      taskID,
-		"failed_by":    t.DelegatedTo,
-		"status":        string(task.StatusFailed),
-		"error":        errMsg,
+		"v":         1,
+		"task_id":   taskID,
+		"failed_by": t.DelegatedTo,
+		"status":    string(task.StatusFailed),
+		"error":     errMsg,
 	}
 
 	if err := e.publishEvent(t.DelegatedTo+".task.failed", event); err != nil {

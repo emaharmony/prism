@@ -1,9 +1,13 @@
 # IDE
+.agents/
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+__pycache__/
+*.py[cod]
+*.egg-info/
 
 # Prism build artifacts (binaries at repo root only)
 *.exe
@@ -50,6 +54,12 @@ tmp/
 dist/
 build/
 coverage/
+.cache/
+coverage.out
+coverage.html
+coverage-gate.md
+quality-report.md
+test-results/
 prism-agent.exe
 prism-bus.exe
 prism.exe

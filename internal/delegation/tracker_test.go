@@ -197,7 +197,7 @@ func TestTracker_StuckTasks_Assigned(t *testing.T) {
 
 	tracker := NewTracker(store, engine, TrackerConfig{
 		TaskTimeout:   100 * time.Millisecond,
-		CheckInterval:  50 * time.Millisecond,
+		CheckInterval: 50 * time.Millisecond,
 	})
 
 	ctx := context.Background()

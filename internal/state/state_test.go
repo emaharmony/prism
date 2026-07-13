@@ -348,8 +348,8 @@ func TestFormatStateForPrompt(t *testing.T) {
 		Status: "executing",
 	})
 	m.RecordDecision(Decision{
-		Decision:  "Local guard rail",
-		Author:    "ema",
+		Decision: "Local guard rail",
+		Author:   "ema",
 	})
 
 	result = m.FormatStateForPrompt()

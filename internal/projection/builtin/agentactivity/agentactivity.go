@@ -29,10 +29,10 @@ import (
 
 // AgentActivitySnapshot is the output of the agent_activity projection.
 type AgentActivitySnapshot struct {
-	Agents            map[string]AgentCounts `json:"agents"`
-	TotalDelegations  int                    `json:"total_delegations"`
-	TotalCompletions  int                    `json:"total_completions"`
-	TotalFailures     int                    `json:"total_failures"`
+	Agents           map[string]AgentCounts `json:"agents"`
+	TotalDelegations int                    `json:"total_delegations"`
+	TotalCompletions int                    `json:"total_completions"`
+	TotalFailures    int                    `json:"total_failures"`
 }
 
 // AgentCounts tracks delegation/completion/failure counts for one agent.

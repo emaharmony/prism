@@ -305,20 +305,23 @@ V7 workflow runtime. Named workflows compose Prism capabilities.
 The most common event flows through Prism:
 
 ### Basic LLM Call
-```
+
+```text
 task.created → task.started → agent.started → llm.requested → llm.completed
   → agent.completed → task.completed
 ```
 
 ### With Tool Execution (V3)
-```
+
+```text
 task.created → task.started → agent.started → llm.requested → llm.completed
   → tool.requested → tool.approved → tool.started → tool.completed
   → agent.completed → task.completed
 ```
 
 ### With Approval Gate (V4)
-```
+
+```text
 task.created → task.started → agent.started → llm.requested → llm.completed
   → mutation.proposed → approval.requested → [human approves]
   → approval.granted → mutation.validated → mutation.applied
@@ -326,21 +329,24 @@ task.created → task.started → agent.started → llm.requested → llm.comple
 ```
 
 ### With Validation + Review (V5)
-```
+
+```text
 task.created → ... → mutation.applied → validation.requested → validation.started
   → validation.completed → review.requested → review.started → review.completed
   → task.completed
 ```
 
 ### With Workflow (V7)
-```
+
+```text
 task.created → task.started → workflow.started → workflow.step.started
   → workflow.step.completed → workflow.step.started → workflow.step.completed
   → workflow.completed → task.completed
 ```
 
 ### With Policy Gate (V8)
-```
+
+```text
 tool.requested → policy.requested → policy.evaluated
   → [policy.allowed | policy.denied | policy.approval_required]
 ```
@@ -350,6 +356,7 @@ tool.requested → policy.requested → policy.evaluated
 ## Subscribing to Events
 
 ### Go (Embedded NATS)
+
 ```go
 bus := bus.NewEmbeddedBus()
 sub, _ := bus.Subscribe("prism.task.*")
@@ -359,6 +366,7 @@ for msg := range sub.C {
 ```
 
 ### CLI
+
 ```bash
 # Watch all events
 prism events --watch
@@ -374,6 +382,7 @@ prism events --export events.jsonl
 ```
 
 ### Dashboard
+
 ```bash
 prism dashboard
 # Opens http://localhost:8080 with live event stream
@@ -408,7 +417,7 @@ All V1 events remain backward compatible. Newer versions add events alongside V1
 
 Events are persisted to SQLite (WAL mode) and optionally exported to JSONL:
 
-```
+```text
 runs/<run_id>/
 ├── events.jsonl       # Canonical event log (one JSON per line)
 ├── summary.json       # Run summary with all event IDs
@@ -420,6 +429,7 @@ runs/<run_id>/
 ```
 
 Query events from SQLite:
+
 ```go
 store, _ := event.NewSQLiteEventStore("prism-data/events.db")
 events, _ := store.Query(ctx, event.EventFilter{
@@ -430,6 +440,7 @@ events, _ := store.Query(ctx, event.EventFilter{
 ```
 
 Or use the CLI:
+
 ```bash
 prism db export <run_id>   # SQLite → JSONL
 prism db query --type "prism.approval.*" --limit 50
