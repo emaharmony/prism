@@ -37,7 +37,7 @@ jobs:
       - name: Test (race)
         run: go test -race ./internal/bus/... ./internal/event/... ./internal/run/... ./internal/workflow/... ./internal/safety/... ./internal/policy/... ./internal/agent/... ./internal/orchestrator/... ./internal/task/... -count=1
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.out
