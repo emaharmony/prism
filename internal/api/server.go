@@ -627,7 +627,7 @@ func (s *Server) runInvocation(agentCfg orchestrator.AgentConfig, invocationID s
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	chatProv, err := s.providers.GetChatProvider(agentCfg.Model)
+	chatProv, err := s.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		s.invocations.Fail(invocationID, err.Error())
 		s.publishInvocationEvent(agentCfg.ID, invocationID, invocation.StatusFailed, nil, err.Error())

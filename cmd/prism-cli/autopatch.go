@@ -85,7 +85,7 @@ func buildLocalAutoPatchWorker(cfg *orchestrator.Config, providers *provider.Pro
 	if agentCfg == nil {
 		return nil
 	}
-	p, err := providers.Get(agentCfg.Model)
+	p, err := providers.GetForAgent(agentCfg.ID, agentCfg.Model)
 	if err != nil {
 		log.Printf("[AUTOPATCH] local agent provider unavailable for %s/%s: %v", agentID, agentCfg.Model, err)
 		return nil
