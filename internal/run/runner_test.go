@@ -1516,7 +1516,9 @@ func TestV3ToolDeniedPolicy(t *testing.T) {
 	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
 	executor := tool.NewExecutor(registry, policyConfig)
 
-	// Request a tool that should be denied (shell)
+	// Request a tool that should be denied (nonexistent tool)
+	// V60: Shell tool is now a valid tool that requires approval.
+	// Use a truly unknown tool name to test the denied path.
 	cfg := run.RunConfig{
 		Task:          "Test V3 tool denied",
 		Project:       "prism",
@@ -1524,7 +1526,7 @@ func TestV3ToolDeniedPolicy(t *testing.T) {
 		BusURL:        busURL,
 		MemoryEnabled: false,
 		RunDir:        filepath.Join(tmpDir, "runs"),
-		Provider:      mockpkg.NewToolRequest("shell", map[string]any{"command": "rm -rf /"}),
+		Provider:      mockpkg.NewToolRequest("nonexistent_tool", map[string]any{}),
 		ProviderName:  "mock",
 		Model:         "mock-model",
 		ToolExecutor:  executor,

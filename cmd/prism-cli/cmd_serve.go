@@ -499,6 +499,15 @@ func executeServe(args []string) {
 			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			toolReg.Register(&tool.GitCreatePRTool{})
 			// V32: State management tools
+			// V60: Shell tool for free mode (registered with tier_1 policy for gated mode)
+			shellTool := &tool.ShellTool{
+				Policy:         tool.BuildShellPolicyFromConfig("tier_1", cfg.Shell.Allowlists, cfg.Shell.Defaults.BlockedPatterns),
+				DefaultTimeout: cfg.Shell.Defaults.TimeoutSeconds,
+				MaxOutputBytes: cfg.Shell.Defaults.MaxOutputBytes,
+				MaxStderrBytes: cfg.Shell.Defaults.MaxOutputBytes / 2,
+			}
+			toolReg.Register(shellTool)
+
 			stateMgr = state.NewManager(workspaceRoot)
 			stateMgr.EnsureDir()
 			tool.RegisterStateTools(toolReg, stateMgr)
@@ -900,6 +909,57 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		if !mentioned {
 			return
 		}
+	}
+
+	// V60: Free mode — check if this channel is in free mode and the sender is the master user.
+	// Free mode skips phase gates, registers all tools including shell at the channel's tier,
+	// and allows direct mutations without proposal/approval.
+	freeMode := false
+	if channelRoleConfig != nil && channelRoleConfig.Mode == "free" {
+		masterUserID := cc.cfg.Shell.MasterUserID
+		if masterUserID != "" && msg.UserID == masterUserID {
+			freeMode = true
+			log.Printf("[FREE-MODE] activated for master user %s in channel %s", msg.UserID, msg.ChannelID)
+
+			// Set auto-approve mutations so write_file, git mutations, etc. execute directly
+			cc.toolPolicy.AutoApproveMutations = true
+
+			// Update shell tool policy to the channel's configured tier
+			shellTier := channelRoleConfig.ShellPolicy
+			if shellTier == "" {
+				shellTier = "tier_3" // default to full access in free mode
+			}
+			if shell, err := cc.toolExec.Registry.Resolve("shell"); err == nil {
+				if st, ok := shell.(*tool.ShellTool); ok {
+					st.Policy = tool.BuildShellPolicyFromConfig(shellTier, cc.cfg.Shell.Allowlists, cc.cfg.Shell.Defaults.BlockedPatterns)
+					log.Printf("[FREE-MODE] shell policy set to tier %s", shellTier)
+				}
+			}
+
+			// Emit audit event
+			cc.publishEvent("prism.free.action", map[string]any{
+				"user_id":    msg.UserID,
+				"channel_id": msg.ChannelID,
+				"shell_tier": shellTier,
+			})
+		} else {
+			log.Printf("[FREE-MODE] channel %s is free mode but sender %s is not master user %s — falling back to gated",
+				msg.ChannelID, msg.UserID, masterUserID)
+		}
+	}
+
+	// V60: Reset auto-approve mutations after free mode message is processed.
+	// This ensures gated mode messages still require approval.
+	if freeMode {
+		defer func() {
+			cc.toolPolicy.AutoApproveMutations = false
+			// Reset shell tool policy back to tier_1 for gated mode
+			if shell, err := cc.toolExec.Registry.Resolve("shell"); err == nil {
+				if st, ok := shell.(*tool.ShellTool); ok {
+					st.Policy = tool.BuildShellPolicyFromConfig("tier_1", cc.cfg.Shell.Allowlists, cc.cfg.Shell.Defaults.BlockedPatterns)
+				}
+			}
+		}()
 	}
 
 	// Step 1: Debounce — drop rapid-fire messages from the same user
@@ -2109,6 +2169,7 @@ var mutationProposalTools = map[string]bool{
 	"git_commit":                true,
 	"git_push":                  true,
 	"create_pr":                 true,
+	"shell":                     true,
 }
 
 // ToolMode represents the tool access level for a channel.

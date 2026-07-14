@@ -88,8 +88,10 @@ func TestPolicyUnknownToolDenied(t *testing.T) {
 func TestPolicyShellDenied(t *testing.T) {
 	cfg := DefaultPolicyConfig()
 	result := EvaluatePolicy(cfg, "shell", map[string]any{"command": "rm -rf /"})
-	if result.Decision != PolicyDenied {
-		t.Errorf("shell tool should be denied, got %s", result.Decision)
+	// V60: Shell tool is now a valid tool that requires approval in gated mode.
+	// The hard blocklist is enforced internally by ShellTool.Execute().
+	if result.Decision != PolicyRequiresApproval {
+		t.Errorf("shell tool should require approval, got %s", result.Decision)
 	}
 }
 
@@ -178,8 +180,9 @@ func TestPolicyV4_ShellDenied(t *testing.T) {
 	result := EvaluatePolicy(cfg, "shell", map[string]any{
 		"command": "ls",
 	})
-	if result.Decision != PolicyDenied {
-		t.Errorf("shell should be denied, got %s", result.Decision)
+	// V60: Shell tool is now a valid tool that requires approval in gated mode.
+	if result.Decision != PolicyRequiresApproval {
+		t.Errorf("shell should require approval, got %s", result.Decision)
 	}
 }
 

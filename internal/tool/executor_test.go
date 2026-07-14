@@ -54,7 +54,9 @@ func TestExecutorDeniedTool(t *testing.T) {
 		events = append(events, eventType)
 	})
 
-	result, err := exec.ExecuteWithPolicy(context.Background(), "shell", "lumi", "prism", "corr_test", map[string]any{"command": "rm -rf /"})
+	// V60: Shell tool now requires approval in gated mode, not denied.
+	// Use a truly unknown tool name to test the denied path.
+	result, err := exec.ExecuteWithPolicy(context.Background(), "nonexistent_tool", "lumi", "prism", "corr_test", map[string]any{})
 	if err != nil {
 		t.Fatalf("denied tool should not return an error, just a denial result")
 	}

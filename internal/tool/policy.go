@@ -236,6 +236,18 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		}
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s is a git mutation, requires approval", toolName)}
 
+	// V60: Shell tool — policy is enforced internally by ShellTool.Execute()
+	// which checks the hard blocklist and tier-based allowlist.
+	// External policy allows it through; the tool itself enforces safety.
+	case "shell":
+		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to use shell; route through the orchestrator", agentID)}
+		}
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: shell tool approved for free mode / autonomous wake action"}
+		}
+		return PolicyResult{Decision: PolicyRequiresApproval, Reason: "shell tool requires approval in gated mode"}
+
 	default:
 		// V49: external MCP tools (mcp_<server>_<tool>). Remote and untrusted, so
 		// they are gated behind approval by default — never silently denied (which
