@@ -145,7 +145,7 @@ func (cc *conversationContext) runToolLoop(
 func (cc *conversationContext) callLLMForToolLoop(ctx context.Context, prompt string, agentCfg *orchestrator.AgentConfig, channelID string) (string, error) {
 	// Add tool instructions to the prompt
 	toolInfos := cc.toolExec.Registry.ListWithDescriptions()
-	toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
+	toolInfos = filterToolInfosByAgentPolicy(toolInfos, *cc.toolPolicy, agentCfg.ID)
 	toolInfos = filterToolInfosByChannelRole(toolInfos, cc.cfg.ResolveChannelRoleConfig(channelID))
 	if len(toolInfos) > 0 {
 		prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...)
@@ -181,7 +181,7 @@ func (cc *conversationContext) executeTool(ctx context.Context, parsed agent.Age
 	}
 
 	// Check policy
-	policyResult := tool.EvaluatePolicyForAgent(cc.toolPolicy, parsed.ToolName, agentCfg.ID, parsed.ToolInput)
+	policyResult := tool.EvaluatePolicyForAgent(*cc.toolPolicy, parsed.ToolName, agentCfg.ID, parsed.ToolInput)
 
 	if policyResult.Decision == tool.PolicyDenied {
 		return tool.ToolResult{}, false, fmt.Errorf("tool %q denied by policy: %s", parsed.ToolName, policyResult.Reason)

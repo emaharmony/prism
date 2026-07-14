@@ -136,7 +136,7 @@ type conversationContext struct {
 	planMgr       *plan.Manager            // V32: Plan manager for plan-first pipeline
 	improveMgr    *improve.Manager         // V32: Self-improvement loop
 	guardian      *guard.Guard             // V32: Guard rail for plan enforcement
-	toolPolicy    tool.PolicyConfig        // V27: Tool policy configuration
+	toolPolicy    *tool.PolicyConfig       // V27: Tool policy configuration (pointer so free mode can mutate it live)
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
 	pendingWorkMu sync.Mutex
@@ -601,7 +601,7 @@ func executeServe(args []string) {
 				crossCoord:  crossCoord,
 				autopatcher: autopatcher,
 				toolExec:    toolExec,
-				toolPolicy:  toolPolicy,
+				toolPolicy:  &toolPolicy,
 				rateLimiter: safety.NewUserRateLimiter(
 					10, // max 10 messages per burst per user
 					1,  // refill 1 token/sec per user
@@ -1176,11 +1176,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Skip tool instructions if the gate excluded tools for this message
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
-		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
+		toolInfos = filterToolInfosByAgentPolicy(toolInfos, *cc.toolPolicy, agentCfg.ID)
 		// V33: Filter tools based on channel role (read-only channels get limited tools)
 		toolInfos = filterToolInfosByChannelRole(toolInfos, channelRoleConfig)
 		if len(toolInfos) > 0 {
-			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...)
+			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, (*cc.toolPolicy).ReadAllowedPaths()...)
 		}
 	}
 
@@ -1265,7 +1265,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			// Build messages array and tools list
 			messages := cc.buildMessages(promptSession, agentCfg)
 			chatTools := cc.buildChatTools()
-			chatTools = filterChatToolsByAgentPolicy(chatTools, cc.toolPolicy, agentCfg.ID)
+			chatTools = filterChatToolsByAgentPolicy(chatTools, *cc.toolPolicy, agentCfg.ID)
 
 			// V33: Filter tools based on channel role (none, read-only, all)
 			chatTools = filterChatToolsByChannelRole(chatTools, channelRoleConfig)
