@@ -12,7 +12,7 @@ type TokenUsage struct {
 	PromptTokens     int     `json:"prompt_tokens,omitempty"`
 	CompletionTokens int     `json:"completion_tokens,omitempty"`
 	TotalTokens      int     `json:"total_tokens,omitempty"`
-	EstimatedCostUsd float64 `json:"estimated_cost_usd,omitempty"` // in microdollars
+	EstimatedCostUsd float64 `json:"estimated_cost_usd,omitempty"` // plain USD
 }
 
 // CostReport aggregates token usage and cost across a single run.

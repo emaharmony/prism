@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workspace · Prism</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .file-tabs { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 14px; }
+  .file-tabs button { padding:6px 12px; font-size:13px; color:var(--muted);
+    background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; }
+  .file-tabs button:hover { color:var(--text); }
+  .file-tabs button[aria-pressed="true"] { color:#fff; background:var(--accent-soft); box-shadow:inset 0 0 0 1px rgba(167,139,250,.4); }
+  .file-tabs button .miss { color:var(--subtle); font-size:11px; }
+  textarea.editor { width:100%; box-sizing:border-box; min-height:340px; resize:vertical;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; line-height:1.55;
+    color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; }
+  textarea.editor:focus { outline:none; border-color:var(--accent-strong); }
+  .field label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+  .ctx-picker { display:flex; flex-wrap:wrap; gap:10px; }
+  .ctx-picker label { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--text); margin:0; }
+  .sa-row { display:grid; grid-template-columns:160px 1fr auto; gap:8px; align-items:start; margin-bottom:8px; }
+  .sa-row input, .sa-row textarea { width:100%; box-sizing:border-box; font-size:13px; color:var(--text);
+    background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px; font-family:inherit; }
+  .sa-row textarea { min-height:38px; resize:vertical; }
+  .sa-row button { align-self:center; }
+  .btn.ghost { background:var(--surface-raised); color:var(--muted); }
+  .tabs { display:flex; gap:6px; margin-bottom:18px; border-bottom:1px solid var(--border); }
+  .tabs button { padding:10px 16px; font-size:14px; font-weight:560; color:var(--muted);
+    background:none; border:none; border-bottom:2px solid transparent; cursor:pointer; }
+  .tabs button[aria-selected="true"] { color:var(--text); border-bottom-color:var(--accent); }
+</style>
+</head>
+<body>
+<nav class="nav"></nav>
+
+<main id="main-content" class="container">
+  <h1 class="page-title">Workspace</h1>
+  <p class="page-sub">Tune agent behavior from here. Edit the shared context files (personalities, roster, rules) or a single agent's per-agent fields. Changes apply after a <span class="mono">prism serve</span> restart.</p>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tab-files" aria-selected="true">Shared files</button>
+    <button role="tab" id="tab-agents" aria-selected="false">Per-agent</button>
+  </div>
+
+  <!-- ============ Shared files ============ -->
+  <section id="panel-files">
+    <div class="card">
+      <h2>Context files <span class="mono" id="wsPath" style="color:var(--subtle);font-size:12px;font-weight:400;"></span></h2>
+      <p class="card-hint">These are the <span class="mono">*.md</span> files agents inject via their <span class="mono">context:</span> selection. Only files under the workspace root are editable.</p>
+      <div class="file-tabs" id="fileTabs" style="margin-top:14px;"></div>
+      <textarea class="editor" id="fileEditor" spellcheck="false" placeholder="Select a file above…"></textarea>
+      <div class="actions-row" style="margin-top:12px;">
+        <button class="btn" id="saveFile" disabled>Save file</button>
+        <span class="hint" id="fileHint"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Per-agent ============ -->
+  <section id="panel-agents" hidden>
+    <div class="card">
+      <h2>Agent behavior</h2>
+      <p class="card-hint">Edit one agent's personality and interaction rules. Written surgically to <span class="mono">prism.yaml</span> — other agents and comments are preserved.</p>
+      <div class="field" style="margin-top:14px;max-width:340px;">
+        <label>Agent</label>
+        <select id="agentSelect"></select>
+      </div>
+      <div id="agentForm" hidden style="margin-top:8px;">
+        <div class="field">
+          <label>Conversation postfix <span style="color:var(--subtle)">— appended to the system prompt (personality/behavior)</span></label>
+          <textarea class="editor" id="convPostfix" style="min-height:120px;" spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <label>Context sources <span style="color:var(--subtle)">— which shared files this agent loads</span></label>
+          <div class="ctx-picker" id="ctxPicker"></div>
+        </div>
+        <div class="field">
+          <label>State actions <span style="color:var(--subtle)">— per-context prompt injections (e.g. manager-room, build-room)</span></label>
+          <div id="saList"></div>
+          <button class="btn ghost" id="addSa" type="button" style="margin-top:6px;">+ Add state action</button>
+        </div>
+        <div class="actions-row" style="margin-top:8px;">
+          <button class="btn" id="saveAgent">Save agent</button>
+          <span class="hint" id="agentHint"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+<script>
+const ui = window.PrismUI;
+const $ = s => document.querySelector(s);
+const banner = (msg, kind) => { const b = $("#banner"); b.textContent = msg; b.className = "banner show " + kind; window.scrollTo(0,0); };
+
+/* -------- tab switching -------- */
+function showTab(which){
+  const files = which === "files";
+  $("#tab-files").setAttribute("aria-selected", String(files));
+  $("#tab-agents").setAttribute("aria-selected", String(!files));
+  $("#panel-files").hidden = !files;
+  $("#panel-agents").hidden = files;
+}
+$("#tab-files").addEventListener("click", () => showTab("files"));
+$("#tab-agents").addEventListener("click", () => { showTab("agents"); if (!agentsLoaded) loadAgents(); });
+
+/* ================= Shared files ================= */
+let activeFile = null;
+
+async function loadFiles(){
+  try {
+    const data = await ui.request("/workspace/files");
+    $("#wsPath").textContent = data.workspace ? "· " + data.workspace : "";
+    const tabs = $("#fileTabs");
+    tabs.innerHTML = (data.files || []).map(f =>
+      `<button data-name="${ui.escape(f.name)}" aria-pressed="false">${ui.escape(f.name)}${f.exists ? "" : ' <span class="miss">(new)</span>'}</button>`).join("");
+  } catch (e) { banner("Could not list workspace files: " + e.message, "err"); }
+}
+
+$("#fileTabs").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-name]");
+  if (!btn) return;
+  const name = btn.dataset.name;
+  document.querySelectorAll("#fileTabs button").forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+  try {
+    const data = await ui.request("/workspace/files/" + encodeURIComponent(name));
+    activeFile = name;
+    $("#fileEditor").value = data.content || "";
+    $("#saveFile").disabled = false;
+    $("#fileHint").textContent = data.exists ? "" : "New file — will be created on save.";
+  } catch (err) { banner("Could not read " + name + ": " + err.message, "err"); }
+});
+
+$("#saveFile").addEventListener("click", async () => {
+  if (!activeFile) return;
+  const btn = $("#saveFile"); btn.disabled = true;
+  try {
+    await ui.request("/workspace/files/" + encodeURIComponent(activeFile), {
+      method:"PUT", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ content: $("#fileEditor").value }) });
+    banner(`✓ Saved ${activeFile}. ⟳ Restart \`prism serve\` (or wait for the next context build) to apply.`, "ok");
+    loadFiles();
+  } catch (e) { banner("Save failed: " + e.message, "err"); }
+  finally { btn.disabled = false; }
+});
+
+/* ================= Per-agent ================= */
+let agentsLoaded = false;
+let agents = [];
+let availableContexts = [];
+
+async function loadAgents(){
+  try {
+    const data = await ui.request("/config/agents");
+    agents = data.agents || [];
+    availableContexts = data.available_contexts || [];
+    agentsLoaded = true;
+    const sel = $("#agentSelect");
+    sel.innerHTML = `<option value="">Select an agent…</option>` +
+      agents.map(a => `<option value="${ui.escape(a.id)}">${ui.escape(a.id)}${a.role ? " — " + ui.escape(a.role) : ""}</option>`).join("");
+  } catch (e) { banner("Could not load agents: " + e.message, "err"); }
+}
+
+$("#agentSelect").addEventListener("change", () => {
+  const a = agents.find(x => x.id === $("#agentSelect").value);
+  if (!a) { $("#agentForm").hidden = true; return; }
+  $("#agentForm").hidden = false;
+  $("#convPostfix").value = a.conversation_postfix || "";
+  const chosen = new Set(a.context || []);
+  $("#ctxPicker").innerHTML = availableContexts.map(c =>
+    `<label><input type="checkbox" value="${ui.escape(c)}" ${chosen.has(c) ? "checked" : ""}> ${ui.escape(c)}</label>`).join("");
+  renderStateActions(a.state_actions || {});
+  $("#agentHint").textContent = "";
+});
+
+function renderStateActions(sa){
+  $("#saList").innerHTML = Object.entries(sa).map(([k,v]) => saRow(k, v)).join("");
+  wireSaRemovers();
+}
+function saRow(key, val){
+  return `<div class="sa-row">
+    <input type="text" class="sa-key" placeholder="context key" value="${ui.escape(key)}">
+    <textarea class="sa-val" placeholder="inject text">${ui.escape(val)}</textarea>
+    <button class="btn ghost sa-del" type="button">✕</button></div>`;
+}
+function wireSaRemovers(){
+  document.querySelectorAll(".sa-del").forEach(b =>
+    b.onclick = () => b.closest(".sa-row").remove());
+}
+$("#addSa").addEventListener("click", () => {
+  $("#saList").insertAdjacentHTML("beforeend", saRow("", ""));
+  wireSaRemovers();
+});
+
+$("#saveAgent").addEventListener("click", async () => {
+  const id = $("#agentSelect").value;
+  if (!id) return;
+  const context = Array.from(document.querySelectorAll("#ctxPicker input:checked")).map(i => i.value);
+  const state_actions = {};
+  document.querySelectorAll("#saList .sa-row").forEach(row => {
+    const k = row.querySelector(".sa-key").value.trim();
+    const v = row.querySelector(".sa-val").value;
+    if (k) state_actions[k] = v;
+  });
+  const patch = { conversation_postfix: $("#convPostfix").value, context, state_actions };
+  const btn = $("#saveAgent"); btn.disabled = true;
+  try {
+    await ui.request("/config/agents/" + encodeURIComponent(id), {
+      method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(patch) });
+    banner(`✓ Saved agent ${id} to prism.yaml. ⟳ Restart \`prism serve\` to apply.`, "ok");
+    // refresh local copy so re-selecting shows saved state
+    const a = agents.find(x => x.id === id);
+    if (a) { a.conversation_postfix = patch.conversation_postfix; a.context = context; a.state_actions = state_actions; }
+  } catch (e) { banner("Save failed: " + e.message, "err"); }
+  finally { btn.disabled = false; }
+});
+
+loadFiles();
+</script>
+</body>
+</html>

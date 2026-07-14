@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Usage · Prism</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .range-row { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
+  .range-row button { padding:7px 14px; font-size:13px; font-weight:560; color:var(--muted);
+    background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius-sm); cursor:pointer; }
+  .range-row button:hover { color:var(--text); }
+  .range-row button[aria-pressed="true"] { color:#fff; background:var(--accent-soft);
+    box-shadow: inset 0 0 0 1px rgba(167,139,250,.4); }
+  .totals { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:20px; }
+  .chart-wrap { overflow-x:auto; }
+  svg.chart { display:block; width:100%; min-width:520px; height:auto; }
+  .chart text { fill:var(--subtle); font-size:11px; font-family:inherit; }
+  .chart .axis-line { stroke:var(--border); stroke-width:1; }
+  .chart .grid-line { stroke:var(--border); stroke-width:1; stroke-dasharray:3 4; opacity:.5; }
+  .chart rect.bar-p { fill:var(--accent); }
+  .chart rect.bar-c { fill:var(--warning); }
+  .chart rect.bar-hit { fill:transparent; cursor:pointer; }
+  .chart rect.bar-hit:hover ~ * , .chart g.bar:hover rect.bar-p { filter:brightness(1.15); }
+  .legend { display:flex; gap:16px; margin-top:10px; font-size:12px; color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .legend i { width:11px; height:11px; border-radius:3px; display:inline-block; }
+  .dim-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; }
+  .dim h3 { margin:0 0 10px; font-size:13px; color:var(--text); }
+  .dim-row { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; margin-bottom:8px; }
+  .dim-row .lbl { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .dim-row .val { font-size:12px; color:var(--text); font-variant-numeric:tabular-nums; }
+  .dim-bar { grid-column:1 / -1; height:6px; border-radius:99px; background:var(--surface-raised); overflow:hidden; }
+  .dim-bar > i { display:block; height:100%; background:var(--accent); border-radius:99px; }
+  .tip { position:fixed; z-index:50; pointer-events:none; padding:8px 10px; font-size:12px;
+    background:var(--surface-raised); border:1px solid var(--border-strong); border-radius:8px;
+    color:var(--text); box-shadow:0 8px 24px rgba(0,0,0,.4); display:none; white-space:nowrap; }
+  .tip b { color:var(--accent); }
+</style>
+</head>
+<body>
+<nav class="nav"></nav>
+
+<main id="main-content" class="container">
+  <h1 class="page-title">Token Usage</h1>
+  <p class="page-sub">Where your tokens go, over time. Every LLM call routed through Prism (invoke, chat, workflow) is recorded — switch the range to spot spikes and leakage. Estimated cost uses the built-in pricing table and is approximate.</p>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="range-row" id="rangeRow">
+    <button data-range="session">Session</button>
+    <button data-range="day">Day</button>
+    <button data-range="week">Week</button>
+    <button data-range="month">Month</button>
+    <button data-range="year">Year</button>
+    <button data-range="lifetime">Lifetime</button>
+  </div>
+
+  <div class="totals" id="totals"></div>
+
+  <div class="card" style="margin-bottom:20px;">
+    <h2>Tokens over time <span class="mono" id="bucketLabel" style="color:var(--subtle);font-size:12px;font-weight:400;"></span></h2>
+    <div class="chart-wrap"><div id="chart"></div></div>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i> Prompt (input)</span>
+      <span><i style="background:var(--warning)"></i> Completion (output)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Breakdown</h2>
+    <p class="card-hint">Totals for the selected range, ranked by token count.</p>
+    <div class="dim-grid" id="dims" style="margin-top:14px;"></div>
+  </div>
+</main>
+
+<div class="tip" id="tip"></div>
+
+<script src="/app.js"></script>
+<script>
+const ui = window.PrismUI;
+const $ = s => document.querySelector(s);
+const banner = (msg, kind) => { const b = $("#banner"); b.textContent = msg; b.className = "banner show " + kind; };
+let currentRange = "day";
+
+function fmtInt(n){ return (n||0).toLocaleString(); }
+function fmtCost(n){ if (!n) return "$0.00"; return n < 0.01 ? "$" + n.toFixed(4) : "$" + n.toFixed(2); }
+
+function fmtBucketTime(ts, bucket){
+  const d = new Date(ts);
+  if (bucket === "5m" || bucket === "1h" || bucket === "6h")
+    return d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
+  if (bucket === "1d")
+    return d.toLocaleDateString([], { month:"short", day:"numeric" });
+  return d.toLocaleDateString([], { month:"short", year:"2-digit" }); // 30d buckets
+}
+
+function renderTotals(t){
+  const cards = [
+    ["Total tokens", fmtInt(t.total), (t.count||0) + " calls"],
+    ["Prompt tokens", fmtInt(t.prompt), pct(t.prompt, t.total) + " of total"],
+    ["Completion tokens", fmtInt(t.completion), pct(t.completion, t.total) + " of total"],
+    ["Est. cost", fmtCost(t.cost), "approx."],
+  ];
+  $("#totals").innerHTML = cards.map(([label,val,note]) => `
+    <div class="metric"><div class="metric-label">${label}</div>
+      <div class="metric-value">${val}</div><div class="metric-note">${note}</div></div>`).join("");
+}
+function pct(part, whole){ if (!whole) return "0%"; return Math.round(part/whole*100) + "%"; }
+
+function renderChart(series, bucket){
+  const host = $("#chart");
+  if (!series.length){ host.innerHTML = `<div class="empty-state" style="min-width:0;"><strong>No usage yet</strong>Make a call, then refresh.</div>`; return; }
+  const W = 900, H = 300, padL = 56, padR = 16, padT = 12, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxTotal = Math.max(1, ...series.map(p => p.total));
+  const niceMax = niceCeil(maxTotal);
+  const n = series.length;
+  const gap = n > 1 ? Math.min(6, plotW / n * 0.25) : 4;
+  const bw = Math.max(2, (plotW - gap * (n - 1)) / n);
+  const y = v => padT + plotH - (v / niceMax) * plotH;
+  const x = i => padL + i * (bw + gap);
+
+  // Y gridlines / labels (5 steps)
+  let grid = "";
+  for (let s = 0; s <= 4; s++){
+    const v = niceMax * s / 4, yy = y(v);
+    grid += `<line class="grid-line" x1="${padL}" y1="${yy.toFixed(1)}" x2="${W-padR}" y2="${yy.toFixed(1)}"/>`;
+    grid += `<text x="${padL-8}" y="${(yy+3).toFixed(1)}" text-anchor="end">${abbr(v)}</text>`;
+  }
+  // Bars (stacked: prompt then completion)
+  let bars = "";
+  const labelEvery = Math.ceil(n / 8);
+  series.forEach((p, i) => {
+    const xx = x(i);
+    const hP = (p.prompt / niceMax) * plotH;
+    const hC = (p.completion / niceMax) * plotH;
+    const yP = padT + plotH - hP;
+    const yC = yP - hC;
+    bars += `<g class="bar">`;
+    if (hP > 0) bars += `<rect class="bar-p" x="${xx.toFixed(1)}" y="${yP.toFixed(1)}" width="${bw.toFixed(1)}" height="${hP.toFixed(1)}"/>`;
+    if (hC > 0) bars += `<rect class="bar-c" x="${xx.toFixed(1)}" y="${yC.toFixed(1)}" width="${bw.toFixed(1)}" height="${hC.toFixed(1)}"/>`;
+    // full-height hit area for tooltip
+    bars += `<rect class="bar-hit" x="${xx.toFixed(1)}" y="${padT}" width="${bw.toFixed(1)}" height="${plotH}"
+      data-t="${p.ts}" data-p="${p.prompt}" data-c="${p.completion}" data-tot="${p.total}" data-cost="${p.cost}" data-b="${bucket}"/>`;
+    bars += `</g>`;
+    if (i % labelEvery === 0)
+      bars += `<text x="${(xx+bw/2).toFixed(1)}" y="${H-padB+16}" text-anchor="middle">${fmtBucketTime(p.ts, bucket)}</text>`;
+  });
+
+  host.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Token usage over time">
+    ${grid}
+    <line class="axis-line" x1="${padL}" y1="${padT+plotH}" x2="${W-padR}" y2="${padT+plotH}"/>
+    ${bars}
+  </svg>`;
+  wireTooltips();
+}
+
+function abbr(n){ if (n >= 1e9) return (n/1e9).toFixed(1)+"B"; if (n >= 1e6) return (n/1e6).toFixed(1)+"M"; if (n >= 1e3) return (n/1e3).toFixed(1)+"k"; return String(Math.round(n)); }
+function niceCeil(v){ const p = Math.pow(10, Math.floor(Math.log10(v))); const s = v / p; const m = s <= 1 ? 1 : s <= 2 ? 2 : s <= 5 ? 5 : 10; return m * p; }
+
+function wireTooltips(){
+  const tip = $("#tip");
+  document.querySelectorAll("#chart .bar-hit").forEach(el => {
+    el.addEventListener("mousemove", e => {
+      const d = el.dataset;
+      tip.innerHTML = `<b>${fmtBucketTime(+d.t, d.b)}</b><br>Total: ${fmtInt(+d.tot)}<br>Prompt: ${fmtInt(+d.p)} · Completion: ${fmtInt(+d.c)}<br>Est: ${fmtCost(+d.cost)}`;
+      tip.style.display = "block";
+      tip.style.left = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8) + "px";
+      tip.style.top = (e.clientY + 14) + "px";
+    });
+    el.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
+}
+
+function renderDims(data){
+  const groups = [
+    ["By agent", data.by_agent], ["By source", data.by_source],
+    ["By provider", data.by_provider], ["By model", data.by_model],
+  ];
+  $("#dims").innerHTML = groups.map(([title, rows]) => {
+    const max = Math.max(1, ...(rows||[]).map(r => r.total));
+    const body = (rows && rows.length)
+      ? rows.map(r => `
+        <div class="dim-row">
+          <span class="lbl" title="${ui.escape(r.key)}">${ui.escape(r.key)}</span>
+          <span class="val">${fmtInt(r.total)}${r.cost ? " · " + fmtCost(r.cost) : ""}</span>
+          <span class="dim-bar"><i style="width:${Math.max(2, r.total/max*100).toFixed(1)}%"></i></span>
+        </div>`).join("")
+      : `<p class="card-hint">No data.</p>`;
+    return `<div class="dim"><h3>${title}</h3>${body}</div>`;
+  }).join("");
+}
+
+async function load(range){
+  currentRange = range;
+  document.querySelectorAll("#rangeRow button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.range === range)));
+  try {
+    const data = await ui.request(`/usage?range=${encodeURIComponent(range)}`);
+    $("#banner").className = "banner";
+    $("#bucketLabel").textContent = data.bucket ? `· ${data.bucket} buckets` : "";
+    renderTotals(data.totals || {});
+    renderChart(data.series || [], data.bucket);
+    renderDims(data);
+  } catch (e) {
+    banner("Could not load usage: " + e.message, "err");
+  }
+}
+
+$("#rangeRow").addEventListener("click", e => {
+  const btn = e.target.closest("button[data-range]");
+  if (btn) load(btn.dataset.range);
+});
+load("day");
+</script>
+</body>
+</html>

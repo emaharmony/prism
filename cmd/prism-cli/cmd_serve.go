@@ -48,6 +48,7 @@ import (
 	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/context"
+	"github.com/emaharmony/prism/internal/cost"
 	"github.com/emaharmony/prism/internal/crossprism"
 	"github.com/emaharmony/prism/internal/dashboard"
 	"github.com/emaharmony/prism/internal/debounce"
@@ -77,6 +78,7 @@ import (
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/tool/mcp"
+	"github.com/emaharmony/prism/internal/usage"
 
 	"github.com/nats-io/nats.go"
 )
@@ -252,7 +254,23 @@ func executeServe(args []string) {
 		fmt.Fprintf(os.Stderr, "Error creating data directory: %v\n", err)
 		os.Exit(1)
 	}
-	dbPath := cfg.Prism.DataDir + "/sessions.db"
+	// Apply any per-model pricing overrides from config so cost estimates
+	// reflect current provider prices without a recompile.
+	cost.SetPricingOverrides(cfg.CostPricingOverrides())
+
+	// Token-usage tracker: persist every LLM call routed through the registry so
+	// the dashboard can graph usage over time and surface where tokens go.
+	usageStore, err := usage.NewStore(filepath.Join(cfg.Prism.DataDir, "usage.db"))
+	if err != nil {
+		fmt.Printf("  Warning: usage tracker failed: %v\n", err)
+		usageStore = nil
+	} else {
+		provReg.SetUsageRecorder(usage.NewRecorder(usageStore))
+		defer usageStore.Close()
+		fmt.Println("  Usage tracker: ready")
+	}
+
+	dbPath := filepath.Join(cfg.Prism.DataDir, "sessions.db")
 	sessMgr, err := session.NewManager(
 		dbPath,
 		cfg.Sessions.MaxContextMessages,
@@ -550,7 +568,7 @@ func executeServe(args []string) {
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
 			toolExec = tool.NewExecutor(toolReg, toolPolicy)
-			toolExec.SetApprovalStore(approval.NewStore("runs"))
+			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
 
 			convCtx := &conversationContext{
 				router:      rtr,
@@ -674,6 +692,12 @@ func executeServe(args []string) {
 		ConfigPath:         *configPath,
 		SchedulerActions:   schedulerActionList(),
 		StaticUI:           staticUI,
+		Usage:              usageStore,
+		UsageWindows:       usageWindowsFromConfig(cfg),
+		Workspace:          cfg.Prism.Workspace,
+
+		MaxRequestBytes:       cfg.API.MaxRequestBytes,
+		MaxWorkspaceFileBytes: cfg.API.MaxWorkspaceFileBytes,
 	})
 	go func() {
 		if err := apiServer.Start(); err != nil {
@@ -1852,6 +1876,35 @@ func codexConfigFromOrchestrator(cfg orchestrator.CodexConfig, root *orchestrato
 		ExtraArgs:      append([]string(nil), cfg.ExtraArgs...),
 		DataDir:        dataDir,
 	}
+}
+
+// usageWindowsFromConfig builds the usage tracker's range→window/bucket map,
+// starting from the built-in defaults and applying any prism.yaml overrides.
+// Durations were already validated by Config.Validate, so parse failures here
+// are treated defensively (the offending field is left at its default).
+func usageWindowsFromConfig(cfg *orchestrator.Config) map[string]api.WindowSpec {
+	windows := api.DefaultUsageWindows()
+	for _, o := range cfg.Usage.Windows {
+		spec, ok := windows[o.Range]
+		if !ok {
+			continue
+		}
+		if o.Bucket != "" {
+			if d, err := time.ParseDuration(o.Bucket); err == nil && d > 0 {
+				spec.BucketMs = d.Milliseconds()
+				spec.Bucket = o.Bucket
+			}
+		}
+		// window applies only to fixed ranges (session/lifetime derive their lower
+		// bound from process start / epoch).
+		if o.Window != "" && spec.Kind == "fixed" {
+			if d, err := time.ParseDuration(o.Window); err == nil && d > 0 {
+				spec.WindowMs = d.Milliseconds()
+			}
+		}
+		windows[o.Range] = spec
+	}
+	return windows
 }
 
 // createOllamaProvider creates an Ollama provider instance.
