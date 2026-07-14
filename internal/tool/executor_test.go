@@ -13,7 +13,7 @@ func TestExecutorEchoApproved(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg, ".", 1024*1024)
 	cfg := DefaultPolicyConfig()
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 
 	var events []string
 	exec.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -47,7 +47,7 @@ func TestExecutorDeniedTool(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg, ".", 1024*1024)
 	cfg := DefaultPolicyConfig()
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 
 	var events []string
 	exec.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -84,7 +84,7 @@ func TestExecutorPathTraversalDenied(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg, tmpDir, 1024*1024)
 	cfg := PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 
 	var events []string
 	exec.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -120,7 +120,7 @@ func TestExecutorListDirWithinRoot(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg, tmpDir, 1024*1024)
 	cfg := PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 
 	var events []string
 	exec.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -152,7 +152,7 @@ func TestExecutorWriteFileDryRunNoDiskWrite(t *testing.T) {
 	reg := NewRegistry()
 	RegisterBuiltins(reg, tmpDir, 1024*1024)
 	cfg := PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 
 	result, err := exec.ExecuteWithPolicy(context.Background(), "write_file_dry_run", "lumi", "prism", "corr_test", map[string]any{
 		"path":    "should_not_exist.txt",
@@ -190,7 +190,7 @@ func TestExecutorWriteFileProposalPersistsEmptyContentApproval(t *testing.T) {
 		MaxFileSize:   1024 * 1024,
 	}
 	store := approval.NewStore(runsDir)
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 	exec.SetApprovalStore(store)
 
 	result, err := exec.ExecuteWithPolicy(context.Background(), "write_file_proposal", "astraea", "prism", "corr_test", map[string]any{
@@ -238,7 +238,7 @@ func TestExecutorCreateDirectoryProposalPersistsApproval(t *testing.T) {
 		MaxFileSize:   1024 * 1024,
 	}
 	store := approval.NewStore(runsDir)
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 	exec.SetApprovalStore(store)
 
 	result, err := exec.ExecuteWithPolicy(context.Background(), "create_directory_proposal", "astraea", "prism", "corr_test", map[string]any{
@@ -275,7 +275,7 @@ func TestExecutorToolFailedEvent(t *testing.T) {
 	reg := NewRegistry()
 	// Don't register builtins — resolve will fail for unknown tools
 	cfg := DefaultPolicyConfig()
-	exec := NewExecutor(reg, cfg)
+	exec := NewExecutor(reg, &cfg)
 
 	var events []string
 	exec.SetEmitter(func(eventType, source string, payload map[string]any) {

@@ -576,7 +576,7 @@ func executeServe(args []string) {
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
-			toolExec = tool.NewExecutor(toolReg, toolPolicy)
+			toolExec = tool.NewExecutor(toolReg, &toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
 
 			convCtx := &conversationContext{

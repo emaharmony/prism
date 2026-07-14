@@ -1318,7 +1318,7 @@ func TestV3ToolCallSummaryInSummary(t *testing.T) {
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
 	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	executor := tool.NewExecutor(registry, policyConfig)
+	executor := tool.NewExecutor(registry, &policyConfig)
 
 	cfg := run.RunConfig{
 		Task:          "Test V3 tool call",
@@ -1384,7 +1384,7 @@ func TestV3ToolResultFileWritten(t *testing.T) {
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
 	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	executor := tool.NewExecutor(registry, policyConfig)
+	executor := tool.NewExecutor(registry, &policyConfig)
 
 	// Create test file
 	os.WriteFile(filepath.Join(tmpDir, "hello.txt"), []byte("hello from prism"), 0644)
@@ -1445,7 +1445,7 @@ func TestV3ToolEventsInEventLog(t *testing.T) {
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
 	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	executor := tool.NewExecutor(registry, policyConfig)
+	executor := tool.NewExecutor(registry, &policyConfig)
 
 	cfg := run.RunConfig{
 		Task:          "Test V3 tool events",
@@ -1514,7 +1514,7 @@ func TestV3ToolDeniedPolicy(t *testing.T) {
 	registry := tool.NewRegistry()
 	tool.RegisterBuiltins(registry, tmpDir, 1024*1024)
 	policyConfig := tool.PolicyConfig{WorkspaceRoot: tmpDir, MaxFileSize: 1024 * 1024}
-	executor := tool.NewExecutor(registry, policyConfig)
+	executor := tool.NewExecutor(registry, &policyConfig)
 
 	// Request a tool that should be denied (nonexistent tool)
 	// V60: Shell tool is now a valid tool that requires approval.

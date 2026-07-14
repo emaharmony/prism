@@ -15,7 +15,7 @@ import (
 // event log for auditability.
 type Executor struct {
 	Registry        *Registry
-	Policy          PolicyConfig
+	Policy          *PolicyConfig
 	PolicyEvaluator PolicyEvaluatorFunc // V8: central policy engine (optional)
 	ApprovalStore   ApprovalStorer      // Optional persistence for approval-gated tools.
 	// Emit is called to record events. If nil, events are silently dropped.
@@ -32,7 +32,7 @@ type ApprovalStorer interface {
 type PolicyEvaluatorFunc func(action string, resource policy.Resource, context policy.Context) policy.PolicyDecision
 
 // NewExecutor creates an executor with the given registry and policy config.
-func NewExecutor(registry *Registry, policy PolicyConfig) *Executor {
+func NewExecutor(registry *Registry, policy *PolicyConfig) *Executor {
 	return &Executor{
 		Registry: registry,
 		Policy:   policy,
@@ -118,7 +118,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	}
 
 	// Evaluate policy
-	policyResult := EvaluatePolicyForAgent(e.Policy, toolName, agent, execInput)
+	policyResult := EvaluatePolicyForAgent(*e.Policy, toolName, agent, execInput)
 
 	// Handle requires_approval — this is not a denial, it's a request for human approval
 	if policyResult.Decision == PolicyRequiresApproval {
