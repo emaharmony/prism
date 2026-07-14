@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -27,6 +28,27 @@ type ModelInfo struct {
 	ProviderName  string    `json:"provider_name"` // e.g., "ollama", "openai"
 }
 
+// UsageRecord is one per-call token-usage sample handed to a UsageRecorder.
+// Provider and Model reflect the backend that actually served the response
+// (after failover), not the configured primary.
+type UsageRecord struct {
+	Agent            string
+	Provider         string
+	Model            string
+	Source           string // optional; inferred from RunID when empty
+	RunID            string
+	ConversationID   string
+	PromptTokens     int
+	CompletionTokens int
+}
+
+// UsageRecorder receives token usage for each successful chat generation routed
+// through a per-agent provider. Implemented by internal/usage; kept as an
+// interface here so the provider package stays free of a storage dependency.
+type UsageRecorder interface {
+	RecordUsage(u UsageRecord)
+}
+
 // ProviderRegistry maps model IDs to their Provider instances and metadata.
 // Thread-safe. Use Register() to add providers, Get() to look them up.
 type ProviderRegistry struct {
@@ -35,6 +57,7 @@ type ProviderRegistry struct {
 	models    map[string]ModelInfo      // model ID → metadata
 	chains    map[string]*ChainProvider // chain name → chain
 	agents    map[string]Provider       // agent ID → per-agent failover provider
+	recorder  UsageRecorder             // optional token-usage sink (nil = off)
 }
 
 // NewProviderRegistry creates an empty registry.
@@ -65,6 +88,15 @@ func (r *ProviderRegistry) RegisterAgent(agentID string, p Provider) {
 	r.agents[agentID] = p
 }
 
+// SetUsageRecorder installs a token-usage sink. Chat providers resolved via
+// GetChatProviderForAgent are then wrapped so every successful ChatGenerate is
+// recorded. Passing nil disables recording.
+func (r *ProviderRegistry) SetUsageRecorder(rec UsageRecorder) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.recorder = rec
+}
+
 // GetForAgent returns the per-agent provider when one is registered, falling
 // back to the model provider for callers that do not use agent failover.
 func (r *ProviderRegistry) GetForAgent(agentID, modelID string) (Provider, error) {
@@ -81,6 +113,9 @@ func (r *ProviderRegistry) GetForAgent(agentID, modelID string) (Provider, error
 }
 
 // GetChatProviderForAgent resolves a native-chat capable per-agent provider.
+// When a usage recorder is installed, the returned provider is wrapped so each
+// successful ChatGenerate is recorded (attributed to the actual serving
+// provider/model after failover).
 func (r *ProviderRegistry) GetChatProviderForAgent(agentID, modelID string) (ChatProvider, error) {
 	p, err := r.GetForAgent(agentID, modelID)
 	if err != nil {
@@ -90,7 +125,48 @@ func (r *ProviderRegistry) GetChatProviderForAgent(agentID, modelID string) (Cha
 	if !ok {
 		return nil, fmt.Errorf("provider for %s does not support chat generation with tool calling", modelID)
 	}
+	r.mu.RLock()
+	rec := r.recorder
+	r.mu.RUnlock()
+	if rec != nil {
+		return &recordingChatProvider{inner: chatProv, agentID: agentID, modelID: modelID, rec: rec}, nil
+	}
 	return chatProv, nil
+}
+
+// recordingChatProvider decorates a ChatProvider to report token usage after
+// each successful call. It attributes usage to resp.Provider/resp.Model when the
+// backend set them (failover annotates the serving target), falling back to the
+// configured model ID otherwise.
+type recordingChatProvider struct {
+	inner   ChatProvider
+	agentID string
+	modelID string
+	rec     UsageRecorder
+}
+
+func (p *recordingChatProvider) ChatGenerate(ctx context.Context, req ChatGenerateRequest) (ChatGenerateResponse, error) {
+	resp, err := p.inner.ChatGenerate(ctx, req)
+	if err != nil {
+		return resp, err
+	}
+	model := resp.Model
+	if model == "" {
+		model = p.modelID
+	}
+	agent := req.Agent
+	if agent == "" {
+		agent = p.agentID
+	}
+	p.rec.RecordUsage(UsageRecord{
+		Agent:            agent,
+		Provider:         resp.Provider,
+		Model:            model,
+		RunID:            req.RunID,
+		PromptTokens:     resp.PromptTokens,
+		CompletionTokens: resp.OutputTokens,
+	})
+	return resp, nil
 }
 
 // Get returns the provider for a model ID.

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	prismctx "github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/scheduler"
 )
@@ -143,7 +144,7 @@ func (s *Server) handleConfigSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p settingsPatch
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&p); err != nil {
 		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -240,7 +241,7 @@ func (s *Server) handleConfigScheduler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p schedulerPatch
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&p); err != nil {
 		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -335,6 +336,129 @@ func (s *Server) handleSchedulerActions(w http.ResponseWriter, r *http.Request) 
 		actions = []SchedulerAction{}
 	}
 	writeJSON(w, map[string]any{"actions": actions})
+}
+
+// --- GET /api/v1/config/agents -----------------------------------------------
+
+type agentView struct {
+	ID                  string            `json:"id"`
+	Role                string            `json:"role"`
+	Provider            string            `json:"provider"`
+	Model               string            `json:"model"`
+	Primary             bool              `json:"primary"`
+	Context             []string          `json:"context"`
+	ConversationPostfix string            `json:"conversation_postfix"`
+	StateActions        map[string]string `json:"state_actions"` // key -> inject text
+	Capabilities        []string          `json:"capabilities"`
+}
+
+func (s *Server) handleConfigAgents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.configPath == "" {
+		writeJSONError(w, "config editing not available (no config path)", http.StatusBadRequest)
+		return
+	}
+	cfg, err := orchestrator.LoadConfig(s.configPath)
+	if err != nil {
+		writeJSONError(w, "load config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	agents := make([]agentView, 0, len(cfg.Agents))
+	for _, a := range cfg.Agents {
+		sa := map[string]string{}
+		for k, v := range a.StateActions {
+			sa[k] = v.Inject
+		}
+		agents = append(agents, agentView{
+			ID: a.ID, Role: a.Role, Provider: a.Provider, Model: a.Model,
+			Primary: a.Primary, Context: a.Context,
+			ConversationPostfix: a.ConversationPostfix,
+			StateActions:        sa, Capabilities: a.Capabilities,
+		})
+	}
+	// Advertise the known context source keys so the UI can offer a picker.
+	available := make([]string, 0, len(prismctx.NamedSources))
+	for key := range prismctx.NamedSources {
+		available = append(available, key)
+	}
+	sort.Strings(available)
+	writeJSON(w, map[string]any{
+		"agents":             agents,
+		"available_contexts": available,
+		"config_path":        s.configPath,
+	})
+}
+
+// --- PUT /api/v1/config/agents/{id} ------------------------------------------
+
+// agentPatch is a partial update of one agent's personality/interaction fields.
+// Only non-nil fields are written; the rest of the agent (and every other agent)
+// is left untouched via orchestrator.SetAgentFields.
+type agentPatch struct {
+	ConversationPostfix *string            `json:"conversation_postfix"`
+	Context             *[]string          `json:"context"`
+	StateActions        *map[string]string `json:"state_actions"`
+}
+
+func (s *Server) handleConfigAgentUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.configPath == "" {
+		writeJSONError(w, "config editing not available (no config path)", http.StatusBadRequest)
+		return
+	}
+	agentID := strings.TrimPrefix(r.URL.Path, "/api/v1/config/agents/")
+	if agentID == "" || strings.Contains(agentID, "/") {
+		writeJSONError(w, "agent id required", http.StatusBadRequest)
+		return
+	}
+
+	var p agentPatch
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&p); err != nil {
+		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	fields := map[string]any{}
+	if p.ConversationPostfix != nil {
+		fields["conversation_postfix"] = *p.ConversationPostfix
+	}
+	if p.Context != nil {
+		fields["context"] = *p.Context
+	}
+	if p.StateActions != nil {
+		// Marshal back into the on-disk {key: {inject: text}} shape.
+		out := map[string]map[string]string{}
+		for k, v := range *p.StateActions {
+			out[k] = map[string]string{"inject": v}
+		}
+		fields["state_actions"] = out
+	}
+	if len(fields) == 0 {
+		writeJSONError(w, "no editable fields provided", http.StatusBadRequest)
+		return
+	}
+
+	src, err := os.ReadFile(s.configPath)
+	if err != nil {
+		writeJSONError(w, "read config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	src, err = orchestrator.SetAgentFields(src, agentID, fields)
+	if err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := orchestrator.ValidateAndWrite(s.configPath, src); err != nil {
+		writeJSONError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"status": "saved", "path": s.configPath, "agent": agentID, "restart_required": true})
 }
 
 func deref(p *string) string {

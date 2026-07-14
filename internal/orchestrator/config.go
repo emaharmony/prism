@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/emaharmony/prism/internal/agent"
+	"github.com/emaharmony/prism/internal/cost"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,6 +31,12 @@ type Config struct {
 
 	// API configures HTTP API authentication and CORS.
 	API APIServerConfig `yaml:"api"`
+
+	// Cost configures per-model token pricing overrides used for cost estimation.
+	Cost CostConfig `yaml:"cost"`
+
+	// Usage configures the dashboard token-usage tracker's time windows.
+	Usage UsageConfig `yaml:"usage"`
 
 	// Bridge configures signed cross-Prism protocol subjects.
 	Bridge BridgeConfig `yaml:"bridge"`
@@ -107,6 +114,12 @@ type PrismConfig struct {
 	// DataDir is where SQLite databases and run artifacts are stored.
 	DataDir string `yaml:"data_dir"`
 
+	// RunsDir is the directory where per-run artifacts and approval records are
+	// written. Relative to the working directory unless absolute. Default "runs".
+	// Kept separate from DataDir because the `prism approval`/`prism runs` CLIs
+	// read this tree (default ./runs); change it here to relocate both writers.
+	RunsDir string `yaml:"runs_dir"`
+
 	// Workspace is the root directory for context injection (SOUL.md, AGENTS.md, etc.).
 	// Defaults to $HOME/.openclaw/workspace if empty.
 	Workspace string `yaml:"workspace"`
@@ -176,6 +189,14 @@ type APIServerConfig struct {
 	// Empty means no cross-origin requests are permitted (same-origin only).
 	// Use "*" only for trusted local development.
 	AllowedOrigins []string `yaml:"allowed_origins"`
+
+	// MaxRequestBytes caps the JSON request body accepted on mutating API
+	// endpoints (invoke, editor, config, workflow, …). Default 1048576 (1 MiB).
+	MaxRequestBytes int64 `yaml:"max_request_bytes"`
+
+	// MaxWorkspaceFileBytes caps a single workspace markdown file write via the
+	// workspace editor endpoint. Default 4194304 (4 MiB).
+	MaxWorkspaceFileBytes int64 `yaml:"max_workspace_file_bytes"`
 }
 
 // ResolveAuthToken returns the effective API bearer token, preferring the
@@ -187,6 +208,51 @@ func (a APIServerConfig) ResolveAuthToken() string {
 		}
 	}
 	return a.AuthToken
+}
+
+// CostConfig configures token-cost estimation overrides.
+type CostConfig struct {
+	// Pricing overrides or extends the built-in per-model price table. The key is
+	// the model ID; values are USD per 1K tokens. Models omitted here keep their
+	// built-in price (or are treated as free/local if unknown).
+	Pricing map[string]ModelPricing `yaml:"pricing"`
+}
+
+// ModelPricing is a per-model price override in USD per 1K tokens.
+type ModelPricing struct {
+	Input  float64 `yaml:"input"`  // prompt price per 1K tokens
+	Output float64 `yaml:"output"` // completion price per 1K tokens
+}
+
+// CostPricingOverrides converts the configured pricing table into the form the
+// cost package consumes. Returns nil when no overrides are configured.
+func (c *Config) CostPricingOverrides() map[string]cost.ModelPrice {
+	if c == nil || len(c.Cost.Pricing) == 0 {
+		return nil
+	}
+	out := make(map[string]cost.ModelPrice, len(c.Cost.Pricing))
+	for model, p := range c.Cost.Pricing {
+		out[model] = cost.ModelPrice{Input: p.Input, Output: p.Output}
+	}
+	return out
+}
+
+// UsageConfig configures the dashboard token-usage tracker's time windows.
+type UsageConfig struct {
+	// Windows overrides the built-in range→window/bucket mapping. Each entry names
+	// a range (session|day|week|month|year|lifetime) and its lookback window and
+	// bucket width as Go durations (e.g. window "168h", bucket "6h"). Days are
+	// expressed in hours (30d = "720h"). Ranges omitted here keep their defaults.
+	// The session range ignores window (it always starts at process start) and
+	// lifetime ignores window (it always starts at 0); both still honor bucket.
+	Windows []UsageWindowConfig `yaml:"windows"`
+}
+
+// UsageWindowConfig overrides one usage range's window and bucket width.
+type UsageWindowConfig struct {
+	Range  string `yaml:"range"`  // session|day|week|month|year|lifetime
+	Window string `yaml:"window"` // lookback duration (Go duration); ignored for session/lifetime
+	Bucket string `yaml:"bucket"` // bucket width (Go duration)
 }
 
 // IsLoopbackHost reports whether host refers to the loopback interface.
@@ -734,10 +800,15 @@ func DefaultConfig() *Config {
 			Port:               8321,
 			BindHost:           "127.0.0.1",
 			DataDir:            filepath.Join(os.Getenv("HOME"), ".prism", "data"),
+			RunsDir:            "runs",
 			OllamaURL:          "http://localhost:11434",
 			LogLevel:           "info",
 			ContextTokenBudget: 4000,
 			LLMTimeoutSeconds:  1200,
+		},
+		API: APIServerConfig{
+			MaxRequestBytes:       1 << 20, // 1 MiB
+			MaxWorkspaceFileBytes: 4 << 20, // 4 MiB
 		},
 		Sessions: SessionConfig{
 			IdleTimeoutMinutes:     30,
@@ -956,6 +1027,47 @@ func (c *Config) Validate() error {
 	}
 	if c.Remembrance.TimeoutSeconds < 0 {
 		return fmt.Errorf("config: remembrance.timeout_seconds must be >= 0")
+	}
+	if c.Prism.RunsDir == "" {
+		c.Prism.RunsDir = "runs"
+	}
+	// API request-body caps: default when unset, reject negatives.
+	if c.API.MaxRequestBytes == 0 {
+		c.API.MaxRequestBytes = 1 << 20
+	}
+	if c.API.MaxRequestBytes < 0 {
+		return fmt.Errorf("config: api.max_request_bytes must be > 0")
+	}
+	if c.API.MaxWorkspaceFileBytes == 0 {
+		c.API.MaxWorkspaceFileBytes = 4 << 20
+	}
+	if c.API.MaxWorkspaceFileBytes < 0 {
+		return fmt.Errorf("config: api.max_workspace_file_bytes must be > 0")
+	}
+	// Cost pricing overrides must be non-negative (0 = free/local is valid).
+	for model, p := range c.Cost.Pricing {
+		if p.Input < 0 || p.Output < 0 {
+			return fmt.Errorf("config: cost.pricing[%q] input/output must be >= 0", model)
+		}
+	}
+	// Usage windows: validate range keys, and that windows/buckets parse.
+	for i, w := range c.Usage.Windows {
+		switch w.Range {
+		case "session", "day", "week", "month", "year", "lifetime":
+		default:
+			return fmt.Errorf("config: usage.windows[%d].range %q must be one of session|day|week|month|year|lifetime", i, w.Range)
+		}
+		if w.Bucket != "" {
+			if d, err := time.ParseDuration(w.Bucket); err != nil || d <= 0 {
+				return fmt.Errorf("config: usage.windows[%d].bucket %q must be a positive Go duration", i, w.Bucket)
+			}
+		}
+		// window is ignored for session/lifetime, but validate it when present.
+		if w.Window != "" && w.Range != "session" && w.Range != "lifetime" {
+			if d, err := time.ParseDuration(w.Window); err != nil || d <= 0 {
+				return fmt.Errorf("config: usage.windows[%d].window %q must be a positive Go duration", i, w.Window)
+			}
+		}
 	}
 	for i, p := range c.Projects {
 		if p.TokenBudget < -1 {

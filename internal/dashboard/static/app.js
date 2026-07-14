@@ -3,8 +3,8 @@
   const API = '/api/v1';
   const labels = {
     '/index.html': 'Overview', '/': 'Overview', '/v2.html': 'Operations',
-    '/workflow-editor.html': 'Workflow', '/editor.html': 'Agents',
-    '/scheduler.html': 'Scheduler', '/config.html': 'Settings'
+    '/usage.html': 'Usage', '/workflow-editor.html': 'Workflow', '/editor.html': 'Agents',
+    '/workspace.html': 'Workspace', '/scheduler.html': 'Scheduler', '/config.html': 'Settings'
   };
 
   function escape(value) {

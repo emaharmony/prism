@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -136,6 +137,73 @@ func findMapEntry(mapping *yaml.Node, key string) (*yaml.Node, *yaml.Node) {
 		}
 	}
 	return nil, nil
+}
+
+// SetAgentFields surgically sets the given fields on the agent whose `id` equals
+// agentID, within the top-level `agents:` sequence. Only the named keys on that
+// one sequence item are touched — every other agent, key, comment, and ordering
+// is preserved. Returns an error if `agents` is missing/not a sequence or no
+// item has the matching id.
+//
+// fields keys are YAML key names (e.g. "conversation_postfix", "context",
+// "state_actions"); values are encoded via toNode.
+func SetAgentFields(src []byte, agentID string, fields map[string]any) ([]byte, error) {
+	if agentID == "" {
+		return nil, fmt.Errorf("configedit: empty agent id")
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(src, &doc); err != nil {
+		return nil, fmt.Errorf("configedit: parse source yaml: %w", err)
+	}
+	root := documentRoot(&doc)
+
+	_, agentsVal := findMapEntry(root, "agents")
+	if agentsVal == nil || agentsVal.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("configedit: no agents sequence in config")
+	}
+
+	var target *yaml.Node
+	for _, item := range agentsVal.Content {
+		if item.Kind != yaml.MappingNode {
+			continue
+		}
+		if _, idVal := findMapEntry(item, "id"); idVal != nil && idVal.Value == agentID {
+			target = item
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("configedit: agent %q not found", agentID)
+	}
+
+	// Set keys in a stable order so diffs are deterministic.
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		valNode, err := toNode(fields[k])
+		if err != nil {
+			return nil, fmt.Errorf("configedit: encode agent field %q: %w", k, err)
+		}
+		if _, existing := findMapEntry(target, k); existing != nil {
+			*existing = *valNode
+		} else {
+			target.Content = append(target.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: k},
+				valNode)
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, fmt.Errorf("configedit: re-encode: %w", err)
+	}
+	enc.Close()
+	return buf.Bytes(), nil
 }
 
 // ValidateAndWrite validates newBytes as a full prism.yaml (via the same loader

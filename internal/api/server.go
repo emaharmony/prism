@@ -29,7 +29,13 @@
 //	DELETE /api/v1/editor/edges/{id} — Delete an edge
 //	POST /api/v1/editor/save     — Validate + generate YAML
 //	GET /api/v1/costs             — Cost summary
+//	GET /api/v1/usage             — Token-usage time series + breakdowns (?range=)
 //	GET /api/v1/config            — Curated prism.yaml settings + scheduler jobs
+//	GET /api/v1/config/agents     — Per-agent editable fields
+//	PUT /api/v1/config/agents/{id} — Surgically edit one agent's personality/rules
+//	GET /api/v1/workspace/files   — List shared workspace markdown files
+//	GET /api/v1/workspace/files/{name} — Read one workspace file
+//	PUT /api/v1/workspace/files/{name} — Write one workspace file (jailed, atomic)
 //	PUT /api/v1/config/settings   — Surgically edit curated prism.yaml settings
 //	PUT /api/v1/config/scheduler  — Surgically edit prism.scheduler jobs
 //	POST /api/v1/config/cron/validate — Validate a cron expression
@@ -64,6 +70,7 @@ import (
 	"github.com/emaharmony/prism/internal/session"
 	"github.com/emaharmony/prism/internal/sessionreset"
 	"github.com/emaharmony/prism/internal/task"
+	"github.com/emaharmony/prism/internal/usage"
 	"github.com/emaharmony/prism/internal/workflow"
 	v2 "github.com/emaharmony/prism/internal/workflow/v2"
 	"github.com/emaharmony/prism/internal/workstart"
@@ -109,6 +116,18 @@ type Server struct {
 	// staticUI serves the embedded dashboard pages at / when non-nil (folded
 	// into `prism serve`).
 	staticUI http.Handler
+	// usage is the token-usage store backing GET /api/v1/usage. Nil → 503.
+	usage *usage.Store
+	// usageWindows maps a usage range key to its window/bucket spec. Nil → the
+	// built-in DefaultUsageWindows.
+	usageWindows map[string]WindowSpec
+	// workspace is the root directory the workspace file editor reads/writes
+	// (jailed). Empty → workspace file endpoints 400.
+	workspace string
+	// maxRequestBytes caps the JSON body on mutating endpoints. 0 → 1 MiB.
+	maxRequestBytes int64
+	// maxWorkspaceFileBytes caps a single workspace file write. 0 → 4 MiB.
+	maxWorkspaceFileBytes int64
 }
 
 // SchedulerAction describes a wake action a cron job can trigger. Presented in
@@ -151,6 +170,18 @@ type Config struct {
 	SchedulerActions []SchedulerAction
 	// StaticUI, when non-nil, serves the embedded dashboard pages at /.
 	StaticUI http.Handler
+	// Usage is the token-usage store backing GET /api/v1/usage. Nil disables it.
+	Usage *usage.Store
+	// UsageWindows overrides the range→window/bucket mapping for GET
+	// /api/v1/usage. Nil uses DefaultUsageWindows.
+	UsageWindows map[string]WindowSpec
+	// Workspace is the root directory the workspace file editor reads/writes.
+	// Empty disables the workspace file endpoints.
+	Workspace string
+	// MaxRequestBytes caps the JSON body on mutating endpoints. 0 → 1 MiB.
+	MaxRequestBytes int64
+	// MaxWorkspaceFileBytes caps a single workspace file write. 0 → 4 MiB.
+	MaxWorkspaceFileBytes int64
 }
 
 // AutoPatchStarter is the API surface needed from the autopatch service.
@@ -178,10 +209,25 @@ func NewServer(cfg Config) *Server {
 		configPath:         cfg.ConfigPath,
 		schedulerActions:   cfg.SchedulerActions,
 		staticUI:           cfg.StaticUI,
+		usage:              cfg.Usage,
+		usageWindows:       cfg.UsageWindows,
+		workspace:          cfg.Workspace,
 		providers:          cfg.Providers,
 		invocations:        invocation.NewStore(),
 		invokeIdleTimeout:  cfg.InvokeIdleTimeout,
 		mux:                http.NewServeMux(),
+
+		maxRequestBytes:       cfg.MaxRequestBytes,
+		maxWorkspaceFileBytes: cfg.MaxWorkspaceFileBytes,
+	}
+	if s.maxRequestBytes <= 0 {
+		s.maxRequestBytes = 1 << 20 // 1 MiB
+	}
+	if s.maxWorkspaceFileBytes <= 0 {
+		s.maxWorkspaceFileBytes = 4 << 20 // 4 MiB
+	}
+	if s.usageWindows == nil {
+		s.usageWindows = DefaultUsageWindows()
 	}
 	s.routes()
 	return s
@@ -214,6 +260,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/editor/edges/", s.handleEditorEdgeCRUD)
 	s.mux.HandleFunc("/api/v1/editor/save", s.handleEditorSave)
 	s.mux.HandleFunc("/api/v1/costs", s.handleCosts)
+	s.mux.HandleFunc("/api/v1/usage", s.handleUsage)
 
 	// Config + scheduler editors (write prism.yaml surgically).
 	s.mux.HandleFunc("/api/v1/config", s.handleConfig)
@@ -221,6 +268,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/config/scheduler", s.handleConfigScheduler)
 	s.mux.HandleFunc("/api/v1/config/cron/validate", s.handleCronValidate)
 	s.mux.HandleFunc("/api/v1/config/actions", s.handleSchedulerActions)
+	s.mux.HandleFunc("/api/v1/config/agents", s.handleConfigAgents)
+	s.mux.HandleFunc("/api/v1/config/agents/", s.handleConfigAgentUpdate)
+
+	// Workspace markdown editor (shared context files).
+	s.mux.HandleFunc("/api/v1/workspace/files", s.handleWorkspaceFiles)
+	s.mux.HandleFunc("/api/v1/workspace/files/", s.handleWorkspaceFile)
 
 	// Serve the embedded dashboard UI at / when wired (folded into `prism
 	// serve`). Specific /api/v1/... patterns above win under ServeMux
@@ -483,7 +536,7 @@ func (s *Server) handleAgentInvoke(w http.ResponseWriter, r *http.Request, agent
 	}
 
 	var req invokeRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -832,7 +885,7 @@ func (s *Server) handleWorkflowStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req workstart.Request
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&req); err != nil {
 		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1001,7 +1054,7 @@ func (s *Server) handleWorkflowConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var cfg v2.WorkflowConfig
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&cfg); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&cfg); err != nil {
 			writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -1049,7 +1102,7 @@ func (s *Server) handleWorkflowFeedback(w http.ResponseWriter, r *http.Request) 
 		WorkflowID string         `json:"workflow_id"`
 		Dimensions map[string]any `json:"dimensions"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&req); err != nil {
 		writeJSONError(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1086,7 +1139,7 @@ func (s *Server) handleAutoPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req autopatch.Request
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1462,7 +1515,7 @@ func (s *Server) getEditorState(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putEditorState(w http.ResponseWriter, r *http.Request) {
 	var state editor.EditorState
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&state); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&state); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1502,7 +1555,7 @@ func (s *Server) handleEditorNodes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 	var node editor.EditorNode
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&node); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&node); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1537,7 +1590,7 @@ func (s *Server) handleEditorNodeCRUD(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateNode(w http.ResponseWriter, r *http.Request, id string) {
 	var updates editor.NodeUpdate
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&updates); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&updates); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1577,7 +1630,7 @@ func (s *Server) handleEditorEdges(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addEdge(w http.ResponseWriter, r *http.Request) {
 	var edge editor.EditorEdge
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&edge); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&edge); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1656,7 +1709,7 @@ func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 		Confirm bool   `json:"confirm"`
 		Path    string `json:"path"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.maxRequestBytes)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}

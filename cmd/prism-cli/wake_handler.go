@@ -93,7 +93,7 @@ var knownActions = map[string]wakeAction{
 5. Be concise — this is a status report, not a novel
 
 If everything looks good, say so briefly. If something needs attention, flag it clearly.`,
-		ChannelID: "1491622581348864162", // manager-room
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 2048,
 	},
 	"memory_consolidation": {
@@ -104,7 +104,7 @@ If everything looks good, say so briefly. If something needs attention, flag it 
 4. Be concise — this is a consolidation report
 
 Focus on what matters. Skip trivia.`,
-		ChannelID: "1491622581348864162", // manager-room
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 1024,
 	},
 	"check_prs": {
@@ -114,13 +114,13 @@ Focus on what matters. Skip trivia.`,
 3. If no PRs are open, say "No open PRs" and nothing else
 
 Be concise — this is a status report, not a novel.`,
-		ChannelID: "1491622581348864162", // manager-room
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 1024,
 		SkipLLM:   true, // Run gh pr list directly, then optionally summarize
 	},
 	"factory_status_digest": {
 		Prompt:    `Report the current Roblox Factory queue status.`,
-		ChannelID: "1496591599940010055",
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 512,
 		SkipLLM:   true,
 	},
@@ -156,12 +156,12 @@ Look for:
 - If unsure about a change, propose it as an improvement rather than auto-PR
 
 Be thorough, proactive, and fast. START WITH A TOOL CALL, not prose.`,
-		ChannelID: "1491622581348864162", // manager-room
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 2048,
 	},
 	"status_report": {
 		Prompt:    `Generate a 2-hour status report (project state, recent runs, git activity).`,
-		ChannelID: "1496591599940010055", // manager-room (configured in prism.yaml)
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 1024,
 		SkipLLM:   true, // Reads run summaries + PROJECT_STATE.md directly
 	},
@@ -177,7 +177,7 @@ Be thorough, proactive, and fast. START WITH A TOOL CALL, not prose.`,
    e. If it needs Ema's approval, send a clear notification with the details
 3. Dismiss duplicates or stale proposals
 4. Be concise — list proposals with status and recommended action`,
-		ChannelID: "1491622581348864162", // manager-room
+		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 1024,
 	},
 	"project_work": {
@@ -192,7 +192,7 @@ Be thorough, proactive, and fast. START WITH A TOOL CALL, not prose.`,
 2. IMPLEMENTATION: Pick the topmost unchecked task. Create a feature branch (feature/bb-{task-slug}). Implement the change. Run self-review via git_diff. Fix obvious errors. Stage, commit, and push. Mark the task [x] in PROJECT_STATE.md only AFTER the review passes.
 
 Work fast and decisively. Don't overthink — implement, review, push. If you get stuck, report the blocker and move on.`,
-		ChannelID: "1491622581348864162", // manager-room (fallback; project.channel preferred)
+		ChannelID: "1491622863118008431", // scheduled-reports destination (fallback; project.channel preferred)
 		MaxTokens: 4096,
 	},
 }
@@ -549,7 +549,7 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 		log.Printf("[WAKE] WARN unknown action %q, using generic prompt", action)
 		actionDef = wakeAction{
 			Prompt:    fmt.Sprintf("You received a scheduled event with action %q. Check your state and report anything that needs attention.", action),
-			ChannelID: "1491622581348864162",
+			ChannelID: "1491622863118008431", // scheduled-reports destination
 			MaxTokens: 1024,
 		}
 	}
@@ -1321,7 +1321,7 @@ func (wh *WakeHandler) postToDiscord(message string) {
 		log.Printf("[V2-NATURAL-GATES] no bot, cannot post to Discord")
 		return
 	}
-	channelID := "1491622581348864162" // manager-room
+	channelID := "1491622863118008431" // scheduled-reports destination
 	wh.bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
 		Content:   message,
