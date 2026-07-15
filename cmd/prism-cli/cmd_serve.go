@@ -1646,23 +1646,21 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 		}
 	}
 
-	// --- Layer 3: BEHAVIOR ---
-	// Conversation postfix (can be overridden by channel context at runtime)
-	postfix := agentCfg.ConversationPostfix
-	if postfix == "" {
-		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
-			"Don't wrap things up in a bow unless the topic is genuinely resolved. " +
-			"Be warm, curious, and engaged — not a transactional Q&A machine."
-	}
-	sb.WriteString("## How You Respond\n")
-	sb.WriteString(postfix + "\n\n")
-
-	// --- Layer 4: TOOLS (text-based path) ---
-	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
+	// Layer 3 (Behavior/"How You Respond") and Layer 4 (Tools) are NOT
+	// included in the text-path static cache below. Layer 3 depends on the
+	// resolved ChannelRole's Personality, which is only known per-message —
+	// both are computed dynamically in buildPrompt instead (see its doc
+	// comment for the full 1-9 layer list).
 
 	cc.staticSystemText = sb.String()
 
 	// --- ChatProvider path: same layered format ---
+	// NOTE: buildMessages() (tool_loop_chat.go) does not currently receive a
+	// ChannelRole at all, so this path cannot honor per-channel Personality
+	// yet — it keeps the prior agent-level-only postfix resolution below
+	// unchanged. Fixing that is a separate, larger change (giving the
+	// ChatProvider-native tool-calling path the same channel-context layers
+	// buildPrompt already has), not done here.
 	var sbChat strings.Builder
 	sbChat.WriteString("## Who You Are\n")
 	sbChat.WriteString(identityContent + "\n\n")
@@ -1692,6 +1690,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 		}
 	}
 
+	postfix := resolveConversationPostfix(agentCfg, nil)
 	sbChat.WriteString("\n## How You Respond\n")
 	sbChat.WriteString(postfix + "\n")
 	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
@@ -1703,19 +1702,30 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 // V33: Layered prompt assembly with explicit priority labels.
 //  1. Who You Are (identity from SOUL.md/IDENTITY.md)
 //  2. Context (workspace files, excluding identity)
-//  3. How You Respond (conversation postfix)
+//  3. How You Respond (conversation postfix; agent postfix > channel
+//     Personality > harness default — see resolveConversationPostfix)
 //  4. Tools (tool usage guidance)
 //  5. Working State (active task, decisions, blocked items)
 //  6. Active Plan (plan-first pipeline)
 //  7. Channel Context (where, who, what project, how to behave)
 //  8. Session Awareness (message count, age)
 //  9. Conversation History
+//
+// Layers 1-2 are cached (staticSystemText); layers 3-4 are computed fresh
+// each call because layer 3 depends on the resolved ChannelRole, which is
+// only known per-message.
 func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orchestrator.AgentConfig, stateActionKey string, channelRole *orchestrator.ChannelRole) string {
 	var sb strings.Builder
 
 	// Static system content (cached, built once at startup)
-	// Layers 1-4: Identity, Context, Behavior, Tools
+	// Layers 1-2: Identity, Context
 	sb.WriteString(cc.staticSystemText)
+
+	// --- Layer 3: BEHAVIOR ---
+	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n\n")
+
+	// --- Layer 4: TOOLS (text-based path) ---
+	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
 
 	// --- Layer 5: Working state injection ---
 	if cc.stateMgr != nil {
@@ -1740,6 +1750,7 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	// V33: Structured channel context replaces raw state_actions.inject.
 	// When a ChannelRole has a Context field, use that.
 	// When it doesn't, fall back to state_actions.inject for backward compatibility.
+	// Personality is handled in Layer 3 above, not here — see resolveConversationPostfix.
 	if channelRole != nil && channelRole.Context != "" {
 		sb.WriteString("\n## Channel: #" + channelRole.Role + "\n")
 		sb.WriteString(channelRole.Context + "\n\n")

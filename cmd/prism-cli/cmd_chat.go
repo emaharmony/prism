@@ -764,25 +764,12 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 		}
 	}
 
-	// --- Layer 3: BEHAVIOR ---
-	postfix := agentCfg.ConversationPostfix
-	if postfix == "" {
-		postfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
-			"Don't wrap things up unless the topic is genuinely resolved. " +
-			"Be warm, curious, and engaged — not a transactional Q&A machine."
-	}
-	sb.WriteString("## How You Respond\n")
-	sb.WriteString(postfix + "\n\n")
-
-	// --- Layer 4: TOOLS (text path) ---
-	if cc.toolExec != nil {
-		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
-		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
-		if len(toolInfos) > 0 {
-			sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
-			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...))
-		}
-	}
+	// Layer 3 (Behavior/"How You Respond") and Layer 4 (Tools) are NOT
+	// included in either static cache below — Layer 3 depends on the
+	// resolved ChannelRole's Personality, which is only known per-message.
+	// Both are computed dynamically in buildChatPrompt/buildChatMessages
+	// instead, which unlike serve mode's ChatProvider-native path both
+	// receive a ChannelRole.
 
 	cc.staticSystemText = sb.String()
 
@@ -816,10 +803,6 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 		}
 	}
 
-	sbChat.WriteString("\n## How You Respond\n")
-	sbChat.WriteString(postfix + "\n")
-	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
-
 	cc.staticSystemChat = sbChat.String()
 }
 
@@ -829,7 +812,21 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 	var sb strings.Builder
 
 	// Static system content (cached, built once at startup)
+	// Layers 1-2: Identity, Context
 	sb.WriteString(cc.staticSystemText)
+
+	// --- Layer 3: BEHAVIOR ---
+	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n\n")
+
+	// --- Layer 4: TOOLS (text path) ---
+	if cc.toolExec != nil {
+		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
+		if len(toolInfos) > 0 {
+			sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
+			sb.WriteString(agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...))
+		}
+	}
 
 	// V32: Working state injection (per-message, fresh state every time)
 	if cc.stateMgr != nil {
@@ -848,7 +845,8 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 		}
 	}
 
-	// V33: Channel context injection
+	// V33: Channel context injection. Personality is handled in Layer 3
+	// above, not here — see resolveConversationPostfix.
 	if channelRole != nil && channelRole.Context != "" {
 		sb.WriteString("\n## Channel: #" + channelRole.Role + "\n")
 		sb.WriteString(channelRole.Context + "\n\n")
@@ -887,8 +885,21 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 
 	// System message
 	// Static system content (cached, built once at startup)
+	// Layers 1-2: Identity, Context
 	var systemContent string
 	systemContent += cc.staticSystemChat
+
+	// --- Layer 3: BEHAVIOR ---
+	systemContent += "\n## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n"
+
+	// --- Layer 4: TOOLS ---
+	if cc.toolExec != nil {
+		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
+		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
+		if len(toolInfos) > 0 {
+			systemContent += "\n## Tool Usage\n" + toolUsageGuidance + "\n"
+		}
+	}
 
 	// V32: Working state injection (per-message, fresh state every time)
 	if cc.stateMgr != nil {
@@ -907,7 +918,8 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 		}
 	}
 
-	// V33: Channel context injection
+	// V33: Channel context injection. Personality is handled in Layer 3
+	// above, not here — see resolveConversationPostfix.
 	if channelRole != nil && channelRole.Context != "" {
 		systemContent += "\n## Channel: #" + channelRole.Role + "\n"
 		systemContent += channelRole.Context + "\n\n"

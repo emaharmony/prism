@@ -600,7 +600,8 @@ channel_roles:
   - id: "general"
     role: "manager-room"
     tools: "read-only"                # all, read-only, none
-    personality: "direct"
+    personality: "direct"             # direct, terse, bubbly, social — shapes "How You Respond";
+                                       # an agent's own conversation_postfix always takes priority
     context: "Coordination room for status and task triage."
 
 actions:

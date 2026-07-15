@@ -74,6 +74,14 @@ tag or GitHub Release has been created.
   completing on Windows (via two Windows-only `internal/tool` test
   failures); the coverage gate now passes end-to-end there (55.4%
   aggregate, all critical packages ≥80%).
+- `channel_roles[].personality` (`direct`/`terse`/`bubbly`/`social`) now
+  actually shapes agent tone instead of being a documented-but-unused field —
+  it was previously only logged, never injected into the prompt. It resolves
+  with priority: an agent's own explicit `conversation_postfix` always wins;
+  otherwise the channel's `personality` overrides the harness's own hardcoded
+  default ("Stay present... be warm, curious, and engaged..."), which
+  previously applied to every agent regardless of channel and pushed toward
+  cheery, chatty behavior whenever `conversation_postfix` was unset.
 
 ### Known issues going into this release
 
