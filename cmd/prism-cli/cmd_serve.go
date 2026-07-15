@@ -578,6 +578,25 @@ func executeServe(args []string) {
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
 			toolExec = tool.NewExecutor(toolReg, &toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
+			toolExec.SetEmitter(func(eventType, source string, payload map[string]any) {
+				log.Printf("[TOOL-EVENT] %s: %v", eventType, payload)
+				// Forward file approval requests to the Discord channel
+				if eventType == "prism.approval.file_requested" {
+					approvalID, _ := payload["approval_id"].(string)
+					runID, _ := payload["run_id"].(string)
+					targetPath, _ := payload["target_path"].(string)
+					agentName, _ := payload["agent"].(string)
+					preview, _ := payload["preview"].(string)
+					if approvalID != "" && runID != "" {
+						// Send approval card to the channel where the conversation is happening
+						// The channel ID is passed via the payload if available
+						channelID, _ := payload["_channel_id"].(string)
+						if channelID != "" && bot != nil {
+							sendFileApprovalCard(bot, channelID, approvalID, runID, targetPath, agentName, preview)
+						}
+					}
+				}
+			})
 
 			convCtx := &conversationContext{
 				router:      rtr,
@@ -629,6 +648,40 @@ func executeServe(args []string) {
 				nc := natsConn
 				bot.OnButton(func(customID, userID, userName string) {
 					log.Printf("[BUTTON] clicked: customID=%q user=%q(%s)", customID, userName, userID)
+
+					// File approval buttons (prismapprove: prefix)
+					if approvalID, runID, action, ok := decodeFileApprovalButtonID(customID); ok {
+						log.Printf("[BUTTON] file approval: approvalID=%s runID=%s action=%s", approvalID, runID, action)
+						store := approval.NewStore(cfg.Prism.RunsDir)
+						a, err := store.Load(runID, approvalID)
+						if err != nil {
+							log.Printf("[BUTTON] file approval: failed to load approval: %v", err)
+							return
+						}
+						if action == "approve" {
+							// Write the file to disk
+							if err := os.MkdirAll(filepath.Dir(a.TargetPath), 0755); err != nil {
+								log.Printf("[BUTTON] file approval: mkdir failed: %v", err)
+								return
+							}
+							if err := os.WriteFile(a.TargetPath, []byte(a.Content), 0644); err != nil {
+								log.Printf("[BUTTON] file approval: write failed: %v", err)
+								return
+							}
+							a.Status = approval.StatusApproved
+							a.ApprovedBy = firstNonEmptyCommandArg(userName, userID, "discord")
+							store.Save(a)
+							log.Printf("[BUTTON] file approval: APPROVED and written to %s by %s", a.TargetPath, a.ApprovedBy)
+						} else if action == "deny" {
+							a.Status = approval.StatusDenied
+							a.ApprovedBy = firstNonEmptyCommandArg(userName, userID, "discord")
+							store.Save(a)
+							log.Printf("[BUTTON] file approval: DENIED by %s", a.ApprovedBy)
+						}
+						return
+					}
+
+					// Workflow feedback buttons (prismfb: prefix)
 					payload, ok := feedbackButtonPayload(customID, firstNonEmptyCommandArg(userName, userID, "discord"))
 					if !ok {
 						log.Printf("[BUTTON] payload decode failed for customID=%q", customID)
@@ -2246,4 +2299,28 @@ func mcpServerSpecs(cfg *orchestrator.Config) []mcp.ServerSpec {
 		})
 	}
 	return specs
+}
+
+// sendFileApprovalCard sends a Discord message with Approve/Deny buttons for a file write approval.
+func sendFileApprovalCard(bot *discordbot.BotAdapter, channelID, approvalID, runID, targetPath, agentName, preview string) {
+	if bot == nil || channelID == "" {
+		return
+	}
+	buttons := buildFileApprovalButtons(approvalID, runID)
+	msgButtons := make([]discordbot.MessageButton, len(buttons))
+	for i, b := range buttons {
+		msgButtons[i] = discordbot.MessageButton{
+			Label:    b.Label,
+			Style:    int(b.Style),
+			CustomID: b.CustomID,
+		}
+	}
+	content := fmt.Sprintf("📋 **File write approval requested**\n**Agent:** %s\n**Path:** `%s`\n**Preview:**\n```\n%s\n```", agentName, targetPath, preview)
+	if err := bot.Send(&discordbot.OutboundMessage{
+		ChannelID: channelID,
+		Content:   content,
+		Buttons:   msgButtons,
+	}); err != nil {
+		log.Printf("[APPROVAL-CARD] failed to send: %v", err)
+	}
 }
