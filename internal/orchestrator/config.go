@@ -662,6 +662,11 @@ type ChannelRole struct {
 	// TaggedOnly means the agent only responds when directly mentioned (@Lumi).
 	// When true, messages that don't mention the bot are skipped entirely.
 	TaggedOnly bool `yaml:"tagged_only,omitempty"`
+
+	// Model overrides the agent's primary model for this channel only.
+	// When empty, uses the agent's configured model.
+	// Example: "ornith:9b" to use a local model for casual channels.
+	Model string `yaml:"model,omitempty"`
 }
 
 // personalityDirectives maps each recognized ChannelRole.Personality value to

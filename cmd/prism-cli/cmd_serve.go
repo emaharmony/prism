@@ -1146,7 +1146,21 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		return
 	}
 
-	llmProvider, err := cc.providers.GetForAgent(agentCfg.ID, agentCfg.Model)
+	// V61: Channel-level model override — if the channel role specifies a model,
+	// use it instead of the agent's default model. This lets casual channels
+	// use a local model (e.g. ornith:9b) while work channels use cloud models.
+	overriddenModel := agentCfg.Model
+	overriddenProvider := agentCfg.Provider
+	if channelRoleConfig != nil && channelRoleConfig.Model != "" {
+		overriddenModel = channelRoleConfig.Model
+		// Infer provider from the model — ollama models use ollama provider
+		if !strings.Contains(overriddenModel, "/") {
+			overriddenProvider = "ollama"
+		}
+		log.Printf("[MODEL-OVERRIDE] channel %s using model %s (channel override)", msg.ChannelID, overriddenModel)
+	}
+
+	llmProvider, err := cc.providers.GetForAgent(agentCfg.ID, overriddenModel)
 	if err != nil {
 		log.Printf("[ERROR] no provider for model %s: %v", agentCfg.Model, err)
 		sendFinal("failed", "I can't reach my language model right now. Please try again in a moment.")
@@ -1155,7 +1169,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// Step 5: Create a run with proper context for cancellation and timeout
 	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), serveLLMTimeout(cc.cfg))
-	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
+	run := runtrack.NewRun(result.AgentID, sess.ID, overriddenModel, overriddenProvider)
 	runID = run.ID
 	run.Cancel = runCancel
 	cc.cancelReg.Register(sess.ID, runCancel)
@@ -1293,7 +1307,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		Agent:          result.AgentID,
 		Provider:       llmProvider,
 		ProviderName:   agentCfg.Provider,
-		Model:          agentCfg.Model,
+		Model:          overriddenModel,
 		SessionID:      sess.ID,
 		CleanedContent: result.CleanedContent,
 		RouteMethod:    result.Method,
@@ -1310,7 +1324,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 9b: Tool execution loop — branch on ChatProvider vs text-based
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		// Check if the provider supports native tool calling (ChatProvider)
-		chatProv, chatErr := cc.providers.GetChatProviderForAgent(agentCfg.ID, agentCfg.Model)
+		chatProv, chatErr := cc.providers.GetChatProviderForAgent(agentCfg.ID, overriddenModel)
 		supportsChat := chatErr == nil
 
 		if supportsChat {
