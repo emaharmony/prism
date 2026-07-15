@@ -67,9 +67,10 @@ func subAgentRepoRoot(cfg *orchestrator.Config) string {
 // callbacks, reusing the same text-generation + JSON-contract parsing the gated
 // loop uses.
 type subAgentBackend struct {
-	providers *provider.ProviderRegistry
-	exec      *tool.Executor // shared executor (no worktree isolation)
-	toolReg   *tool.Registry // shared registry, source for non-root tools
+	providers       *provider.ProviderRegistry
+	exec            *tool.Executor // shared executor (no worktree isolation)
+	toolReg         *tool.Registry // shared registry, source for non-root tools
+	protectedBranch string         // branch git_commit/git_push in worktree executors must refuse to write to
 }
 
 // subAgentWorktreeMaxFileSize matches serve's builtin file-size cap.
@@ -94,8 +95,8 @@ func (b *subAgentBackend) executorFor(workDir string) *tool.Executor {
 	_ = reg.Register(&tool.WriteFileDirect{WorkspaceRoot: workDir, AllowedPaths: roots})
 	_ = reg.Register(&tool.CreateDirectoryDirect{WorkspaceRoot: workDir, AllowedPaths: roots})
 	_ = reg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}})
-	_ = reg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}})
-	_ = reg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}})
+	_ = reg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}, ProtectedBranch: b.protectedBranch})
+	_ = reg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workDir, AllowedPaths: roots}, ProtectedBranch: b.protectedBranch})
 	// Copy every shared tool not already provided as a worktree-rooted version
 	// (research/image/skill/MCP/state/plan/read-only git). Same instance reuse
 	// keeps live MCP client connections intact.
@@ -197,7 +198,7 @@ func startSubAgentWorker(nc *nats.Conn, providers *provider.ProviderRegistry, ex
 	}
 
 	resolver := newSubAgentResolver(cfg)
-	backend := &subAgentBackend{providers: providers, exec: exec, toolReg: toolReg}
+	backend := &subAgentBackend{providers: providers, exec: exec, toolReg: toolReg, protectedBranch: cfg.ProtectedBranch()}
 	runner := subagent.NewLoopRunner(subagent.LoopRunnerConfig{
 		Backend: backend,
 		// Per-agent tool scoping: keep each sub-agent in its role lane (only

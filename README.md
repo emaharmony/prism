@@ -1,35 +1,79 @@
 # Prism - Event-Native AI Agent Platform
 
 [![Go 1.26+](https://img.shields.io/badge/go-1.26%2B-blue)](https://go.dev/)
-[![Tests](https://img.shields.io/badge/tests-go%20test%20.%2F...-brightgreen)]()
-[![Packages: 57](https://img.shields.io/badge/packages-57-green)]()
+[![CI](https://github.com/emaharmony/prism/actions/workflows/ci.yml/badge.svg)](https://github.com/emaharmony/prism/actions/workflows/ci.yml)
+[![Packages: 85](https://img.shields.io/badge/packages-85-green)]()
 [![License: All Rights Reserved](https://img.shields.io/badge/license-all%20rights%20reserved-red)](./LICENSE)
 
-> **License Notice:** Prism is source-available under an all-rights-reserved license. You may view the repository, but use, modification, distribution, or incorporation requires written permission. See [LICENSE](./LICENSE) for details.
+> **Public preview, source-available.** Prism is local-first and **not
+> production-ready**. Use, modification, distribution, or incorporation
+> requires written permission — see [LICENSE](./LICENSE). Full status:
+> [Stability Matrix](./docs/reference/stability-matrix.md) ·
+> [QUALITY.md](./QUALITY.md) ·
+> [Public Preview Checklist](./docs/operations/PUBLIC_PREVIEW_CHECKLIST.md).
 
-Prism is a Go event-native AI agent platform that runs as a persistent service. Agents communicate through a NATS event bus, maintain conversation sessions, remember context through Remembrance, use tools under policy, and expose a local API/dashboard. Autonomous sub-agents can run bounded tool loops with worktree isolation, capability-aware routing, and per-run budgets.
+Prism is a Go event-native AI agent runtime: a persistent service where
+agents communicate over a NATS event bus, tool use is policy-gated and
+approval-gated, and every mutation is validated and recorded before it
+counts as done.
 
-The framework controls lifecycle, safety, context, routing, and persistence. The model generates outputs inside that lifecycle.
+## The Thesis
 
-Checked-in root binaries can lag behind source. For a fresh setup, build from `cmd/prism-cli` and treat the source tree as authoritative.
+> The runtime controls lifecycle, policy, approvals, tools, budgets,
+> context, validation, and persistence. Models generate outputs **inside**
+> those boundaries — they do not decide their own permissions.
 
----
+Most agent frameworks start with a model and bolt on control afterward.
+Prism starts with the runtime: a deterministic policy engine decides what a
+tool call is allowed to do before any model output can act on the world,
+and every mutation passes through the same approval → execution →
+validation → persistence pipeline regardless of which model proposed it.
 
-## Stability
+**Dashboard:** `docs/assets/dashboard.png` (screenshot pending — see the
+[Public Preview Checklist](./docs/operations/PUBLIC_PREVIEW_CHECKLIST.md));
+run `prism serve` and open `http://localhost:8322/` to see it live in the
+meantime.
 
-Prism is in **public-preview** development. It is source-available, local-first,
-and **not production-ready**.
+## Why Prism Exists
 
-For a detailed breakdown of feature stability and production recommendations, see the [Stability Matrix](./docs/reference/stability-matrix.md).
-Current project quality metrics are available in [QUALITY.md](./QUALITY.md).
+Interactive coding assistants are optimized for one human driving one
+session. Prism is built for the case beyond that: agents that keep running
+when you're not watching — scheduled work, multi-agent delegation,
+autonomous loops against a real repository — where "trust the model" is not
+an acceptable safety story. Prism's answer is to keep the framework, not
+the model, in charge of what is allowed to happen, and to make every
+mutation auditable after the fact.
 
----
+## Execution Lifecycle
 
-## Golden Path Demo
+```text
+Task
+  → Route        (agent registry + capability-aware routing)
+  → Policy       (deterministic allow / deny / requires-approval — no LLM vote)
+  → Approval     (human or configured reviewer gate on mutations)
+  → Execute      (tool runs under the resolved policy decision)
+  → Validate     (allowlisted validation profiles, e.g. go_test_all)
+  → Persist      (canonical events + run artifacts: events.jsonl, summary.json)
+  → Observe      (dashboard, SSE stream, `prism watch`/`prism trace`/`prism cost`)
+```
+
+Supporting systems: embedded NATS JetStream (event bus), SQLite (sessions,
+tasks, approvals, run state), the tool registry + policy/guard checks,
+Remembrance (external memory service, opt-in), and the dashboard/API that
+reads the same event and artifact stream operators see. Approval and
+validation are not optional steps a diagram can skip — a mutation that
+fails either one does not reach "persisted."
+
+One explicit, opt-in exception exists to the approval step: **Free Mode**
+auto-approves mutations for a single configured Discord owner. See
+[Safety Model](./docs/concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode)
+before enabling it.
+
+## Five-Minute, Model-Free Demo
 
 The fastest way to understand Prism is to run a workflow and inspect the
-generated events and artifacts. The built-in echo workflow needs no model and
-runs fully locally:
+generated events and artifacts. The built-in echo workflow needs no model,
+no API key, and no external services — it runs fully locally:
 
 ```bash
 go test ./...                                   # verify the build
@@ -48,10 +92,53 @@ What to expect:
 
 A sanitized sample run is checked in at
 [`examples/runs/sample-run/`](./examples/runs/sample-run). For a step-by-step
-walkthrough see [Getting Started](./docs/GETTING_STARTED.md) and
-[Examples](./docs/EXAMPLES.md).
+walkthrough see [Getting Started](./docs/getting-started/GETTING_STARTED.md) and
+[Examples](./docs/getting-started/EXAMPLES.md).
 
----
+## Key Capabilities
+
+- **Policy-gated tool execution** — read/write/git/shell tools resolved
+  through a deterministic policy engine; mutations default to
+  approval-gated.
+- **Verified gated dev loop** — `PROBE → RESEARCH → PLAN → FEEDBACK_PRE →
+  EXECUTION → FEEDBACK_POST → REPORT`, with objective build/test
+  verification before a phase can complete.
+- **Multi-agent delegation and sub-agents** — capability-based routing,
+  bounded tool loops, worktree-per-subagent isolation.
+- **Local-first persistence** — embedded NATS JetStream + SQLite, no
+  external broker or database required.
+- **Dashboard and API** — same-origin dashboard served by `prism serve`,
+  REST/SSE API, run browser, cost/usage tracking.
+- **Optional integrations** — Remembrance memory, MCP tool servers,
+  Discord, cross-Prism bridge — all opt-in and disabled by default.
+
+## Safety Model
+
+- The policy engine decides tool permission deterministically; the model
+  never grants itself permission.
+- File mutations require an approval gate by default — resolved by a human
+  or an explicitly configured reviewer, never by the acting model.
+- **Free Mode** is the one documented exception: a single, config-selected
+  Discord owner can bypass the approval gate for that owner's own messages.
+  It is off by default, cannot be triggered remotely or by any other user,
+  and some — but not all — safety boundaries still apply while it's active.
+  Read [Safety Model → Free Mode](./docs/concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode)
+  in full before enabling it.
+- Full model: [docs/concepts/SAFETY.md](./docs/concepts/SAFETY.md). Security
+  reporting: [SECURITY.md](./SECURITY.md).
+
+## Stability and Quality Evidence
+
+Prism is in **public-preview** development. It is source-available,
+local-first, and **not production-ready**.
+
+- [Stability Matrix](./docs/reference/stability-matrix.md) — per-feature
+  stable / preview / experimental classification and production
+  recommendations.
+- [QUALITY.md](./QUALITY.md) — verified commit, test/coverage counts, CI
+  scope, and known limitations as of the last verification pass.
+- [Capability Status](./docs/reference/CAPABILITY_STATUS.md) — safe
+  defaults and what to confirm before relying on a given capability.
 
 ## Architecture
 
@@ -103,18 +190,18 @@ Ingress/Egress
 
 New to Prism? Start here:
 
-1. [Getting Started](docs/GETTING_STARTED.md) — install, build, test, and run your first workflow.
-2. [Configuration Guide](docs/CONFIGURATION.md) — where config files live and how Prism loads them.
-3. [YAML Reference](docs/YAML_REFERENCE.md) — workflow, policy, adapter, provider, and agent YAML.
-4. [Command Reference](docs/COMMANDS.md) — all major CLI commands and what they do.
-5. [Examples](docs/EXAMPLES.md) — guided demo flows.
-6. [Troubleshooting](docs/TROUBLESHOOTING.md) — common setup and runtime issues.
-7. [Architecture](docs/ARCHITECTURE.md) — how Prism works internally.
-8. [Capability Status](docs/CAPABILITY_STATUS.md) — stable vs experimental features.
-9. [Safety Model](docs/SAFETY.md) — human-in-the-loop, policy vs validators, autopatch risks.
-10. [Roadmap](docs/ROADMAP.md) — project direction.
-11. [Version History](docs/VERSION_HISTORY.md) — the full V1–V58+ development story.
-12. [Public Preview Checklist](docs/PUBLIC_PREVIEW_CHECKLIST.md) — release-prep status.
+1. [Getting Started](docs/getting-started/GETTING_STARTED.md) — install, build, test, and run your first workflow.
+2. [Configuration Guide](docs/operations/CONFIGURATION.md) — where config files live and how Prism loads them.
+3. [YAML Reference](docs/reference/YAML_REFERENCE.md) — workflow, policy, adapter, provider, and agent YAML.
+4. [Command Reference](docs/reference/COMMANDS.md) — all major CLI commands and what they do.
+5. [Examples](docs/getting-started/EXAMPLES.md) — guided demo flows.
+6. [Troubleshooting](docs/operations/TROUBLESHOOTING.md) — common setup and runtime issues.
+7. [Architecture](docs/architecture/ARCHITECTURE.md) — how Prism works internally.
+8. [Capability Status](docs/reference/CAPABILITY_STATUS.md) — stable vs experimental features.
+9. [Safety Model](docs/concepts/SAFETY.md) — human-in-the-loop, policy vs validators, autopatch risks.
+10. [Roadmap](docs/history/ROADMAP.md) — project direction.
+11. [Version History](docs/history/VERSION_HISTORY.md) — the full V1–V58+ development story.
+12. [Public Preview Checklist](docs/operations/PUBLIC_PREVIEW_CHECKLIST.md) — release-prep status.
 13. [Dashboard Guide](docs/dashboard/README.md) — dashboard architecture, navigation, and UI development.
 
 ---
@@ -151,7 +238,7 @@ go build -o .\prism-current.exe .\cmd\prism-cli
 go build -o .\prism-bus-current.exe .\cmd\prism-bus
 ```
 
-For a full Windows walkthrough, see [docs/WINDOWS_SETUP.md](./docs/WINDOWS_SETUP.md).
+For a full Windows walkthrough, see [docs/WINDOWS_SETUP.md](./docs/getting-started/WINDOWS_SETUP.md).
 
 ### Test
 
@@ -271,7 +358,7 @@ Serve and chat modes register read, project, git, state, and plan tools. Read-on
 
 ### Verified Gated Loop
 
-The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT`) enforces objective build/test verification in EXECUTION: after the model commits, Prism runs an allowlisted V5 validation profile (e.g. `go_test_all` → `go test ./...`). With `blocking: true` the phase cannot complete until it passes — the failing output is fed back so the model fixes the real problem and re-commits. The model can also call the `run_validation` tool to self-check before committing. The loop is bounded by run budgets (`max_total_time`, `max_total_tokens`; `-1` explicitly means unlimited, `0` uses the default token ceiling) and stuck-loop detection (`max_repeated_tool_calls`), each emitting an event and stopping gracefully. Configure it per phase under `verification` (see [docs/design/V35-VERIFICATION-GATE-DESIGN.md](./docs/design/V35-VERIFICATION-GATE-DESIGN.md)).
+The gated dev loop (`PROBE → RESEARCH → PLAN → FEEDBACK_PRE → EXECUTION → FEEDBACK_POST → REPORT`) enforces objective build/test verification in EXECUTION: after the model commits, Prism runs an allowlisted V5 validation profile (e.g. `go_test_all` → `go test ./...`). With `blocking: true` the phase cannot complete until it passes — the failing output is fed back so the model fixes the real problem and re-commits. The model can also call the `run_validation` tool to self-check before committing. The loop is bounded by run budgets (`max_total_time`, `max_total_tokens`; `-1` explicitly means unlimited, `0` uses the default token ceiling) and stuck-loop detection (`max_repeated_tool_calls`), each emitting an event and stopping gracefully. Configure it per phase under `verification` (see [docs/history/milestones/V35-VERIFICATION-GATE-DESIGN.md](./docs/history/milestones/V35-VERIFICATION-GATE-DESIGN.md)).
 
 ### Scout Sub-Agent
 
@@ -279,11 +366,11 @@ A lightweight local model (e.g. qwen3:8b, gemma3:4b) gathers codebase context be
 
 ### Cross-Prism and Factory Handoff
 
-The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/design/CROSS-PRISM-FACTORY-SETUP.md](./docs/design/CROSS-PRISM-FACTORY-SETUP.md).
+The bridge verifies signed cross-Prism messages over shared NATS, stores generic delegated tasks, and can route selected target profiles into adapters such as Roblox Factory. Discord can issue `/prism delegate`, `/prism status`, and `/prism stop` commands, but autonomous Prism-to-Prism communication stays on NATS so Discord bot greeting loops are avoided. See [docs/history/milestones/CROSS-PRISM-FACTORY-SETUP.md](./docs/history/milestones/CROSS-PRISM-FACTORY-SETUP.md).
 
 ### Roblox Game-Dev Team
 
-A multi-agent studio (orchestrator, researcher, game planner, Factory master, asset maker) that designs and builds Roblox games — with native reference-image tools, a Blender-MCP asset pipeline, and a cross-Prism rubric handshake. See [docs/design/ROBLOX-TEAM.md](./docs/design/ROBLOX-TEAM.md).
+A multi-agent studio (orchestrator, researcher, game planner, Factory master, asset maker) that designs and builds Roblox games — with native reference-image tools, a Blender-MCP asset pipeline, and a cross-Prism rubric handshake. See [docs/history/milestones/ROBLOX-TEAM.md](./docs/history/milestones/ROBLOX-TEAM.md).
 
 ### Codex Subscription Worker
 
@@ -447,7 +534,7 @@ prism:
     - "D:/_projects_"
     - "D:/Projects"
   allowed_paths: []                  # legacy alias if split roots are omitted
-  scheduler:                         # built-in cron; see docs/SCHEDULER.md
+  scheduler:                         # built-in cron; see docs/operations/SCHEDULER.md
     enabled: false
     jobs: []
 
@@ -603,7 +690,7 @@ projects:
   - id: my-project
     repo_path: "/path/to/your/repo"
     state_file: "PROJECT_STATE.md"        # task assignment file (relative to repo_path)
-    default_branch: "main"               # protected branch (writes blocked here)
+    default_branch: "main"               # protected: git_commit/git_push refuse direct writes here (see docs/concepts/SAFETY.md)
     channel: "1234567890123456789"       # Discord channel ID for feedback/reports
     workflow_config: "examples/workflows/fast-loop.yaml"  # optional per-project workflow
     worktree_isolation: false             # V56: per-run git worktree (parallel runs)
@@ -648,7 +735,7 @@ scheduler:
 - **project-work**: Runs the gated loop — discovers tasks, implements, reviews, pushes
 - **status-report**: Reads recent run summaries + PROJECT_STATE.md, posts a report to Discord
 
-Full cron reference (all fields, actions, examples): [docs/SCHEDULER.md](./docs/SCHEDULER.md).
+Full cron reference (all fields, actions, examples): [docs/SCHEDULER.md](./docs/operations/SCHEDULER.md).
 
 ### 4. Choose a workflow config
 
@@ -755,8 +842,6 @@ Current routes include:
 docker build -t prism:latest .
 docker-compose up -d
 ```
-
-> **Note:** The Dockerfile currently uses `golang:1.24-alpine` as the build image. <!-- TODO: update to golang:1.26-alpine when available -->
 
 The Docker setup exposes port 8080 and mounts `./runs` and `./policies` as volumes.
 
@@ -905,7 +990,7 @@ No external database requirement for local development.
 
 Prism grew through many incremental versions (V1–V58+). The full development
 story — with links to each design document — lives in
-[docs/VERSION_HISTORY.md](./docs/VERSION_HISTORY.md).
+[docs/VERSION_HISTORY.md](./docs/history/VERSION_HISTORY.md).
 
 At a glance:
 
@@ -925,7 +1010,7 @@ At a glance:
 
 Prism is source-available and in **public-preview** development — see the
 [Status](#status) section above and the full
-[Capability Status](./docs/CAPABILITY_STATUS.md) matrix for what is stable
+[Capability Status](./docs/reference/CAPABILITY_STATUS.md) matrix for what is stable
 versus experimental. It is not production-ready.
 
 Current focus is stabilization: keeping runtime behavior, docs, and
@@ -933,7 +1018,7 @@ configuration aligned; a clear golden-path demo; repo hygiene; and hardening the
 experimental sub-agent worker, idle-guard optimization, and cross-Prism/Factory
 handoff.
 
-See [docs/ROADMAP.md](./docs/ROADMAP.md) and [docs/design/TASKS.md](./docs/design/TASKS.md).
+See [docs/ROADMAP.md](./docs/history/ROADMAP.md) and [docs/design/TASKS.md](./docs/history/milestones/TASKS.md).
 
 ---
 

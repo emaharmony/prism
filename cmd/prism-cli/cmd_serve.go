@@ -494,9 +494,10 @@ func executeServe(args []string) {
 			toolReg.Register(&tool.WriteFileDirect{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 			toolReg.Register(&tool.CreateDirectoryDirect{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 			// V28: Git mutation tools (require approval)
+			protectedBranch := cfg.ProtectedBranch()
 			toolReg.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
-			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
-			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+			toolReg.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
+			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
 			toolReg.Register(&tool.GitCreatePRTool{})
 			// V32: State management tools
 			// V60: Shell tool for free mode (registered with tier_1 policy for gated mode)

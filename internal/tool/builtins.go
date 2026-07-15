@@ -917,21 +917,30 @@ func RegisterBuiltinsWithRoots(registry *Registry, workspaceRoot string, maxFile
 // RegisterBuiltinsV4 adds all V3 + V4 + V28 tools to the registry.
 // V4 tools (write_file_proposal) require approval.
 // V28 mutation tools (git_add, git_commit, git_push) require approval.
-func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize int64, allowedPaths ...string) *Registry {
-	return RegisterBuiltinsV4WithRoots(registry, workspaceRoot, maxFileSize, allowedPaths, allowedPaths)
+// protectedBranch names a branch git_commit/git_push must refuse to write to
+// directly; empty defaults to "main" (see RegisterBuiltinsV4WithRoots).
+func RegisterBuiltinsV4(registry *Registry, workspaceRoot string, maxFileSize int64, protectedBranch string, allowedPaths ...string) *Registry {
+	return RegisterBuiltinsV4WithRoots(registry, workspaceRoot, maxFileSize, allowedPaths, allowedPaths, protectedBranch)
 }
 
 // RegisterBuiltinsV4WithRoots adds read tools scoped to read roots and mutation
-// proposal tools scoped to write roots.
-func RegisterBuiltinsV4WithRoots(registry *Registry, workspaceRoot string, maxFileSize int64, readRoots, writeRoots []string) *Registry {
+// proposal tools scoped to write roots. protectedBranch names a branch
+// git_commit/git_push must refuse to write to directly; empty defaults to
+// "main" (matching orchestrator.Config.ProtectedBranch's default for callers
+// with no project config to consult, e.g. standalone CLI tool/workflow runs).
+func RegisterBuiltinsV4WithRoots(registry *Registry, workspaceRoot string, maxFileSize int64, readRoots, writeRoots []string, protectedBranch string) *Registry {
 	RegisterBuiltinsWithRoots(registry, workspaceRoot, maxFileSize, readRoots, writeRoots)
 	registry.Register(&WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 	registry.Register(&CreateDirectoryProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 
+	if protectedBranch == "" {
+		protectedBranch = "main"
+	}
+
 	// V28: Git mutation tools (requires approval)
 	registry.Register(&GitAddTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
-	registry.Register(&GitCommitTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
-	registry.Register(&GitPushTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+	registry.Register(&GitCommitTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
+	registry.Register(&GitPushTool{ToolPaths: ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
 
 	return registry
 }

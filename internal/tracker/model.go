@@ -1,4 +1,4 @@
-﻿// Package tracker holds the I/O-free live model of a running gated-loop workflow.
+// Package tracker holds the I/O-free live model of a running gated-loop workflow.
 //
 // It accumulates state from the engine's event stream, then exposes it as:
 //

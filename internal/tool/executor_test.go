@@ -183,7 +183,7 @@ func TestExecutorWriteFileProposalPersistsEmptyContentApproval(t *testing.T) {
 	targetPath := filepath.Join(allowedRoot, "clear-me.txt")
 
 	reg := NewRegistry()
-	RegisterBuiltinsV4(reg, workspace, 1024*1024, allowedRoot)
+	RegisterBuiltinsV4(reg, workspace, 1024*1024, "", allowedRoot)
 	cfg := PolicyConfig{
 		WorkspaceRoot: workspace,
 		AllowedPaths:  []string{allowedRoot},
@@ -231,7 +231,7 @@ func TestExecutorCreateDirectoryProposalPersistsApproval(t *testing.T) {
 	targetPath := filepath.Join(allowedRoot, "new-dir")
 
 	reg := NewRegistry()
-	RegisterBuiltinsV4(reg, workspace, 1024*1024, allowedRoot)
+	RegisterBuiltinsV4(reg, workspace, 1024*1024, "", allowedRoot)
 	cfg := PolicyConfig{
 		WorkspaceRoot: workspace,
 		AllowedPaths:  []string{allowedRoot},

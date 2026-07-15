@@ -71,7 +71,7 @@ and that list items align.
 
 A workflow step's `type` must be a supported type (e.g. `tool.execute`,
 `dispatch.run`, `delegate`). See the
-[YAML Reference](YAML_REFERENCE.md#workflow-yaml).
+[YAML Reference](../reference/YAML_REFERENCE.md#workflow-yaml).
 
 ## Policy denied action
 
@@ -83,7 +83,7 @@ go run ./cmd/prism-cli policy list
 ```
 
 The `reason` on the matching rule explains why. See
-[`policies/default.yaml`](../policies/default.yaml).
+[`policies/default.yaml`](../../policies/default.yaml).
 
 ## Tool validator blocked action
 
@@ -158,7 +158,7 @@ go test ./internal/checksum/ -v -count=1
 - Use `.\prism-current.exe` style paths in PowerShell; chain commands with `;`,
   not `&&`.
 - Use forward slashes or escaped backslashes in YAML paths (e.g. `D:/projects`).
-- See [docs/WINDOWS_SETUP.md](WINDOWS_SETUP.md) for a full walkthrough.
+- See [docs/WINDOWS_SETUP.md](../getting-started/WINDOWS_SETUP.md) for a full walkthrough.
 
 ## macOS / Linux notes
 

@@ -500,8 +500,18 @@ type ProjectConfig struct {
 	// assignment (e.g. "PROJECT_STATE.md"). Relative to RepoPath if not absolute.
 	StateFile string `yaml:"state_file"`
 
-	// DefaultBranch is the protected branch agents must not write to directly.
-	// Defaults to "main" when empty.
+	// DefaultBranch names the project's main branch. Enforced by
+	// GitCommitTool and GitPushTool (internal/tool/git.go): those mutation
+	// tools refuse to commit/push while the resolved repo's current branch
+	// — or, for push, an explicitly targeted branch param — equals this
+	// value (see Config.ProtectedBranch). This check is unconditional; it
+	// applies even when AutoApproveMutations/Free Mode is active.
+	// git_checkout is unaffected — checking out the branch is not itself a
+	// mutation. Defaults to "main" when empty. Note: this is a single
+	// global value resolved from the default project; in multi-project
+	// deployments with differing default_branch values, only the default
+	// project's branch name is protected across every repo any git tool
+	// touches.
 	DefaultBranch string `yaml:"default_branch"`
 
 	// Channel is the messaging channel ID where results/feedback are posted.
@@ -553,6 +563,21 @@ func (c *Config) DefaultProject() *ProjectConfig {
 		return &c.Projects[0]
 	}
 	return nil
+}
+
+// ProtectedBranch returns the branch name git mutation tools must refuse to
+// commit/push to directly: the default project's configured DefaultBranch,
+// or "main" if unset or no project is configured. This is a single global
+// value — in multi-project deployments with differing default_branch
+// values, only the default project's branch name is protected across every
+// repo a git tool touches.
+func (c *Config) ProtectedBranch() string {
+	if c != nil {
+		if p := c.DefaultProject(); p != nil && p.DefaultBranch != "" {
+			return p.DefaultBranch
+		}
+	}
+	return "main"
 }
 
 // StateAction defines behavior modifiers for a specific context state.

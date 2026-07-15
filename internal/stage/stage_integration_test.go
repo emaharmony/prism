@@ -329,7 +329,7 @@ func TestFullPipeline_Integration(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	toolReg := tool.NewRegistry()
-	tool.RegisterBuiltinsV4(toolReg, ".", 1024*1024)
+	tool.RegisterBuiltinsV4(toolReg, ".", 1024*1024, "")
 
 	pipeline := NewPipeline(
 		&ConnectionStage{RunDir: tmpDir},

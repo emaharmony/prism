@@ -5,8 +5,8 @@ you will have built the Prism CLI, run the test suite, executed your first
 workflow, and inspected the artifacts it produced.
 
 > Prism is source-available under an all-rights-reserved license. See
-> [LICENSE](../LICENSE). It is a preview-stage project — some features are
-> experimental. See [Capability Status](CAPABILITY_STATUS.md).
+> [LICENSE](../../LICENSE). It is a preview-stage project — some features are
+> experimental. See [Capability Status](../reference/CAPABILITY_STATUS.md).
 
 ## What You Will Do
 
@@ -118,7 +118,7 @@ go run ./cmd/prism-cli workflow run demo.echo_tool
 ```
 
 The workflow definition lives at
-[`examples/workflows/demo-echo.yaml`](../examples/workflows/demo-echo.yaml).
+[`examples/workflows/demo-echo.yaml`](../../examples/workflows/demo-echo.yaml).
 Passing input is optional; if you want to supply input, use a JSON file:
 
 ```bash
@@ -134,7 +134,7 @@ go run ./cmd/prism-cli workflow status <run_id>
 ## Inspect Output Artifacts
 
 Runs write artifacts under the run directory (default `./runs`). A sample run is
-checked in at [`examples/runs/sample-run/`](../examples/runs) so you can see the
+checked in at [`examples/runs/sample-run/`](../../examples/runs) so you can see the
 shape before running your own:
 
 | Artifact | Purpose |
@@ -153,11 +153,11 @@ go run ./cmd/prism-cli runs latest --json
 
 ## Next Steps
 
-- [Configuration Guide](CONFIGURATION.md) — where config lives and how it loads.
-- [YAML Reference](YAML_REFERENCE.md) — field-by-field YAML documentation.
-- [Command Reference](COMMANDS.md) — every major CLI command.
+- [Configuration Guide](../operations/CONFIGURATION.md) — where config lives and how it loads.
+- [YAML Reference](../reference/YAML_REFERENCE.md) — field-by-field YAML documentation.
+- [Command Reference](../reference/COMMANDS.md) — every major CLI command.
 - [Examples](EXAMPLES.md) — guided demo flows.
-- [Troubleshooting](TROUBLESHOOTING.md) — common setup and runtime issues.
+- [Troubleshooting](../operations/TROUBLESHOOTING.md) — common setup and runtime issues.
 
 To start the full daemon (API, dashboard, optional bot):
 
@@ -178,4 +178,4 @@ go run ./cmd/prism-cli serve --config prism.yaml
   For `prism run` with a real model, install and start Ollama (or configure a
   provider) first.
 
-See [Troubleshooting](TROUBLESHOOTING.md) for the full list.
+See [Troubleshooting](../operations/TROUBLESHOOTING.md) for the full list.

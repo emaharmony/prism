@@ -97,14 +97,24 @@ func (t *ShellTool) Execute(ctx context.Context, input map[string]any) (ToolResu
 	err := cmd.Run()
 	duration := time.Since(start)
 
-	// Get exit code
+	// Get exit code. Check the context deadline first, unconditionally: a
+	// killed process can still surface as a normal *exec.ExitError (e.g. exit
+	// code 1 on Windows) even though it was actually terminated by the
+	// timeout, so timeout detection must not be gated behind the ExitError
+	// type check.
 	exitCode := 0
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		if execCtx.Err() == context.DeadlineExceeded {
+			// The context we created around cmd.Run() actually expired —
+			// a genuine timeout, not an inferred one.
+			exitCode = -1
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			// Context deadline exceeded or other error
-			exitCode = -1
+			// Some other failure that prevented a normal exit — e.g. the
+			// working directory doesn't exist, the executable wasn't found,
+			// or a permission error. Not a timeout; don't misreport it as one.
+			exitCode = -2
 		}
 	}
 
@@ -136,9 +146,12 @@ func (t *ShellTool) Execute(ctx context.Context, input map[string]any) (ToolResu
 	success := exitCode == 0
 	errMsg := ""
 	if !success {
-		if exitCode == -1 {
+		switch exitCode {
+		case -1:
 			errMsg = fmt.Sprintf("command timed out after %ds", timeout)
-		} else {
+		case -2:
+			errMsg = fmt.Sprintf("command failed to execute: %v", err)
+		default:
 			errMsg = fmt.Sprintf("command exited with code %d", exitCode)
 		}
 	}

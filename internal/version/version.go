@@ -3,7 +3,7 @@ package version
 
 // Version is the semantic version for development builds. Release builds
 // override it with -ldflags "-X github.com/emaharmony/prism/internal/version.Version=<tag>".
-var Version = "0.1.0"
+var Version = "0.2.0-preview.1"
 
 // String returns the user-facing CLI version.
 func String() string {

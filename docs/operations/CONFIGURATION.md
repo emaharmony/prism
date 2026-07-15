@@ -2,7 +2,7 @@
 
 This guide is a map of Prism configuration: where files live, how they relate,
 and what is stable versus experimental. For field-by-field YAML documentation
-see the [YAML Reference](YAML_REFERENCE.md).
+see the [YAML Reference](../reference/YAML_REFERENCE.md).
 
 ## Configuration Philosophy
 
@@ -70,13 +70,13 @@ prism:
 `prism.workflow_config` points at a gated-loop workflow YAML (e.g.
 `examples/workflows/gated-loop.yaml`). When set and loadable, it overrides the
 built-in default phases. Named workflows for the `workflow` commands are loaded
-from `examples/workflows/`. See the [YAML Reference](YAML_REFERENCE.md#workflow-yaml).
+from `examples/workflows/`. See the [YAML Reference](../reference/YAML_REFERENCE.md#workflow-yaml).
 
 ## Policy Configuration
 
 Policy decides permission; local validators still enforce input safety. The
 default rule set is in `policies/default.yaml`. See the
-[YAML Reference](YAML_REFERENCE.md#policy-yaml).
+[YAML Reference](../reference/YAML_REFERENCE.md#policy-yaml).
 
 ## Provider / Model Configuration
 
@@ -91,13 +91,13 @@ variables.
 Agents are defined under the `agents:` list in `prism.yaml`. Each agent has an
 `id` (which becomes its event namespace prefix), a `role`, a `provider`/`model`,
 `context` layers, and `capabilities`. See the
-[YAML Reference](YAML_REFERENCE.md#agent-yaml).
+[YAML Reference](../reference/YAML_REFERENCE.md#agent-yaml).
 
 ## Adapter Configuration
 
 Adapters are opt-in external integrations. Inspect them with `prism adapter
 list|show|health`. The echo adapter is safe and used by the adapter demo
-workflow. See the [YAML Reference](YAML_REFERENCE.md#adapter-yaml).
+workflow. See the [YAML Reference](../reference/YAML_REFERENCE.md#adapter-yaml).
 
 ## Dashboard / Serve Configuration
 

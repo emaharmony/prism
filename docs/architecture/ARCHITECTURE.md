@@ -1,7 +1,7 @@
 ﻿# Prism Architecture
 
 A concise map of how Prism works internally. For the full design rationale and
-per-version design notes, see [DESIGN.md](DESIGN.md) and the `V*-DESIGN.md`
+per-version design notes, see [DESIGN.md](../history/DESIGN.md) and the `V*-DESIGN.md`
 documents in this directory.
 
 ## Overview
@@ -52,7 +52,7 @@ the README "Core Packages" table for the full list.
 
 ## Related Docs
 
-- [Getting Started](GETTING_STARTED.md)
-- [Configuration Guide](CONFIGURATION.md)
-- [Capability Status](CAPABILITY_STATUS.md)
-- [Design Notes](DESIGN.md)
+- [Getting Started](../getting-started/GETTING_STARTED.md)
+- [Configuration Guide](../operations/CONFIGURATION.md)
+- [Capability Status](../reference/CAPABILITY_STATUS.md)
+- [Design Notes](../history/DESIGN.md)

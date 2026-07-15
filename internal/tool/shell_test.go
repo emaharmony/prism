@@ -2,6 +2,10 @@ package tool
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,9 +106,19 @@ func TestShellTool_Timeout(t *testing.T) {
 		MaxStderrBytes: 5120,
 	}
 
+	// sleep 10 spawns a real child process of sh; on Windows, killing the
+	// timed-out sh.exe handle doesn't kill that orphaned grandchild, so the
+	// timeout never resolves quickly. A shell-builtin busy-loop never execs
+	// a subprocess, so killing sh.exe terminates it immediately on both
+	// platforms and still exercises the real timeout path.
+	command := "sleep 10"
+	if runtime.GOOS == "windows" {
+		command = "while true; do :; done"
+	}
+
 	start := time.Now()
 	result, err := shell.Execute(context.Background(), map[string]any{
-		"command": "sleep 10",
+		"command": command,
 		"timeout": float64(1),
 	})
 	elapsed := time.Since(start)
@@ -238,9 +252,22 @@ func TestShellTool_Cwd(t *testing.T) {
 		MaxStderrBytes: 5120,
 	}
 
+	// Use a real, portable directory instead of the POSIX-only "/tmp" (which
+	// doesn't exist on Windows and previously caused this test to fail with
+	// a misreported "timed out" error instead of a clear cwd failure — see
+	// the shell.go exit-code fix). Prove cwd was honored by planting a
+	// marker file and listing the directory, rather than comparing pwd's
+	// output string: Git Bash's sh on Windows maps a Windows temp path to a
+	// POSIX-style path (e.g. "/c/Users/..."), so a literal string comparison
+	// against the Windows-style dir would be fragile even when correct.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cwd-marker.txt"), []byte("x"), 0644); err != nil {
+		t.Fatalf("failed to write marker file: %v", err)
+	}
+
 	result, err := shell.Execute(context.Background(), map[string]any{
-		"command": "pwd",
-		"cwd":     "/tmp",
+		"command": "ls",
+		"cwd":     dir,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -253,8 +280,8 @@ func TestShellTool_Cwd(t *testing.T) {
 	if !ok {
 		t.Fatal("expected stdout in output")
 	}
-	if stdout != "/tmp\n" {
-		t.Errorf("expected '/tmp\\n', got %q", stdout)
+	if !strings.Contains(stdout, "cwd-marker.txt") {
+		t.Errorf("expected ls output to contain cwd-marker.txt (proving cwd was honored), got %q", stdout)
 	}
 }
 

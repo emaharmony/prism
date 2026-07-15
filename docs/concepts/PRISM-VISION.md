@@ -269,6 +269,6 @@ Prism calls Ollama/OpenAI/Anthropic directly. No delegation to a separate LLM se
 
 ## See Also
 
-- [Roadmap](ROADMAP.md)
-- [Architecture](ARCHITECTURE.md)
-- [Documentation Hub](README.md)
+- [Roadmap](../history/ROADMAP.md)
+- [Architecture](../architecture/ARCHITECTURE.md)
+- [Documentation Hub](../README.md)

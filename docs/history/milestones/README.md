@@ -39,4 +39,4 @@ which links each one with a one-line summary.
 
 - [Documentation Hub](../README.md)
 - [Version History](../VERSION_HISTORY.md)
-- [Architecture](../ARCHITECTURE.md)
+- [Architecture](../../architecture/ARCHITECTURE.md)

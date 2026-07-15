@@ -32,7 +32,7 @@ import (
 // inputs they expect.
 func executeToolList() {
 	registry := tool.NewRegistry()
-	tool.RegisterBuiltinsV4(registry, ".", 1024*1024)
+	tool.RegisterBuiltinsV4(registry, ".", 1024*1024, "")
 	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
 	tool.RegisterImageTools(registry, imageToolsConfigFromPrismConfig(nil, ".", nil))
 
@@ -80,7 +80,7 @@ func executeToolRun(toolName, inputJSON, project, workspace string, maxFileSize 
 
 	// Set up the tool registry and policy config
 	registry := tool.NewRegistry()
-	tool.RegisterBuiltinsV4(registry, workspace, maxFileSize)
+	tool.RegisterBuiltinsV4(registry, workspace, maxFileSize, "")
 	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
 	tool.RegisterImageTools(registry, imageToolsConfigFromPrismConfig(nil, workspace, nil))
 	policyConfig := tool.PolicyConfig{

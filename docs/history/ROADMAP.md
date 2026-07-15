@@ -106,7 +106,7 @@ treat them as preview/research rather than stable surface.
 
 ## Planned Next
 
-- Release tagging (e.g. `v0.1.0-public-preview`).
+- Release tagging (`v0.2.0-preview.1` is prepared but not yet tagged).
 - Hardened, sanitized examples and sample runs.
 - Dashboard screenshots / visual proof.
 - Additional adapter samples.
@@ -126,5 +126,5 @@ treat them as preview/research rather than stable surface.
 ## See Also
 
 - [Version History](VERSION_HISTORY.md)
-- [Capability Status](CAPABILITY_STATUS.md)
+- [Capability Status](../reference/CAPABILITY_STATUS.md)
 - [Documentation Hub](README.md)

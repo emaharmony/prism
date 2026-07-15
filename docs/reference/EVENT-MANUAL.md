@@ -437,5 +437,5 @@ prism db query --type "prism.approval.*" --limit 50
 
 ## See Also
 
-- [Architecture](ARCHITECTURE.md)
-- [Documentation Hub](README.md)
+- [Architecture](../architecture/ARCHITECTURE.md)
+- [Documentation Hub](../README.md)

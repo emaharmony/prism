@@ -298,9 +298,10 @@ func executeChat(args []string) {
 	tool.RegisterBuiltinsWithRoots(registry, workspaceRoot, 10*1024*1024, readRoots, writeRoots)
 	registry.Register(&tool.WriteFileProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
 	registry.Register(&tool.CreateDirectoryProposal{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots})
+	protectedBranch := cfg.ProtectedBranch()
 	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
-	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
-	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
+	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
+	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
 	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
 	tool.RegisterImageTools(registry, imageToolsConfigFromPrismConfig(cfg, workspaceRoot, writeRoots))
 	// V32: State management tools

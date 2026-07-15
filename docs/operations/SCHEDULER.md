@@ -136,8 +136,8 @@ Example — a weekday-morning PR summary:
 - `project_work` runs the gated loop against the default project. Configure a
   project under `projects:` (with `repo_path` and `default: true`) or the loop
   falls back to the workspace/current directory. See
-  [V56 worktree isolation](./design/V56-WORKTREE-ISOLATION-DESIGN.md) and
-  [V57 auto-rollback](./design/V57-AUTO-ROLLBACK-DESIGN.md).
+  [V56 worktree isolation](../history/milestones/V56-WORKTREE-ISOLATION-DESIGN.md) and
+  [V57 auto-rollback](../history/milestones/V57-AUTO-ROLLBACK-DESIGN.md).
 - Direct actions that post to Discord need a `channels:` entry for the target
   channel and a running bot; otherwise the result is only logged.
 - Custom `event` subjects require a matching subscriber. For scheduled actions,
@@ -146,5 +146,5 @@ Example — a weekday-morning PR summary:
 ## See Also
 
 - [Configuration](CONFIGURATION.md)
-- [Commands](COMMANDS.md)
-- [Documentation Hub](README.md)
+- [Commands](../reference/COMMANDS.md)
+- [Documentation Hub](../README.md)
