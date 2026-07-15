@@ -384,7 +384,7 @@ func TestRegisterBuiltins(t *testing.T) {
 
 func TestRegisterBuiltinsV4IncludesCreateDirectoryProposal(t *testing.T) {
 	reg := NewRegistry()
-	RegisterBuiltinsV4(reg, ".", 1024*1024)
+	RegisterBuiltinsV4(reg, ".", 1024*1024, "")
 
 	if _, err := reg.Resolve("create_directory_proposal"); err != nil {
 		t.Fatalf("expected create_directory_proposal in V4 registry: %v", err)

@@ -19,7 +19,7 @@ All commands assume you are at the repository root. Use `go run
 
 **What it demonstrates:** the simplest workflow — a single `tool.execute` step.
 
-**Files:** [`examples/workflows/demo-echo.yaml`](../examples/workflows/demo-echo.yaml)
+**Files:** [`examples/workflows/demo-echo.yaml`](../../examples/workflows/demo-echo.yaml)
 
 **Run:**
 
@@ -41,7 +41,7 @@ step. Artifacts are written to the run directory.
 **What it demonstrates:** how policy decides `allowed` / `denied` /
 `requires_approval`.
 
-**Files:** [`policies/default.yaml`](../policies/default.yaml)
+**Files:** [`policies/default.yaml`](../../policies/default.yaml)
 
 **Run:**
 
@@ -67,7 +67,7 @@ go run ./cmd/prism-cli policy evaluate --input request.json
 **What it demonstrates:** file mutations require operator approval
 (`require_approval_for_file_write`).
 
-**Files:** [`policies/default.yaml`](../policies/default.yaml)
+**Files:** [`policies/default.yaml`](../../policies/default.yaml)
 
 **Flow:**
 
@@ -85,7 +85,7 @@ go run ./cmd/prism-cli approval approve <id> --by ema
 
 **What it demonstrates:** a `dispatch.run` step routed to the `echo` adapter.
 
-**Files:** [`examples/workflows/demo-adapter.yaml`](../examples/workflows/demo-adapter.yaml)
+**Files:** [`examples/workflows/demo-adapter.yaml`](../../examples/workflows/demo-adapter.yaml)
 
 **Run:**
 
@@ -101,7 +101,7 @@ go run ./cmd/prism-cli workflow run demo.adapter_echo
 
 **What it demonstrates:** the artifact shape of a run.
 
-**Files:** [`examples/runs/sample-run/`](../examples/runs) — contains
+**Files:** [`examples/runs/sample-run/`](../../examples/runs) — contains
 `events.jsonl`, `prompt.md`, `output.md`, `summary.json`.
 
 **Run:**
@@ -119,10 +119,10 @@ causal event DAG.
 
 **What it demonstrates:** delegation across agents (plan → implement → review).
 
-**Files:** [`examples/workflows/demo-agents.yaml`](../examples/workflows/demo-agents.yaml)
+**Files:** [`examples/workflows/demo-agents.yaml`](../../examples/workflows/demo-agents.yaml)
 
 > Status: Experimental. This flow requires configured agents (see
-> [`prism.yaml.example`](../prism.yaml.example)) and a working provider (e.g.
+> [`prism.yaml.example`](../../prism.yaml.example)) and a working provider (e.g.
 > Ollama). Without configured agents, use it as a structural reference.
 
 **What to inspect:** delegation events (`agent.delegated`, `agent.completed`) in
@@ -136,5 +136,5 @@ causal event DAG.
 - Adapters exercise the **adapter contract** and **dispatch**.
 - Run artifacts are produced by the **run lifecycle** and event bus.
 
-See [Architecture](ARCHITECTURE.md) and [Capability Status](CAPABILITY_STATUS.md)
+See [Architecture](../architecture/ARCHITECTURE.md) and [Capability Status](../reference/CAPABILITY_STATUS.md)
 for the bigger picture.

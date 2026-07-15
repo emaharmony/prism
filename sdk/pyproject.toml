@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prism-sdk"
-version = "0.1.0"
+version = "0.2.0-preview.1"
 description = "Prism — Event-Native AI Agent Platform SDK"
 requires-python = ">=3.11"
 dependencies = [

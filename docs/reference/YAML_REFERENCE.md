@@ -224,7 +224,7 @@ prism:
         enabled: true
 ```
 
-Full cron reference: [docs/SCHEDULER.md](SCHEDULER.md).
+Full cron reference: [docs/SCHEDULER.md](../operations/SCHEDULER.md).
 
 ## MCP YAML
 
@@ -257,12 +257,12 @@ remembrance:
 
 ## Full Examples
 
-- Workflow: [`examples/workflows/demo-echo.yaml`](../examples/workflows/demo-echo.yaml)
-- Adapter step: [`examples/workflows/demo-adapter.yaml`](../examples/workflows/demo-adapter.yaml)
-- Multi-agent: [`examples/workflows/demo-agents.yaml`](../examples/workflows/demo-agents.yaml)
-- Gated loop: [`examples/workflows/gated-loop.yaml`](../examples/workflows/gated-loop.yaml)
-- Policy: [`policies/default.yaml`](../policies/default.yaml)
-- Full runtime config: [`prism.yaml.example`](../prism.yaml.example)
+- Workflow: [`examples/workflows/demo-echo.yaml`](../../examples/workflows/demo-echo.yaml)
+- Adapter step: [`examples/workflows/demo-adapter.yaml`](../../examples/workflows/demo-adapter.yaml)
+- Multi-agent: [`examples/workflows/demo-agents.yaml`](../../examples/workflows/demo-agents.yaml)
+- Gated loop: [`examples/workflows/gated-loop.yaml`](../../examples/workflows/gated-loop.yaml)
+- Policy: [`policies/default.yaml`](../../policies/default.yaml)
+- Full runtime config: [`prism.yaml.example`](../../prism.yaml.example)
 
 ## Validation Rules
 

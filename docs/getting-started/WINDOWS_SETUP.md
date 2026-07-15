@@ -38,8 +38,9 @@ go build -o .\prism-current.exe .\cmd\prism-cli
 go build -o .\prism-bus-current.exe .\cmd\prism-bus
 ```
 
-Do not rely on the checked-in root binaries (`prism.exe`, `prism-bus.exe`,
-`prism-agent.exe`) for a fresh setup. They may be older than the current source.
+Nothing is checked into the repository as a prebuilt binary — `*.exe` and the
+root `prism`/`prism-bus`/`prism-agent` binaries are gitignored. Always build
+from source for a fresh setup.
 
 Verify the CLI:
 
@@ -237,5 +238,5 @@ or an absolute path.
 ## See Also
 
 - [Getting Started](GETTING_STARTED.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
-- [Documentation Hub](README.md)
+- [Troubleshooting](../operations/TROUBLESHOOTING.md)
+- [Documentation Hub](../README.md)

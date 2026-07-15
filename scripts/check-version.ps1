@@ -3,7 +3,9 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $root
 try {
     $version = (Get-Content VERSION -Raw).Trim()
-    if ($version -notmatch '^0\.[0-9]+\.[0-9]+$') {
+    # Pre-1.0 SemVer with an optional prerelease suffix (e.g. 0.2.0-preview.1),
+    # matching the tag pattern release.yml already accepts.
+    if ($version -notmatch '^0\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
         throw "VERSION is not pre-1.0 SemVer: $version"
     }
 

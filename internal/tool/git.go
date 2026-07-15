@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/emaharmony/prism/internal/gitx"
 )
 
 // gitRefPattern matches safe git ref/remote names: letters, digits, and the
@@ -405,6 +407,11 @@ func (t *GitAddTool) Execute(ctx context.Context, input map[string]any) (ToolRes
 // before executing. The agent must propose the commit, and a human must approve.
 type GitCommitTool struct {
 	ToolPaths ToolPaths
+
+	// ProtectedBranch, if non-empty, is a branch name this tool refuses to
+	// commit to directly, regardless of approval/auto-approve state. Empty
+	// means no protection (the default for callers that don't opt in).
+	ProtectedBranch string
 }
 
 func (t *GitCommitTool) Name() string { return "git_commit" }
@@ -428,6 +435,21 @@ func (t *GitCommitTool) Execute(ctx context.Context, input map[string]any) (Tool
 			return ToolResult{Success: false, Error: fmt.Sprintf("repo_path resolution failed: %v", err)}, nil
 		}
 		repoDir = resolved
+	}
+
+	if t.ProtectedBranch != "" {
+		if branch, berr := gitx.CurrentBranch(ctx, repoDir); berr == nil && branch == t.ProtectedBranch {
+			return ToolResult{
+				Success: false,
+				Output: map[string]any{
+					"blocked":          true,
+					"blocked_reason":   "protected_branch",
+					"branch":           branch,
+					"protected_branch": t.ProtectedBranch,
+				},
+				Error: fmt.Sprintf("git commit blocked: current branch %q is protected; create a feature branch with git_checkout first", branch),
+			}, nil
+		}
 	}
 
 	message, ok := input["message"].(string)
@@ -460,6 +482,12 @@ func (t *GitCommitTool) Execute(ctx context.Context, input map[string]any) (Tool
 // approval before executing.
 type GitPushTool struct {
 	ToolPaths ToolPaths
+
+	// ProtectedBranch, if non-empty, is a branch name this tool refuses to
+	// push to directly, regardless of approval/auto-approve state. Blocks on
+	// either the repo's current branch or an explicitly targeted branch
+	// param matching this value. Empty means no protection.
+	ProtectedBranch string
 }
 
 func (t *GitPushTool) Name() string { return "git_push" }
@@ -501,6 +529,29 @@ func (t *GitPushTool) Execute(ctx context.Context, input map[string]any) (ToolRe
 			return ToolResult{Success: false, Error: err.Error()}, nil
 		}
 		args = append(args, branch)
+	}
+
+	if t.ProtectedBranch != "" {
+		current, berr := gitx.CurrentBranch(ctx, repoDir)
+		explicitBranch, _ := input["branch"].(string)
+		blockedBranch := ""
+		if berr == nil && current == t.ProtectedBranch {
+			blockedBranch = current
+		} else if explicitBranch != "" && explicitBranch == t.ProtectedBranch {
+			blockedBranch = explicitBranch
+		}
+		if blockedBranch != "" {
+			return ToolResult{
+				Success: false,
+				Output: map[string]any{
+					"blocked":          true,
+					"blocked_reason":   "protected_branch",
+					"branch":           blockedBranch,
+					"protected_branch": t.ProtectedBranch,
+				},
+				Error: fmt.Sprintf("git push blocked: %q is the protected branch; push a feature branch and open a PR instead", blockedBranch),
+			}, nil
+		}
 	}
 
 	out, exitCode, err := runGitCommand(repoDir, args...)

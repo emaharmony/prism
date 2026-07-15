@@ -127,7 +127,7 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 	// Build handlers connecting to Prism primitives
 	// The ToolExecute handler runs tools through Prism's policy-enforced executor
 	toolReg := tool.NewRegistry()
-	tool.RegisterBuiltinsV4(toolReg, ".", 1024*1024)
+	tool.RegisterBuiltinsV4(toolReg, ".", 1024*1024, "")
 	policyCfg := tool.PolicyConfig{WorkspaceRoot: ".", MaxFileSize: 1024 * 1024}
 	toolExec := tool.NewExecutor(toolReg, &policyCfg)
 

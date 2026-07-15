@@ -3,7 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 version=$(tr -d '[:space:]' < VERSION)
-[[ $version =~ ^0\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION is not pre-1.0 SemVer: $version" >&2; exit 1; }
+# Pre-1.0 SemVer with an optional prerelease suffix (e.g. 0.2.0-preview.1),
+# matching the tag pattern release.yml already accepts.
+[[ $version =~ ^0\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "VERSION is not pre-1.0 SemVer: $version" >&2; exit 1; }
 
 grep -Fq "var Version = \"$version\"" internal/version/version.go
 grep -Fq "version = \"$version\"" sdk/pyproject.toml

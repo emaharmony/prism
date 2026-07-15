@@ -131,6 +131,6 @@ Per Ema's requirement, Mango is involved in every fix:
 
 ## See Also
 
-- [Architecture](ARCHITECTURE.md)
-- [Version History](VERSION_HISTORY.md)
+- [Architecture](architecture/ARCHITECTURE.md)
+- [Version History](history/VERSION_HISTORY.md)
 - [Documentation Hub](README.md)

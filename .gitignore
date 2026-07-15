@@ -32,6 +32,12 @@ Thumbs.db
 *.bak
 *.log
 
+# Python build/test artifacts
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+
 # Database files
 *.db
 *.db-wal
@@ -51,6 +57,9 @@ tmp/
 dist/
 build/
 coverage/
+coverage.out
+coverage-gate.md
+test-results/
 /prism-panel
 .prism/
 

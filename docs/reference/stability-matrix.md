@@ -40,6 +40,7 @@ Every major feature in Prism is assigned a stability level to set expectations f
 | Firecrawl | **Experimental** | No | `agents.capabilities` | Lab only |
 | Visual Workflow Editing | **Experimental** | No | N/A | Lab only |
 | Worktree Mutation | **Preview** | No | `autopatch.enabled` | Evaluation |
+| Free Mode / Shell Tool (V60) | **Experimental** | No | `channel_roles[].mode: free` + `shell.master_user_id` | Lab only — single-owner Discord use; see [Safety Model](../concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode) |
 
 ## Known Limitations
 
@@ -47,3 +48,6 @@ Every major feature in Prism is assigned a stability level to set expectations f
 *   **Windows Paths:** While supported, some experimental integrations may have path-separator issues.
 *   **Memory Overhead:** Remembrance service (Python) requires separate resource management.
 *   **NATS Persistence:** Embedded NATS is configured for file storage by default; ensure disk space availability in `prism-data`.
+*   **Free Mode shell scope:** the shell tool's working directory is not path-contained to the workspace; only a hard blocklist and the configured command tier restrict it. See [Safety Model](../concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode).
+*   **Protected branch is unenforced:** `project.default_branch` is documented as protected but no code currently blocks writes to it.
+*   **Windows test coverage is partial:** CI's Windows job runs only `internal/safety`, `internal/config`, `internal/run` plus a CLI smoke test — not the full suite. `internal/tool` currently fails on Windows (`TestShellTool_Timeout`, `TestShellTool_Cwd`) due to platform-specific shell-timeout behavior.

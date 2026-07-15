@@ -38,8 +38,11 @@ If you want to use Prism or contribute under different terms, contact Emmanuel V
 ## Contribution Guidelines
 
 - Keep changes scoped.
-- Do not introduce arbitrary shell execution.
-- Do not bypass approval gates.
+- Do not introduce arbitrary shell execution or approval-gate bypasses
+  without an explicit, reviewed, narrowly-scoped design (the existing
+  precedent is Free Mode — a single-owner, opt-in, off-by-default exception;
+  see [docs/concepts/SAFETY.md](docs/concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode)).
+  Do not widen that exception's scope without the same level of review.
 - Do not allow LLMs to approve their own mutations.
 - Do not commit generated `runs/` artifacts.
 - Do not commit secrets or `.env` files.

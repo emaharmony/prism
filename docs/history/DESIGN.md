@@ -362,6 +362,6 @@ All existing `prism.*` events continue to work. Per-agent namespaces are dynamic
 
 ## See Also
 
-- [Architecture](ARCHITECTURE.md)
+- [Architecture](../architecture/ARCHITECTURE.md)
 - [Version History](VERSION_HISTORY.md)
 - [Documentation Hub](README.md)

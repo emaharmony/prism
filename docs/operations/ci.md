@@ -2,6 +2,12 @@
 
 Prism uses GitHub Actions for continuous integration to ensure code quality and cross-platform compatibility.
 
+All third-party actions across all three workflows (`ci.yml`, `release.yml`,
+`external-links.yml`) are pinned to immutable commit SHAs, not mutable
+version tags — each pin is annotated with the tag it corresponds to
+(e.g. `actions/checkout@34e11487... # v4`) so it stays legible while
+remaining tamper-resistant.
+
 ## Workflows
 
 ### 1. CI (`.github/workflows/ci.yml`)

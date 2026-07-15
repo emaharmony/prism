@@ -36,17 +36,23 @@ guarantee — always confirm against the source and `prism --help`.
 | Autopatch / self-patching (`scan`) | Experimental | Disabled by default |
 | Cross-Prism bridge / Factory handoff | Experimental | Disabled by default |
 | Vector search / projections | Experimental | Advanced/optional |
+| Free Mode / shell tool (V60) | Experimental | Disabled by default; single-owner Discord bypass of the approval gate — see [Safety Model](../concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode) |
 
 ## Safe Defaults
 
 - HTTP API binds to loopback (`127.0.0.1`) by default.
-- File mutations require operator approval.
-- Shell execution (`run_command`) is denied by policy.
-- Optional integrations (autopatch, MCP, bridge, scheduler, remembrance) are
-  disabled until explicitly enabled.
+- File mutations require operator approval, **except** for the one Discord
+  user configured as `shell.master_user_id` in a channel set to
+  `mode: free` — see [Safety Model](../concepts/SAFETY.md#free-mode-owner-authorized-mutation-mode).
+- The shell tool is registered but requires approval by default (gated
+  mode); it is auto-approved only under Free Mode for the configured master
+  user, and its working directory is not restricted to the workspace even
+  then.
+- Optional integrations (autopatch, MCP, bridge, scheduler, remembrance,
+  Free Mode) are disabled until explicitly enabled.
 
 ## See Also
 
-- [Getting Started](GETTING_STARTED.md)
-- [Configuration Guide](CONFIGURATION.md)
-- [Roadmap](ROADMAP.md)
+- [Getting Started](../getting-started/GETTING_STARTED.md)
+- [Configuration Guide](../operations/CONFIGURATION.md)
+- [Roadmap](../history/ROADMAP.md)
