@@ -591,4 +591,60 @@ func TestBuildPrompt_WithChannelRole(t *testing.T) {
 	if strings.Contains(promptNoRole, "## Channel:") {
 		t.Error("prompt without channel role should not contain channel section")
 	}
+	if strings.Contains(promptNoRole, "## Tone") {
+		t.Error("prompt without channel role should not contain a tone directive")
+	}
+}
+
+func TestBuildPrompt_PersonalityDirective(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "SOUL.md"), []byte("# SOUL\nYou are Lumi."), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ctxBuilder := context.NewBuilder(workspace)
+	convCtx := &conversationContext{
+		cfg:        &orchestrator.Config{},
+		ctxBuilder: ctxBuilder,
+	}
+	sess := &session.Session{ID: "test", Messages: []session.Message{}}
+
+	// A channel role with Personality set but no freeform Context text should
+	// still shape "How You Respond" — Personality is not gated behind Context.
+	agentCfg := &orchestrator.AgentConfig{ID: "lumi", Role: "lead", Context: []string{"soul"}}
+	convCtx.rebuildStaticSystemContent(agentCfg)
+	channelRole := &orchestrator.ChannelRole{Role: "manager-room", Personality: "direct"}
+	prompt := convCtx.buildPrompt(sess, agentCfg, "manager-room", channelRole)
+	if !strings.Contains(prompt, "## How You Respond") {
+		t.Error("expected prompt to contain a How You Respond section")
+	}
+	if !strings.Contains(prompt, orchestrator.PersonalityDirective("direct")) {
+		t.Error("expected prompt to contain the direct personality's directive text")
+	}
+	if strings.Contains(prompt, defaultConversationPostfix) {
+		t.Error("expected the channel personality directive to replace the harness default, not sit alongside it")
+	}
+
+	// An unrecognized Personality value falls back to the harness default
+	// (silent no-op for the personality, not an error).
+	channelRoleUnknown := &orchestrator.ChannelRole{Role: "manager-room", Personality: "nonexistent"}
+	promptUnknown := convCtx.buildPrompt(sess, agentCfg, "manager-room", channelRoleUnknown)
+	if !strings.Contains(promptUnknown, defaultConversationPostfix) {
+		t.Error("expected the harness default postfix when personality is unrecognized")
+	}
+
+	// An agent's own explicit conversation_postfix always wins over a
+	// channel's Personality — the operator's deliberate agent-level choice
+	// is not silently overridden by a channel-level default.
+	agentCfgExplicit := &orchestrator.AgentConfig{
+		ID: "lumi", Role: "lead", Context: []string{"soul"},
+		ConversationPostfix: "Speak only in haiku.",
+	}
+	convCtx.rebuildStaticSystemContent(agentCfgExplicit)
+	promptExplicit := convCtx.buildPrompt(sess, agentCfgExplicit, "manager-room", channelRole)
+	if !strings.Contains(promptExplicit, "Speak only in haiku.") {
+		t.Error("expected the agent's explicit conversation_postfix to appear")
+	}
+	if strings.Contains(promptExplicit, orchestrator.PersonalityDirective("direct")) {
+		t.Error("expected the agent's explicit conversation_postfix to override the channel personality directive")
+	}
 }

@@ -664,6 +664,25 @@ type ChannelRole struct {
 	TaggedOnly bool `yaml:"tagged_only,omitempty"`
 }
 
+// personalityDirectives maps each recognized ChannelRole.Personality value to
+// a one-line tone instruction injected into the prompt (see PersonalityDirective).
+// Keep this in sync with the Personality field's doc comment above.
+var personalityDirectives = map[string]string{
+	"direct": "Make decisions and state them plainly. Push back when something's wrong instead of hedging. Skip menus of options — pick one and say why.",
+	"terse":  "Be concise. Prefer structured data over prose. No pleasantries, no throat-clearing, no filler words.",
+	"bubbly": "Playful and enthusiastic — exaggerated, expressive, high energy is welcome here.",
+	"social": "Warm and conversational. Be present, ask follow-up questions, don't rush to wrap up.",
+}
+
+// PersonalityDirective returns the prompt instruction for a ChannelRole's
+// Personality value, or "" if personality is empty or not recognized. An
+// unrecognized value is treated as no directive rather than an error, so a
+// typo in prism.yaml degrades to today's silent-no-op behavior instead of
+// failing config load.
+func PersonalityDirective(personality string) string {
+	return personalityDirectives[personality]
+}
+
 // ChannelConfig defines a messaging channel connection.
 type ChannelConfig struct {
 	// Type is the channel type: discord, telegram, webchat.

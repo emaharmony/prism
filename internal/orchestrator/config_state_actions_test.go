@@ -277,3 +277,33 @@ func TestResolveChannelRoleConfig(t *testing.T) {
 		t.Errorf("Tools = %q, want empty", cr4.Tools)
 	}
 }
+
+func TestPersonalityDirective(t *testing.T) {
+	tests := []struct {
+		personality string
+		wantEmpty   bool
+	}{
+		{"direct", false},
+		{"terse", false},
+		{"bubbly", false},
+		{"social", false},
+		{"", true},              // unset — no directive, backward compatible no-op
+		{"nonexistent", true},   // typo/unknown value — degrade silently, don't error
+	}
+	seen := map[string]bool{}
+	for _, tt := range tests {
+		got := PersonalityDirective(tt.personality)
+		if tt.wantEmpty && got != "" {
+			t.Errorf("PersonalityDirective(%q) = %q, want empty", tt.personality, got)
+		}
+		if !tt.wantEmpty {
+			if got == "" {
+				t.Errorf("PersonalityDirective(%q) = empty, want a non-empty directive", tt.personality)
+			}
+			if seen[got] {
+				t.Errorf("PersonalityDirective(%q) returned a directive identical to another personality's — each should be distinct", tt.personality)
+			}
+			seen[got] = true
+		}
+	}
+}
