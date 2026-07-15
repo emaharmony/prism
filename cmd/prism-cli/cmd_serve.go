@@ -136,7 +136,7 @@ type conversationContext struct {
 	planMgr       *plan.Manager            // V32: Plan manager for plan-first pipeline
 	improveMgr    *improve.Manager         // V32: Self-improvement loop
 	guardian      *guard.Guard             // V32: Guard rail for plan enforcement
-	toolPolicy    tool.PolicyConfig        // V27: Tool policy configuration
+	toolPolicy    *tool.PolicyConfig       // V27: Tool policy configuration (pointer so free mode can mutate it live)
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
 	pendingWorkMu sync.Mutex
@@ -499,6 +499,15 @@ func executeServe(args []string) {
 			toolReg.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 			toolReg.Register(&tool.GitCreatePRTool{})
 			// V32: State management tools
+			// V60: Shell tool for free mode (registered with tier_1 policy for gated mode)
+			shellTool := &tool.ShellTool{
+				Policy:         tool.BuildShellPolicyFromConfig("tier_1", cfg.Shell.Allowlists, cfg.Shell.Defaults.BlockedPatterns),
+				DefaultTimeout: cfg.Shell.Defaults.TimeoutSeconds,
+				MaxOutputBytes: cfg.Shell.Defaults.MaxOutputBytes,
+				MaxStderrBytes: cfg.Shell.Defaults.MaxOutputBytes / 2,
+			}
+			toolReg.Register(shellTool)
+
 			stateMgr = state.NewManager(workspaceRoot)
 			stateMgr.EnsureDir()
 			tool.RegisterStateTools(toolReg, stateMgr)
@@ -567,8 +576,27 @@ func executeServe(args []string) {
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
-			toolExec = tool.NewExecutor(toolReg, toolPolicy)
+			toolExec = tool.NewExecutor(toolReg, &toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
+			toolExec.SetEmitter(func(eventType, source string, payload map[string]any) {
+				log.Printf("[TOOL-EVENT] %s: %v", eventType, payload)
+				// Forward file approval requests to the Discord channel
+				if eventType == "prism.approval.file_requested" {
+					approvalID, _ := payload["approval_id"].(string)
+					runID, _ := payload["run_id"].(string)
+					targetPath, _ := payload["target_path"].(string)
+					agentName, _ := payload["agent"].(string)
+					preview, _ := payload["preview"].(string)
+					if approvalID != "" && runID != "" {
+						// Send approval card to the channel where the conversation is happening
+						// The channel ID is passed via the payload if available
+						channelID, _ := payload["_channel_id"].(string)
+						if channelID != "" && bot != nil {
+							sendFileApprovalCard(bot, channelID, approvalID, runID, targetPath, agentName, preview)
+						}
+					}
+				}
+			})
 
 			convCtx := &conversationContext{
 				router:      rtr,
@@ -592,7 +620,7 @@ func executeServe(args []string) {
 				crossCoord:  crossCoord,
 				autopatcher: autopatcher,
 				toolExec:    toolExec,
-				toolPolicy:  toolPolicy,
+				toolPolicy:  &toolPolicy,
 				rateLimiter: safety.NewUserRateLimiter(
 					10, // max 10 messages per burst per user
 					1,  // refill 1 token/sec per user
@@ -620,6 +648,40 @@ func executeServe(args []string) {
 				nc := natsConn
 				bot.OnButton(func(customID, userID, userName string) {
 					log.Printf("[BUTTON] clicked: customID=%q user=%q(%s)", customID, userName, userID)
+
+					// File approval buttons (prismapprove: prefix)
+					if approvalID, runID, action, ok := decodeFileApprovalButtonID(customID); ok {
+						log.Printf("[BUTTON] file approval: approvalID=%s runID=%s action=%s", approvalID, runID, action)
+						store := approval.NewStore(cfg.Prism.RunsDir)
+						a, err := store.Load(runID, approvalID)
+						if err != nil {
+							log.Printf("[BUTTON] file approval: failed to load approval: %v", err)
+							return
+						}
+						if action == "approve" {
+							// Write the file to disk
+							if err := os.MkdirAll(filepath.Dir(a.TargetPath), 0755); err != nil {
+								log.Printf("[BUTTON] file approval: mkdir failed: %v", err)
+								return
+							}
+							if err := os.WriteFile(a.TargetPath, []byte(a.Content), 0644); err != nil {
+								log.Printf("[BUTTON] file approval: write failed: %v", err)
+								return
+							}
+							a.Status = approval.StatusApproved
+							a.ApprovedBy = firstNonEmptyCommandArg(userName, userID, "discord")
+							store.Save(a)
+							log.Printf("[BUTTON] file approval: APPROVED and written to %s by %s", a.TargetPath, a.ApprovedBy)
+						} else if action == "deny" {
+							a.Status = approval.StatusDenied
+							a.ApprovedBy = firstNonEmptyCommandArg(userName, userID, "discord")
+							store.Save(a)
+							log.Printf("[BUTTON] file approval: DENIED by %s", a.ApprovedBy)
+						}
+						return
+					}
+
+					// Workflow feedback buttons (prismfb: prefix)
 					payload, ok := feedbackButtonPayload(customID, firstNonEmptyCommandArg(userName, userID, "discord"))
 					if !ok {
 						log.Printf("[BUTTON] payload decode failed for customID=%q", customID)
@@ -902,6 +964,57 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+	// V60: Free mode — check if this channel is in free mode and the sender is the master user.
+	// Free mode skips phase gates, registers all tools including shell at the channel's tier,
+	// and allows direct mutations without proposal/approval.
+	freeMode := false
+	if channelRoleConfig != nil && channelRoleConfig.Mode == "free" {
+		masterUserID := cc.cfg.Shell.MasterUserID
+		if masterUserID != "" && msg.UserID == masterUserID {
+			freeMode = true
+			log.Printf("[FREE-MODE] activated for master user %s in channel %s", msg.UserID, msg.ChannelID)
+
+			// Set auto-approve mutations so write_file, git mutations, etc. execute directly
+			cc.toolPolicy.AutoApproveMutations = true
+
+			// Update shell tool policy to the channel's configured tier
+			shellTier := channelRoleConfig.ShellPolicy
+			if shellTier == "" {
+				shellTier = "tier_3" // default to full access in free mode
+			}
+			if shell, err := cc.toolExec.Registry.Resolve("shell"); err == nil {
+				if st, ok := shell.(*tool.ShellTool); ok {
+					st.Policy = tool.BuildShellPolicyFromConfig(shellTier, cc.cfg.Shell.Allowlists, cc.cfg.Shell.Defaults.BlockedPatterns)
+					log.Printf("[FREE-MODE] shell policy set to tier %s", shellTier)
+				}
+			}
+
+			// Emit audit event
+			cc.publishEvent("prism.free.action", map[string]any{
+				"user_id":    msg.UserID,
+				"channel_id": msg.ChannelID,
+				"shell_tier": shellTier,
+			})
+		} else {
+			log.Printf("[FREE-MODE] channel %s is free mode but sender %s is not master user %s — falling back to gated",
+				msg.ChannelID, msg.UserID, masterUserID)
+		}
+	}
+
+	// V60: Reset auto-approve mutations after free mode message is processed.
+	// This ensures gated mode messages still require approval.
+	if freeMode {
+		defer func() {
+			cc.toolPolicy.AutoApproveMutations = false
+			// Reset shell tool policy back to tier_1 for gated mode
+			if shell, err := cc.toolExec.Registry.Resolve("shell"); err == nil {
+				if st, ok := shell.(*tool.ShellTool); ok {
+					st.Policy = tool.BuildShellPolicyFromConfig("tier_1", cc.cfg.Shell.Allowlists, cc.cfg.Shell.Defaults.BlockedPatterns)
+				}
+			}
+		}()
+	}
+
 	// Step 1: Debounce — drop rapid-fire messages from the same user
 	debounceKey := msg.UserID + ":" + msg.ChannelID
 	if !cc.debounce.Allow(debounceKey) {
@@ -1116,11 +1229,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Skip tool instructions if the gate excluded tools for this message
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
-		toolInfos = filterToolInfosByAgentPolicy(toolInfos, cc.toolPolicy, agentCfg.ID)
+		toolInfos = filterToolInfosByAgentPolicy(toolInfos, *cc.toolPolicy, agentCfg.ID)
 		// V33: Filter tools based on channel role (read-only channels get limited tools)
 		toolInfos = filterToolInfosByChannelRole(toolInfos, channelRoleConfig)
 		if len(toolInfos) > 0 {
-			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, cc.toolPolicy.ReadAllowedPaths()...)
+			prompt += agent.BuildToolPromptSuffix(toolInfos, cc.ctxBuilder.WorkspaceRoot, (*cc.toolPolicy).ReadAllowedPaths()...)
 		}
 	}
 
@@ -1205,7 +1318,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			// Build messages array and tools list
 			messages := cc.buildMessages(promptSession, agentCfg)
 			chatTools := cc.buildChatTools()
-			chatTools = filterChatToolsByAgentPolicy(chatTools, cc.toolPolicy, agentCfg.ID)
+			chatTools = filterChatToolsByAgentPolicy(chatTools, *cc.toolPolicy, agentCfg.ID)
 
 			// V33: Filter tools based on channel role (none, read-only, all)
 			chatTools = filterChatToolsByChannelRole(chatTools, channelRoleConfig)
@@ -2109,6 +2222,7 @@ var mutationProposalTools = map[string]bool{
 	"git_commit":                true,
 	"git_push":                  true,
 	"create_pr":                 true,
+	"shell":                     true,
 }
 
 // ToolMode represents the tool access level for a channel.
@@ -2185,4 +2299,28 @@ func mcpServerSpecs(cfg *orchestrator.Config) []mcp.ServerSpec {
 		})
 	}
 	return specs
+}
+
+// sendFileApprovalCard sends a Discord message with Approve/Deny buttons for a file write approval.
+func sendFileApprovalCard(bot *discordbot.BotAdapter, channelID, approvalID, runID, targetPath, agentName, preview string) {
+	if bot == nil || channelID == "" {
+		return
+	}
+	buttons := buildFileApprovalButtons(approvalID, runID)
+	msgButtons := make([]discordbot.MessageButton, len(buttons))
+	for i, b := range buttons {
+		msgButtons[i] = discordbot.MessageButton{
+			Label:    b.Label,
+			Style:    int(b.Style),
+			CustomID: b.CustomID,
+		}
+	}
+	content := fmt.Sprintf("📋 **File write approval requested**\n**Agent:** %s\n**Path:** `%s`\n**Preview:**\n```\n%s\n```", agentName, targetPath, preview)
+	if err := bot.Send(&discordbot.OutboundMessage{
+		ChannelID: channelID,
+		Content:   content,
+		Buttons:   msgButtons,
+	}); err != nil {
+		log.Printf("[APPROVAL-CARD] failed to send: %v", err)
+	}
 }

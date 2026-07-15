@@ -27,6 +27,7 @@ var NamedSources = map[string]string{
 	"memory":    "MEMORY.md",
 	"identity":  "IDENTITY.md",
 	"snippy":    "SNIPPY.md",
+	"correspondence": "CORRESPONDENCE.md",
 }
 
 // SourcePriority controls truncation order. Lower = truncated first.
@@ -37,6 +38,7 @@ var SourcePriority = map[string]int{
 	"heartbeat": 50,
 	"memory":    50,
 	"snippy":    60,
+	"correspondence": 70,
 }
 
 // ContextFile represents a workspace file that has been read and processed.

@@ -129,7 +129,7 @@ func executeWorkflowRun(workflowName, inputFile, runDir string) {
 	toolReg := tool.NewRegistry()
 	tool.RegisterBuiltinsV4(toolReg, ".", 1024*1024)
 	policyCfg := tool.PolicyConfig{WorkspaceRoot: ".", MaxFileSize: 1024 * 1024}
-	toolExec := tool.NewExecutor(toolReg, policyCfg)
+	toolExec := tool.NewExecutor(toolReg, &policyCfg)
 
 	handlers := workflow.StepHandlers{
 		ToolExecute: func(ctx context.Context, toolName string, toolInput map[string]any) (map[string]any, error) {

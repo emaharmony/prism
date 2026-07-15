@@ -87,7 +87,7 @@ func executeToolRun(toolName, inputJSON, project, workspace string, maxFileSize 
 		WorkspaceRoot: workspace,
 		MaxFileSize:   maxFileSize,
 	}
-	executor := tool.NewExecutor(registry, policyConfig)
+	executor := tool.NewExecutor(registry, &policyConfig)
 
 	fmt.Printf("Running tool %q with input: %s\n", toolName, inputJSON)
 

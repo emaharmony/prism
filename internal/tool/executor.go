@@ -3,6 +3,8 @@ package tool
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/emaharmony/prism/internal/approval"
@@ -15,7 +17,7 @@ import (
 // event log for auditability.
 type Executor struct {
 	Registry        *Registry
-	Policy          PolicyConfig
+	Policy          *PolicyConfig
 	PolicyEvaluator PolicyEvaluatorFunc // V8: central policy engine (optional)
 	ApprovalStore   ApprovalStorer      // Optional persistence for approval-gated tools.
 	// Emit is called to record events. If nil, events are silently dropped.
@@ -32,7 +34,7 @@ type ApprovalStorer interface {
 type PolicyEvaluatorFunc func(action string, resource policy.Resource, context policy.Context) policy.PolicyDecision
 
 // NewExecutor creates an executor with the given registry and policy config.
-func NewExecutor(registry *Registry, policy PolicyConfig) *Executor {
+func NewExecutor(registry *Registry, policy *PolicyConfig) *Executor {
 	return &Executor{
 		Registry: registry,
 		Policy:   policy,
@@ -66,6 +68,7 @@ func (e *Executor) SetApprovalStore(store ApprovalStorer) {
 // If V8 policy is not configured, local policy runs as before (backward compatible).
 func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, project, correlationID string, input map[string]any) (ToolResult, error) {
 	runID := metadataString(input, "_run_id")
+	channelID := metadataString(input, "_channel_id")
 	execInput := stripMetadata(input)
 
 	// Emit tool.requested
@@ -118,7 +121,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	}
 
 	// Evaluate policy
-	policyResult := EvaluatePolicyForAgent(e.Policy, toolName, agent, execInput)
+	policyResult := EvaluatePolicyForAgent(*e.Policy, toolName, agent, execInput)
 
 	// Handle requires_approval — this is not a denial, it's a request for human approval
 	if policyResult.Decision == PolicyRequiresApproval {
@@ -147,7 +150,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		// Mark as pending_approval status
 		result.Output["policy_decision"] = string(PolicyRequiresApproval)
 		result.Output["policy_reason"] = policyResult.Reason
-		if err := e.persistApproval(toolName, agent, project, correlationID, runID, execInput, policyResult, &result); err != nil {
+		if err := e.persistApproval(toolName, agent, project, correlationID, runID, channelID, execInput, policyResult, &result); err != nil {
 			e.emitEvent("prism.approval.persist_failed", map[string]any{
 				"tool_name":      toolName,
 				"agent":          agent,
@@ -220,6 +223,45 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		}, err
 	}
 
+	// Auto-approve write: when write_file_proposal is auto-approved, actually write the file to disk.
+	// The WriteFileProposal tool only creates a proposal; when AutoApproveMutations is true,
+	// we need to perform the actual file write ourselves.
+	if toolName == "write_file_proposal" && e.Policy != nil && e.Policy.AutoApproveMutations && result.Success {
+		filePath, _ := sanitizedInput["path"].(string)
+		fileContent, _ := sanitizedInput["content"].(string)
+		if filePath != "" {
+			roots := append([]string{}, e.Policy.WorkspaceRoot)
+			roots = append(roots, e.Policy.ReadRoots...)
+			roots = append(roots, e.Policy.WriteRoots...)
+			resolvedPath, err := safety.ResolveAndContainMulti(roots, filePath)
+			if err != nil {
+				result.Error = fmt.Sprintf("auto-approve write: path resolution failed: %v", err)
+				result.Success = false
+			} else {
+				if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
+					result.Error = fmt.Sprintf("auto-approve write: mkdir failed: %v", err)
+					result.Success = false
+				} else if err := os.WriteFile(resolvedPath, []byte(fileContent), 0644); err != nil {
+					result.Error = fmt.Sprintf("auto-approve write: write failed: %v", err)
+					result.Success = false
+				} else {
+					result.Output["status"] = "written"
+					result.Output["written_path"] = resolvedPath
+					result.Output["auto_approved"] = true
+					e.emitEvent("prism.mutation.applied", map[string]any{
+						"tool_name":      toolName,
+						"agent":           agent,
+						"project":         project,
+						"correlation_id":  correlationID,
+						"target_path":     resolvedPath,
+						"mutation_type":   "write_file",
+						"auto_approved":   true,
+					})
+				}
+			}
+		}
+	}
+
 	// Emit tool.completed
 	e.emitEvent("prism.tool.completed", map[string]any{
 		"tool_name":      toolName,
@@ -239,7 +281,7 @@ func (e *Executor) emitEvent(eventType string, payload map[string]any) {
 	}
 }
 
-func (e *Executor) persistApproval(toolName, agent, project, correlationID, runID string, input map[string]any, policyResult PolicyResult, result *ToolResult) error {
+func (e *Executor) persistApproval(toolName, agent, project, correlationID, runID, channelID string, input map[string]any, policyResult PolicyResult, result *ToolResult) error {
 	if e.ApprovalStore == nil {
 		return nil
 	}
@@ -306,6 +348,20 @@ func (e *Executor) persistApproval(toolName, agent, project, correlationID, runI
 	result.Output["correlation_id"] = correlationID
 	result.Output["status"] = "pending_approval"
 	result.Output["instruction"] = fmt.Sprintf("Use 'prism approval approve %s --run %s --by <name>' or 'prism approval deny %s --run %s --by <name>' to proceed.", approvalID, runID, approvalID, runID)
+
+	// Emit event for Discord notification (approval card with buttons)
+	e.emitEvent("prism.approval.file_requested", map[string]any{
+		"approval_id":    approvalID,
+		"run_id":          runID,
+		"agent":           agent,
+		"project":         project,
+		"target_path":     targetPath,
+		"mutation_type":   mutationType,
+		"preview":         preview,
+		"content_length":  len(content),
+		"_channel_id":     channelID,
+	})
+
 	return nil
 }
 

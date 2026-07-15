@@ -54,6 +54,9 @@ type Config struct {
 	// FactoryMonitor configures local Roblox Factory status notifications.
 	FactoryMonitor FactoryMonitorConfig `yaml:"factory_monitor"`
 
+	// Shell configures the shell tool access control for free mode.
+	Shell ShellConfig `yaml:"shell"`
+
 	// Agents defines the agents Prism should register.
 	// Each agent gets its own event namespace based on its ID.
 	Agents []AgentConfig `yaml:"agents"`
@@ -375,6 +378,34 @@ type FactoryMonitorConfig struct {
 	StuckAfterMinutes int    `yaml:"stuck_after_minutes"`
 }
 
+// ShellConfig configures the shell tool access control for free mode.
+type ShellConfig struct {
+	// MasterUserID is the Discord user ID that can trigger free mode.
+	// Only this user gets direct shell access in free-mode channels.
+	MasterUserID string `yaml:"master_user_id"`
+
+	// Allowlists maps tier names to glob-style command patterns.
+	// tier_1: build/test/git only
+	// tier_2: expanded dev commands
+	// tier_3: full access ("*" pattern)
+	Allowlists map[string][]string `yaml:"allowlists"`
+
+	// Defaults holds default values for shell tool execution.
+	Defaults ShellDefaults `yaml:"defaults"`
+}
+
+// ShellDefaults holds default values for shell tool execution.
+type ShellDefaults struct {
+	// TimeoutSeconds is the default command timeout in seconds.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+
+	// MaxOutputBytes is the maximum stdout bytes to return.
+	MaxOutputBytes int `yaml:"max_output_bytes"`
+
+	// BlockedPatterns are additional patterns to block beyond the hard blocklist.
+	BlockedPatterns []string `yaml:"blocked_patterns"`
+}
+
 // FactoryBridgeConfig configures report/validation-only handoff to Roblox Factory.
 type FactoryBridgeConfig struct {
 	Enabled            bool   `yaml:"enabled"`
@@ -566,12 +597,23 @@ type SchedulerJobConfig struct {
 // V33: Includes tool filtering, personality, and structured channel context.
 // Project focus is NOT hardcoded — the agent switches context dynamically
 // based on conversation. The channel provides vibes, not project scope.
+// V60: Adds Mode (gated/free) and ShellPolicy for freedom mode.
 type ChannelRole struct {
 	// ID is the Discord channel ID.
 	ID string `yaml:"id"`
 
 	// Role is the state action key to activate (e.g., "manager-room", "fun").
 	Role string `yaml:"role"`
+
+	// Mode controls the operating mode for this channel.
+	// "gated" (default) = phase-gated workflow with proposal/approval.
+	// "free" = direct execution, no phase gates, all tools available.
+	Mode string `yaml:"mode,omitempty"`
+
+	// ShellPolicy controls the shell access tier for this channel.
+	// "none" | "tier_1" | "tier_2" | "tier_3".
+	// Only used when Mode is "free" or when shell tool is registered.
+	ShellPolicy string `yaml:"shell_policy,omitempty"`
 
 	// Tools controls which tools are available in this channel.
 	// "all" = all tools, "read-only" = only read tools, "none" = no tools.
@@ -922,6 +964,21 @@ func DefaultConfig() *Config {
 			Root:              `D:\_projects_\roblox-factory`,
 			PollSeconds:       30,
 			StuckAfterMinutes: 30,
+		},
+		Shell: ShellConfig{
+			Defaults: ShellDefaults{
+				TimeoutSeconds: 30,
+				MaxOutputBytes: 10240,
+				BlockedPatterns: []string{
+					"rm -rf /",
+					"rm -rf ~",
+					"rm -rf *",
+					"mkfs*",
+					"dd if=*of=/dev/*",
+					"> /dev/sd*",
+					"chmod 777",
+				},
+			},
 		},
 	}
 }

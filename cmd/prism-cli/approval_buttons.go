@@ -29,6 +29,7 @@ type feedbackButton struct {
 // customIDPrefix namespaces our component custom IDs so the interaction handler can
 // cheaply ignore buttons that aren't ours.
 const customIDPrefix = "prismfb"
+const fileApprovalPrefix = "prismapprove"
 
 // encodeFeedbackButtonID builds a custom ID of the form
 // "prismfb:<gate>:<action>:<runID>" where gate is pre|post.
@@ -120,4 +121,31 @@ func feedbackButtonPayload(customID, reviewer string) (map[string]any, bool) {
 		"reviewer":    reviewer,
 		"notes":       "",
 	}, true
+}
+
+// encodeFileApprovalButtonID builds a custom ID for file write approval buttons.
+// Format: "prismapprove:<approval_id>:<run_id>:<action>"
+func encodeFileApprovalButtonID(approvalID, runID, action string) string {
+	return strings.Join([]string{fileApprovalPrefix, approvalID, runID, action}, ":")
+}
+
+// decodeFileApprovalButtonID parses a file approval button custom ID.
+// Returns approval_id, run_id, action, ok. ok is false for non-Prism or malformed IDs.
+func decodeFileApprovalButtonID(customID string) (approvalID, runID, action string, ok bool) {
+	parts := strings.SplitN(customID, ":", 5)
+	if len(parts) != 4 || parts[0] != fileApprovalPrefix {
+		return "", "", "", false
+	}
+	if parts[1] == "" || parts[2] == "" || parts[3] == "" {
+		return "", "", "", false
+	}
+	return parts[1], parts[2], parts[3], true
+}
+
+// buildFileApprovalButtons returns Approve and Deny buttons for a file write approval.
+func buildFileApprovalButtons(approvalID, runID string) []feedbackButton {
+	return []feedbackButton{
+		{Label: "✅ Approve", Style: styleSuccess, CustomID: encodeFileApprovalButtonID(approvalID, runID, "approve")},
+		{Label: "❌ Deny", Style: styleDanger, CustomID: encodeFileApprovalButtonID(approvalID, runID, "deny")},
+	}
 }
