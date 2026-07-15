@@ -317,7 +317,7 @@ func executeChat(args []string) {
 	toolPolicy.ReadRoots = readRoots
 	toolPolicy.WriteRoots = writeRoots
 	toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
-	toolExec := tool.NewExecutor(registry, toolPolicy)
+	toolExec := tool.NewExecutor(registry, &toolPolicy)
 	toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
 
 	// 7. Set up context builder

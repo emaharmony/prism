@@ -107,7 +107,7 @@ func (b *subAgentBackend) executorFor(workDir string) *tool.Executor {
 			_ = reg.Register(t)
 		}
 	}
-	return tool.NewExecutor(reg, b.exec.Policy)
+	return tool.NewExecutor(reg, b.exec.Policy)  // b.exec.Policy is already *PolicyConfig
 }
 
 func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, subagent.Parser, subagent.ToolExec, error) {

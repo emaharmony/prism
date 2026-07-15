@@ -30,7 +30,7 @@ func TestPolicyIntegrationAllowsReadFile(t *testing.T) {
 	// Tool executor with V8 policy
 	toolReg := NewRegistry()
 	RegisterBuiltinsV4(toolReg, repoRoot, 1024*1024)
-	toolExec := NewExecutor(toolReg, PolicyConfig{WorkspaceRoot: repoRoot, MaxFileSize: 1024 * 1024})
+	toolExec := NewExecutor(toolReg, &PolicyConfig{WorkspaceRoot: repoRoot, MaxFileSize: 1024 * 1024})
 	toolExec.SetPolicyEvaluator(func(action string, resource policy.Resource, context policy.Context) policy.PolicyDecision {
 		return policyEval.Evaluate(policy.PolicyRequest{
 			Action:   action,
@@ -64,7 +64,7 @@ func TestPolicyIntegrationDeniesRunCommand(t *testing.T) {
 
 	toolReg := NewRegistry()
 	RegisterBuiltinsV4(toolReg, ".", 1024*1024)
-	toolExec := NewExecutor(toolReg, PolicyConfig{WorkspaceRoot: "."})
+	toolExec := NewExecutor(toolReg, &PolicyConfig{WorkspaceRoot: "."})
 	toolExec.SetPolicyEvaluator(func(action string, resource policy.Resource, context policy.Context) policy.PolicyDecision {
 		return policyEval.Evaluate(policy.PolicyRequest{
 			Action:   action,
@@ -97,7 +97,7 @@ func TestPolicyIntegrationAllowsButLocalValidatorBlocks(t *testing.T) {
 
 	toolReg := NewRegistry()
 	RegisterBuiltinsV4(toolReg, ".", 1024*1024)
-	toolExec := NewExecutor(toolReg, PolicyConfig{WorkspaceRoot: "."})
+	toolExec := NewExecutor(toolReg, &PolicyConfig{WorkspaceRoot: "."})
 	toolExec.SetPolicyEvaluator(func(action string, resource policy.Resource, context policy.Context) policy.PolicyDecision {
 		return policyEval.Evaluate(policy.PolicyRequest{
 			Action:   action,
@@ -122,7 +122,7 @@ func TestPolicyIntegrationNoEvaluatorBackwardCompatible(t *testing.T) {
 	// Without V8 policy evaluator, local tool policy should work as before
 	toolReg := NewRegistry()
 	RegisterBuiltinsV4(toolReg, ".", 1024*1024)
-	toolExec := NewExecutor(toolReg, PolicyConfig{WorkspaceRoot: ".", MaxFileSize: 1024 * 1024})
+	toolExec := NewExecutor(toolReg, &PolicyConfig{WorkspaceRoot: ".", MaxFileSize: 1024 * 1024})
 
 	result, err := toolExec.ExecuteWithPolicy(context.Background(), "echo", "test-agent", "prism", "test-run", map[string]any{
 		"text": "hello",
@@ -148,7 +148,7 @@ func TestPolicyIntegrationDenyOverridesLocalAllow(t *testing.T) {
 
 	toolReg := NewRegistry()
 	RegisterBuiltinsV4(toolReg, ".", 1024*1024)
-	toolExec := NewExecutor(toolReg, PolicyConfig{WorkspaceRoot: "."})
+	toolExec := NewExecutor(toolReg, &PolicyConfig{WorkspaceRoot: "."})
 	toolExec.SetPolicyEvaluator(func(action string, resource policy.Resource, context policy.Context) policy.PolicyDecision {
 		return policyEval.Evaluate(policy.PolicyRequest{
 			Action:   action,

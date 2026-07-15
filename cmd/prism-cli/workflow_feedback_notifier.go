@@ -124,6 +124,10 @@ func startWorkflowFeedbackNotifier(nc *nats.Conn, bot discordBotClient, cfg *orc
 			return
 		}
 
+		// Collect all target channels: the project channel plus any extra
+		// feedback channels from config (e.g. manager-room mirror).
+		targetChannels := feedbackChannels(cfg, channelID)
+
 		runID, _ := payload["run_id"].(string)
 		phase, _ := payload["phase"].(string)
 		body, _ := payload["package"].(string)
@@ -150,14 +154,16 @@ func startWorkflowFeedbackNotifier(nc *nats.Conn, bot discordBotClient, cfg *orc
 		}
 		// Rich approval card: render interactive buttons for the gate so approvers
 		// can click instead of typing commands (the typed commands still work).
-		out := &discordbot.OutboundMessage{ChannelID: channelID, Content: content}
-		for _, btn := range buildFeedbackButtons(phase, runID) {
-			out.Buttons = append(out.Buttons, discordbot.MessageButton{Label: btn.Label, Style: int(btn.Style), CustomID: btn.CustomID})
-		}
-		if err := bot.Send(out); err != nil {
-			log.Printf("[WORKFLOW-NOTIFY] send failed: %v", err)
-		} else {
-			log.Printf("[WORKFLOW-NOTIFY] sent feedback card to channel %s (run=%s, phase=%s, buttons=%d)", channelID, runID, phase, len(out.Buttons))
+		for _, chID := range targetChannels {
+			out := &discordbot.OutboundMessage{ChannelID: chID, Content: content}
+			for _, btn := range buildFeedbackButtons(phase, runID) {
+				out.Buttons = append(out.Buttons, discordbot.MessageButton{Label: btn.Label, Style: int(btn.Style), CustomID: btn.CustomID})
+			}
+			if err := bot.Send(out); err != nil {
+				log.Printf("[WORKFLOW-NOTIFY] send failed for channel %s: %v", chID, err)
+			} else {
+				log.Printf("[WORKFLOW-NOTIFY] sent feedback card to channel %s (run=%s, phase=%s, buttons=%d)", chID, runID, phase, len(out.Buttons))
+			}
 		}
 	})
 	if err != nil {
@@ -165,6 +171,29 @@ func startWorkflowFeedbackNotifier(nc *nats.Conn, bot discordBotClient, cfg *orc
 	}
 	log.Printf("[WORKFLOW-NOTIFY] subscribed to prism.workflow.feedback.requested")
 	return nil
+}
+
+// feedbackChannels returns the deduplicated list of channels to send feedback
+// cards to: the primary channel plus any extra feedback mirror channels
+// configured via channel_roles with role "manager-room".
+func feedbackChannels(cfg *orchestrator.Config, primary string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	add(primary)
+	if cfg != nil {
+		for _, role := range cfg.ChannelRoles {
+			if role.Role == "manager-room" && role.ID != primary {
+				add(role.ID)
+			}
+		}
+	}
+	return out
 }
 
 // discordIDResolver returns a function mapping an approver/owner name to its first

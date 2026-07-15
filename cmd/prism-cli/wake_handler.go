@@ -302,9 +302,9 @@ func (wh *WakeHandler) Start() error {
 // execution. The human control points are the FEEDBACK_PRE/POST gates, not
 // per-tool approval, so EXECUTION mutations auto-apply once the plan is approved.
 func (wh *WakeHandler) newAutoExec() *tool.Executor {
-	autoPolicy := wh.toolExec.Policy
+	autoPolicy := *wh.toolExec.Policy
 	autoPolicy.AutoApproveMutations = true
-	autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
+	autoExec := tool.NewExecutor(wh.toolReg, &autoPolicy)
 	if wh.toolExec.Emit != nil {
 		autoExec.SetEmitter(wh.toolExec.Emit)
 	}
@@ -765,9 +765,9 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 	// V36: For project_work, use the V2 Natural Gates Workflow System
 	if action == "project_work" && wh.toolExec != nil && wh.toolReg != nil {
 		// Create an auto-approving executor for autonomous wake actions
-		autoPolicy := wh.toolExec.Policy
+		autoPolicy := *wh.toolExec.Policy
 		autoPolicy.AutoApproveMutations = true
-		autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
+		autoExec := tool.NewExecutor(wh.toolReg, &autoPolicy)
 		if wh.toolExec.Emit != nil {
 			autoExec.SetEmitter(wh.toolExec.Emit)
 		}
@@ -777,9 +777,9 @@ You can create branches, commit changes, push to remote, and open PRs. You are n
 		responseContent, promptTokens, completionTokens = wh.runNaturalGatesWorkflow(ctx, systemPrompt, userPrompt, model, agentCfg, autoExec)
 	} else if action == "auto_patch" && wh.toolExec != nil && wh.toolReg != nil {
 		// auto_patch still uses V36 tool loop
-		autoPolicy := wh.toolExec.Policy
+		autoPolicy := *wh.toolExec.Policy
 		autoPolicy.AutoApproveMutations = true
-		autoExec := tool.NewExecutor(wh.toolReg, autoPolicy)
+		autoExec := tool.NewExecutor(wh.toolReg, &autoPolicy)
 		if wh.toolExec.Emit != nil {
 			autoExec.SetEmitter(wh.toolExec.Emit)
 		}

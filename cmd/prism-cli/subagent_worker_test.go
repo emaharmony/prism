@@ -49,7 +49,8 @@ func TestSubAgentBackend_ExecutorRootedAtWorktree(t *testing.T) {
 	sharedRoot := t.TempDir()
 	sharedReg := tool.NewRegistry()
 	tool.RegisterBuiltinsWithRoots(sharedReg, sharedRoot, subAgentWorktreeMaxFileSize, []string{sharedRoot}, []string{sharedRoot})
-	sharedExec := tool.NewExecutor(sharedReg, tool.DefaultPolicyConfig())
+	defaultPolicy := tool.DefaultPolicyConfig()
+	sharedExec := tool.NewExecutor(sharedReg, &defaultPolicy)
 	b := &subAgentBackend{exec: sharedExec, toolReg: sharedReg}
 
 	// A worktree with a marker file only it contains.
