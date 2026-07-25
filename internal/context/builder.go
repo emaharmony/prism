@@ -20,26 +20,29 @@ import (
 
 // NamedSource maps short names to workspace files.
 var NamedSources = map[string]string{
-	"soul":      "SOUL.md",
-	"agents":    "AGENTS.md",
-	"user":      "USER.md",
-	"heartbeat": "HEARTBEAT.md",
-	"memory":    "MEMORY.md",
-	"identity":  "IDENTITY.md",
-	"snippy":    "SNIPPY.md",
+	"soul":          "SOUL.md",
+	"agents":        "AGENTS.md",
+	"user":          "USER.md",
+	"heartbeat":     "HEARTBEAT.md",
+	"memory":        "MEMORY.md",
+	"identity":      "IDENTITY.md",
+	"snippy":        "SNIPPY.md",
 	"correspondence": "CORRESPONDENCE.md",
 }
 
 // SourcePriority controls truncation order. Lower = truncated first.
 var SourcePriority = map[string]int{
-	"soul":      100, // Never truncate
-	"agents":    80,
-	"user":      80,
-	"heartbeat": 50,
-	"memory":    50,
-	"snippy":    60,
+	"soul":          100, // Never truncate
+	"agents":        80,
+	"user":          80,
+	"heartbeat":     50,
+	"memory":        50,
+	"snippy":        60,
 	"correspondence": 70,
 }
+
+// memoryDir is the directory containing memory files (memory/*.md).
+const memoryDir = "memory"
 
 // ContextFile represents a workspace file that has been read and processed.
 type ContextFile struct {
@@ -134,6 +137,15 @@ func (b *Builder) Build() (*InjectedContext, error) {
 		files = append(files, cf)
 	}
 
+	// 1b. Read memory directory (memory/*.md) for relationship history.
+	// The memory directory contains dated memory files that hold session
+	// summaries, decisions, and patterns. These are loaded as additional
+	// context so the agent has access to its full history, not just the
+	// current MEMORY.md brief. Files are sorted newest-first and the token
+	// budget handles truncation of older entries.
+	memoryFiles := b.readMemoryDir()
+	files = append(files, memoryFiles...)
+
 	// 2. Read auto-discovered files (lowest priority)
 	for _, path := range b.AutoFiles {
 		name := filepath.Base(path)
@@ -220,6 +232,15 @@ func (b *Builder) BuildCached() (*InjectedContext, error) {
 	for _, path := range b.ExplicitFiles {
 		expectedPaths[path] = true
 	}
+	// Include memory directory files in cache validation
+	memDir := filepath.Join(b.WorkspaceRoot, memoryDir)
+	if entries, err := os.ReadDir(memDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+				expectedPaths[filepath.Join(memDir, e.Name())] = true
+			}
+		}
+	}
 
 	if b.cache != nil {
 		// Check if any file changed or was added/removed
@@ -272,6 +293,56 @@ func (b *Builder) BuildCached() (*InjectedContext, error) {
 	}
 
 	return b.cache.result, nil
+}
+
+// readMemoryDir reads memory/*.md files from the workspace's memory directory.
+// Files are sorted newest-first (by filename, which starts with a date).
+// Each file is added as a separate context entry with priority 40 (below
+// named sources) so older memories get truncated first under token pressure.
+func (b *Builder) readMemoryDir() []ContextFile {
+	memDir := filepath.Join(b.WorkspaceRoot, memoryDir)
+	entries, err := os.ReadDir(memDir)
+	if err != nil {
+		return nil // Directory doesn't exist or can't be read
+	}
+
+	// Collect .md files, sort newest-first (by name descending)
+	var mdFiles []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+			mdFiles = append(mdFiles, e)
+		}
+	}
+	if len(mdFiles) == 0 {
+		return nil
+	}
+
+	// Sort by name descending (newest first — memory files start with dates)
+	for i := 1; i < len(mdFiles); i++ {
+		for j := i; j > 0 && mdFiles[j].Name() > mdFiles[j-1].Name(); j-- {
+			mdFiles[j], mdFiles[j-1] = mdFiles[j-1], mdFiles[j]
+		}
+	}
+
+	var files []ContextFile
+	for _, entry := range mdFiles {
+		fullPath := filepath.Join(memDir, entry.Name())
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		files = append(files, ContextFile{
+			Name:            "memory/" + entry.Name(),
+			Path:            fullPath,
+			Content:         content,
+			SizeBytes:       len(data),
+			EstimatedTokens: estimateTokens(content),
+			Priority:        40, // Below named sources, truncated first under pressure
+			Source:          "memory",
+		})
+	}
+	return files
 }
 
 // readFile reads a single file from the workspace.
