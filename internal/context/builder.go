@@ -44,6 +44,9 @@ var SourcePriority = map[string]int{
 // memoryDir is the directory containing memory files (memory/*.md).
 const memoryDir = "memory"
 
+// correspondenceDir is the directory containing inter-agent letter files.
+const correspondenceDir = "correspondence"
+
 // ContextFile represents a workspace file that has been read and processed.
 type ContextFile struct {
 	Name            string // Short name (e.g., "soul")
@@ -146,6 +149,14 @@ func (b *Builder) Build() (*InjectedContext, error) {
 	memoryFiles := b.readMemoryDir()
 	files = append(files, memoryFiles...)
 
+	// 1c. Read correspondence directory (correspondence/*.md) for inter-agent
+	// letters. These are the written communications between OpenClaw Lumi and
+	// Prism Lumi. Sorted newest-first, priority 65 (below correspondence named
+	// source but above memory files — letters are more time-sensitive than
+	// historical memory entries).
+	correspondenceFiles := b.readCorrespondenceDir()
+	files = append(files, correspondenceFiles...)
+
 	// 2. Read auto-discovered files (lowest priority)
 	for _, path := range b.AutoFiles {
 		name := filepath.Base(path)
@@ -238,6 +249,15 @@ func (b *Builder) BuildCached() (*InjectedContext, error) {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
 				expectedPaths[filepath.Join(memDir, e.Name())] = true
+			}
+		}
+	}
+	// Include correspondence directory files in cache validation
+	corrDir := filepath.Join(b.WorkspaceRoot, correspondenceDir)
+	if entries, err := os.ReadDir(corrDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+				expectedPaths[filepath.Join(corrDir, e.Name())] = true
 			}
 		}
 	}
