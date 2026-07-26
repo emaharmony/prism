@@ -655,17 +655,14 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 	}
 	wh.agentMu.Unlock()
 
-	// V34: Inject Remembrance memory search results for context
+	// V34→V61: Inject Remembrance memory search results with dynamic queries.
+	// Instead of hardcoded query strings, derive search queries from:
+	//   1. The action being performed
+	//   2. Recent Discord channel messages (conversation context)
+	//   3. Recent inter-agent NATS messages
+	//   4. The current date (for recency-aware recall)
 	if wh.remClient != nil {
-		searchQueries := []string{
-			fmt.Sprintf("recent work OpenClaw Lumi %s", time.Now().Format("2006-01-02")),
-			fmt.Sprintf("project status %s", action),
-			"OpenClaw Lumi decisions architecture",
-		}
-		// For project_work, also search for active project assignments
-		if action == "project_work" {
-			searchQueries = append(searchQueries, "BassBook creative brief assignment", "BassBook production quality requirements")
-		}
+		searchQueries := wh.buildDynamicMemoryQueries(action, actionDef)
 		for _, q := range searchQueries {
 			results, err := wh.remClient.Search(q, "hybrid", "", "", 5)
 			if err == nil && results != nil {
@@ -2017,6 +2014,74 @@ func simpleHash(s string) string {
 // hasWorkToDo checks locally (zero cloud tokens) whether there is actual work
 // to do for the given action. This is the idle guard — it prevents the cloud
 // LLM from being called when there's nothing to work on.
+// buildDynamicMemoryQueries derives Remembrance search queries from the current
+// context: the action being performed, recent channel messages, and inter-agent
+// messages. This replaces the previous hardcoded query list with queries that
+// adapt to what is actually happening in the conversation and system.
+func (wh *WakeHandler) buildDynamicMemoryQueries(action string, actionDef wakeAction) []string {
+	queries := make([]string, 0, 6)
+	now := time.Now().Format("2006-01-02")
+
+	// Query 1: Action + date — recency-aware recall of work related to this action
+	queries = append(queries, fmt.Sprintf("%s %s", action, now))
+
+	// Query 2: Action-specific context
+	switch action {
+	case "project_work":
+		queries = append(queries, "project assignment task progress status")
+	case "status_report":
+		queries = append(queries, "recent progress commits changes updates")
+	case "daily_review":
+		queries = append(queries, "daily review decisions architecture state")
+	case "auto_patch":
+		queries = append(queries, "bug fix error patch failing test")
+	case "check_prs":
+		queries = append(queries, "pull request review feedback merge")
+	case "review_improvements":
+		queries = append(queries, "improvement proposal optimization quality")
+	default:
+		queries = append(queries, fmt.Sprintf("%s work status", action))
+	}
+
+	// Query 3: Derived from recent Discord channel messages
+	if wh.bot != nil && actionDef.ChannelID != "" {
+		recent := wh.bot.GetRecentMessages(actionDef.ChannelID, 10)
+		if len(recent) > 0 {
+			// Use the most recent non-empty message as a search query
+			for i := len(recent) - 1; i >= 0; i-- {
+				content := strings.TrimSpace(recent[i].Content)
+				if content != "" && len(content) > 10 {
+					// Truncate to keep query focused
+					if len(content) > 120 {
+						content = content[:120]
+					}
+					queries = append(queries, content)
+					break
+				}
+			}
+		}
+	}
+
+	// Query 4: Derived from inter-agent NATS messages
+	wh.agentMu.Lock()
+	if len(wh.agentMessages) > 0 {
+		latest := wh.agentMessages[len(wh.agentMessages)-1]
+		content := strings.TrimSpace(latest.Content)
+		if content != "" && len(content) > 10 {
+			if len(content) > 120 {
+				content = content[:120]
+			}
+			queries = append(queries, content)
+		}
+	}
+	wh.agentMu.Unlock()
+
+	// Query 5: Cross-agent decisions and architecture (always useful for context)
+	queries = append(queries, "OpenClaw Lumi Prism decisions architecture")
+
+	return queries
+}
+
 func (wh *WakeHandler) hasWorkToDo(action string) bool {
 	repoPath := wh.defaultRepoPath()
 
@@ -2064,9 +2129,11 @@ func (wh *WakeHandler) hasWorkToDo(action string) bool {
 		if prList != "" && !strings.Contains(prList, "No pull requests") {
 			return true // Open PRs to review
 		}
-		// Check Remembrance for any assigned tasks
+		// Check Remembrance for any assigned tasks using a dynamic query
 		if wh.remClient != nil {
-			results, err := wh.remClient.Search("assigned task pending fix", "hybrid", "", "", 3)
+			projectID := wh.cfg.DefaultProject().ID
+			dynQuery := fmt.Sprintf("assigned task pending fix %s %s", projectID, time.Now().Format("2006-01-02"))
+			results, err := wh.remClient.Search(dynQuery, "hybrid", "", "", 3)
 			if err == nil && results != nil {
 				if hits, ok := results["results"].([]any); ok && len(hits) > 0 {
 					return true
