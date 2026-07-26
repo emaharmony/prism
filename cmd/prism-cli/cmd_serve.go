@@ -145,6 +145,7 @@ type conversationContext struct {
 	// Cached static system content — built once, reused every message.
 	staticSystemText string // For text-based provider path
 	staticSystemChat string // For ChatProvider path (includes toolUsageGuidance)
+	hasSoulContent   bool  // True when SOUL.md identity was loaded — SOUL.md takes precedence over postfix
 }
 
 func executeServe(args []string) {
@@ -1622,6 +1623,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	if contextIdentity != "" {
 		// Use workspace identity content — it's the real source of truth
 		identityContent = contextIdentity
+		cc.hasSoulContent = true
 	} else {
 		// Fall back to config id/role — better than nothing
 		identityContent = fmt.Sprintf("You are %s, a %s assistant.", agentCfg.ID, agentCfg.Role)
@@ -1636,7 +1638,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
-			budget = 4000
+			budget = 128000
 		}
 
 		// Build context without soul/identity (already in Layer 1)
@@ -1681,7 +1683,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
-			budget = 4000
+			budget = 128000
 		}
 
 		otherContexts := make([]string, 0, len(agentCfg.Context))
@@ -1703,7 +1705,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 		}
 	}
 
-	postfix := resolveConversationPostfix(agentCfg, nil)
+	postfix := resolveConversationPostfix(agentCfg, nil, cc.hasSoulContent)
 	sbChat.WriteString("\n## How You Respond\n")
 	sbChat.WriteString(postfix + "\n")
 	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
@@ -1735,7 +1737,7 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	sb.WriteString(cc.staticSystemText)
 
 	// --- Layer 3: BEHAVIOR ---
-	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n\n")
+	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole, cc.hasSoulContent) + "\n\n")
 
 	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
