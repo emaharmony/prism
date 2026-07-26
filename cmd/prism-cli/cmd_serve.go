@@ -1220,6 +1220,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		// Fun channel: no tools at all. The agent is purely conversational.
 		log.Printf("[TOOL-CHANNEL] tools excluded by channel role %q", channelRoleConfig.Role)
 		gateResult = &stage.GateResult{Decision: stage.ToolDecisionExclude, Reason: "channel role excludes all tools"}
+	} else if agentCfg.FirstClassTools {
+		// V61: First-class tools — bypass the tool relevance gate. All tools are
+		// always available, and tool calls auto-approve without per-call policy
+		// evaluation. This gives the agent direct, low-latency tool access like
+		// OpenClaw's first-class tool model.
+		log.Printf("[TOOL-CHANNEL] first-class tools enabled for agent %q — bypassing gate", agentCfg.ID)
+		gateResult = &stage.GateResult{Decision: stage.ToolDecisionInclude, Reason: "first-class tools: all tools available"}
+		cc.toolPolicy.AutoApproveMutations = true
+		defer func() { cc.toolPolicy.AutoApproveMutations = false }()
 	} else {
 		evalResult := cc.toolGate.Evaluate(msg.Content, toolNames)
 		gateResult = &evalResult
@@ -1228,6 +1237,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// Step 7c: Append tool instructions to prompt so the LLM knows it has tools
 	// Skip tool instructions if the gate excluded tools for this message
+	//
+	// V61: First-class tools — when agent.FirstClassTools is true, skip the
+	// tool relevance gate (all tools are always available) and set auto-approve
+	// so tool calls execute directly without per-call policy evaluation.
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		toolInfos = filterToolInfosByAgentPolicy(toolInfos, *cc.toolPolicy, agentCfg.ID)
