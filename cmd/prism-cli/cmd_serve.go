@@ -75,6 +75,7 @@ import (
 	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
+	"github.com/emaharmony/prism/internal/governance"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/tool/mcp"
@@ -578,7 +579,22 @@ func executeServe(args []string) {
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
-			toolExec = tool.NewExecutor(toolReg, &toolPolicy)
+			// V61: Load governance docs and populate frozen paths in tool policy
+			govLoader := governance.NewLoader(cfg.Prism.Workspace, nil)
+			govLoader.Load()
+			for _, doc := range govLoader.Docs() {
+				for _, fp := range doc.Frontmatter.Governance.FrozenPaths {
+					toolPolicy.FrozenPaths = append(toolPolicy.FrozenPaths, fp)
+					reason := doc.Frontmatter.Governance.Reason
+					if reason == "" {
+						reason = fmt.Sprintf("Path %s is frozen per %s", fp, doc.Name)
+					}
+					if toolPolicy.FrozenPathReasons == nil {
+						toolPolicy.FrozenPathReasons = make(map[string]string)
+					}
+					toolPolicy.FrozenPathReasons[fp] = reason
+				}
+			}
 			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
 			toolExec.SetEmitter(func(eventType, source string, payload map[string]any) {
 				log.Printf("[TOOL-EVENT] %s: %v", eventType, payload)

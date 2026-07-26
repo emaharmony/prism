@@ -62,6 +62,14 @@ type PolicyConfig struct {
 	// text reaching the model, so they default to approval-required and only run
 	// unattended when an operator explicitly turns this on.
 	AutoApproveMCP bool
+
+	// FrozenPaths is a list of file paths that are governance-frozen. Any write
+	// operation targeting these paths is denied regardless of other policy
+	// settings. Populated by the governance loader on startup. Supports exact
+	// paths, directory prefixes (ending in /), and glob patterns.
+	FrozenPaths []string
+	// FrozenPathReasons maps frozen path patterns to their governance reason.
+	FrozenPathReasons map[string]string
 }
 
 // DefaultPolicyConfig returns a PolicyConfig with sensible defaults.
@@ -165,6 +173,9 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 
 	case "write_file_proposal":
+		if frozenPath, reason := cfg.checkFrozenPath(input); frozenPath != "" {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("governance: %s (frozen path: %s)", reason, frozenPath)}
+		}
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
 			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose file mutations; route write requests through the orchestrator", agentID)}
 		}
@@ -187,6 +198,9 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 
 	case "write_file":
 		if cfg.AutoApproveMutations {
+		if frozenPath, reason := cfg.checkFrozenPath(input); frozenPath != "" {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("governance: %s (frozen path: %s)", reason, frozenPath)}
+		}
 			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct write approved for autonomous wake action"}
 		}
 		return PolicyResult{Decision: PolicyDenied, Reason: "direct write_file is denied — use write_file_proposal for approval-gated mutations"}
@@ -380,3 +394,82 @@ func resolvePath(workspaceRoot, relPath string) string {
 // Path containment is now provided by internal/safety.IsWithinRoot.
 // The local implementation has been removed to eliminate duplication.
 // All path containment checks should use safety.IsWithinRoot or safety.ResolveAndContain.
+
+// isWriteTool returns true for tools that modify the filesystem.
+func isWriteTool(toolName string) bool {
+	switch toolName {
+	case "write_file", "write_file_proposal", "write_file_dry_run",
+		"create_directory", "create_directory_proposal",
+		"git_add", "git_commit", "git_push", "git_checkout":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkFrozenPath checks if the tool input targets a frozen path.
+// Returns the matched frozen path pattern and reason if found.
+func (cfg PolicyConfig) checkFrozenPath(input map[string]any) (string, string) {
+	if len(cfg.FrozenPaths) == 0 {
+		return "", ""
+	}
+	// Extract the target path from tool input
+	targetPath, ok := extractPathFromInput(input)
+	if !ok || targetPath == "" {
+		return "", ""
+	}
+	for _, frozenPath := range cfg.FrozenPaths {
+		if pathMatchesFrozen(targetPath, frozenPath) {
+			reason := fmt.Sprintf("path %s is frozen", frozenPath)
+			if cfg.FrozenPathReasons != nil {
+				if r, ok := cfg.FrozenPathReasons[frozenPath]; ok {
+					reason = r
+				}
+			}
+			return frozenPath, reason
+		}
+	}
+	return "", ""
+}
+
+// extractPathFromInput extracts the file path from a tool's input parameters.
+func extractPathFromInput(input map[string]any) (string, bool) {
+	for _, key := range []string{"path", "file_path", "target_path", "filepath", "filename"} {
+		if v, ok := input[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
+
+// pathMatchesFrozen checks if a target path matches a frozen path pattern.
+// Supports exact paths, directory prefixes (ending in /), and glob patterns.
+func pathMatchesFrozen(target, frozen string) bool {
+	target = filepath.Clean(target)
+	isDir := strings.HasSuffix(frozen, "/")
+	cleanFrozen := filepath.Clean(frozen)
+
+	if isDir {
+		if strings.HasPrefix(target, cleanFrozen+string(filepath.Separator)) || target == cleanFrozen {
+			return true
+		}
+		return false
+	}
+
+	if target == cleanFrozen {
+		return true
+	}
+
+	if matched, err := filepath.Match(cleanFrozen, target); err == nil && matched {
+		return true
+	}
+
+	base := filepath.Base(target)
+	if matched, err := filepath.Match(cleanFrozen, base); err == nil && matched {
+		return true
+	}
+
+	return false
+}
