@@ -77,8 +77,10 @@ func (l *Loader) Load() (int, error) {
 			continue
 		}
 		for _, rule := range rules {
-			if err := l.registry.Register(rule); err != nil {
-				continue
+			if l.registry != nil {
+				if err := l.registry.Register(rule); err != nil {
+					continue
+				}
 			}
 			rulesRegistered++
 		}

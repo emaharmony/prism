@@ -242,6 +242,10 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 
 	// V28: Git mutation tools — require approval
 	case "git_add", "git_commit", "git_push", "create_pr":
+		// Governance check: deny if targeting a frozen path
+		if frozenPath, reason := cfg.checkFrozenPath(input); frozenPath != "" {
+			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("governance: %s (frozen path: %s)", reason, frozenPath)}
+		}
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
 			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to propose git mutations; route write requests through the orchestrator", agentID)}
 		}

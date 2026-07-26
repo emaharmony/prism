@@ -595,6 +595,7 @@ func executeServe(args []string) {
 					toolPolicy.FrozenPathReasons[fp] = reason
 				}
 			}
+			toolExec = tool.NewExecutor(toolReg, &toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
 			toolExec.SetEmitter(func(eventType, source string, payload map[string]any) {
 				log.Printf("[TOOL-EVENT] %s: %v", eventType, payload)
