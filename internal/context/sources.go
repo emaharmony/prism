@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// maxMemoryFiles caps how many memory/*.md files are loaded into context.
+// Files are sorted newest-first, so this keeps only the most recent entries.
+// 30 files ≈ 30 days of daily session memories. Set to 0 for no limit.
+const maxMemoryFiles = 30
+
 // readDirAsContext is the shared implementation for loading a directory of
 // .md files as context entries. Files are sorted newest-first (by filename
 // descending, since memory and correspondence files start with dates).
@@ -13,7 +18,8 @@ import (
 // sourceLabel is used as the ContextFile.Source value and as a prefix for
 // the Name (e.g., "memory/2026-07-15.md"). priority controls truncation
 // order — lower priority files are truncated first under token pressure.
-func (b *Builder) readDirAsContext(dir, sourceLabel string, priority int) []ContextFile {
+// maxFiles caps the number of files loaded (0 = no cap, keep all).
+func (b *Builder) readDirAsContext(dir, sourceLabel string, priority, maxFiles int) []ContextFile {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil // Directory doesn't exist or can't be read
@@ -35,6 +41,11 @@ func (b *Builder) readDirAsContext(dir, sourceLabel string, priority int) []Cont
 		for j := i; j > 0 && mdFiles[j].Name() > mdFiles[j-1].Name(); j-- {
 			mdFiles[j], mdFiles[j-1] = mdFiles[j-1], mdFiles[j]
 		}
+	}
+
+	// Cap to maxFiles (keep newest)
+	if maxFiles > 0 && len(mdFiles) > maxFiles {
+		mdFiles = mdFiles[:maxFiles]
 	}
 
 	var files []ContextFile
@@ -61,11 +72,13 @@ func (b *Builder) readDirAsContext(dir, sourceLabel string, priority int) []Cont
 // readMemoryDir reads memory/*.md files from the workspace's memory directory.
 // These hold session summaries, decisions, and patterns — the agent's full
 // relationship history. Priority 40: below named sources, truncated first.
+// Capped to the 30 most recent files to keep context window manageable.
 func (b *Builder) readMemoryDir() []ContextFile {
 	return b.readDirAsContext(
 		filepath.Join(b.WorkspaceRoot, memoryDir),
 		"memory",
 		40,
+		maxMemoryFiles,
 	)
 }
 
@@ -73,12 +86,13 @@ func (b *Builder) readMemoryDir() []ContextFile {
 // correspondence directory. These are inter-agent letters between OpenClaw
 // Lumi and Prism Lumi. Priority 65: above memory files but below named
 // sources — letters are more time-sensitive than historical memory but
-// less foundational than identity docs.
+// less foundational than identity docs. No cap (letters are rare).
 func (b *Builder) readCorrespondenceDir() []ContextFile {
 	return b.readDirAsContext(
 		filepath.Join(b.WorkspaceRoot, correspondenceDir),
 		"correspondence",
 		65,
+		0, // no cap — letters are infrequent
 	)
 }
 
