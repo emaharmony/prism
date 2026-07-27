@@ -6,18 +6,40 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // Store persists commitments to SQLite.
 type Store struct {
-	db   *sql.DB
-	mu   sync.Mutex
-	now  func() time.Time
+	db  *sql.DB
+	mu  sync.Mutex
+	now func() time.Time
 }
 
-// NewStore creates a new commitment store. The db must already be open.
+// NewStore creates a new commitment store from an existing DB connection.
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db, now: time.Now}
+}
+
+// NewStoreFromPath opens a SQLite database at the given path and returns
+// an initialized store. The caller is responsible for closing the DB.
+func NewStoreFromPath(dbPath string) (*Store, error) {
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		return nil, fmt.Errorf("open commitments db: %w", err)
+	}
+	store := &Store{db: db, now: time.Now}
+	if err := store.Init(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init commitments: %w", err)
+	}
+	return store, nil
+}
+
+// Close closes the underlying database connection.
+func (s *Store) Close() error {
+	return s.db.Close()
 }
 
 // Init creates the commitments table if it doesn't exist.
@@ -143,7 +165,7 @@ func (s *Store) UpdateStatus(id string, status CommitmentStatus) error {
 	return err
 }
 
-// ExpireOld marks commitments past their latest due window as expired.
+// ExpireOld marks commitments past their due window as expired.
 func (s *Store) ExpireOld(now time.Time, maxAgeHours int) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

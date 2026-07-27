@@ -76,6 +76,7 @@ import (
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/governance"
+	"github.com/emaharmony/prism/internal/commitments"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/tool/mcp"
@@ -295,9 +296,18 @@ func executeServe(args []string) {
 		fmt.Printf("  Warning: task store failed: %v\n", err)
 	} else {
 		delegEngine = delegation.NewEngine(taskStore, natsConn)
-		fmt.Println("  Task store: ready")
 	}
+		fmt.Println("  Task store: ready")
 
+		_ = func() *commitments.Store {
+			s, e := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
+			if e != nil {
+				fmt.Printf("  Warning: commitments store failed: %v\n", e)
+				return nil
+			}
+			fmt.Println("  Commitments: ready")
+			return s
+	}()
 	if cfg.Codex.Enabled {
 		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
 		codexWorker, err = codexworker.New(codexCfg)
