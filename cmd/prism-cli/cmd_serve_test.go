@@ -617,19 +617,21 @@ func TestBuildPrompt_PersonalityDirective(t *testing.T) {
 	if !strings.Contains(prompt, "## How You Respond") {
 		t.Error("expected prompt to contain a How You Respond section")
 	}
-	if !strings.Contains(prompt, orchestrator.PersonalityDirective("direct")) {
-		t.Error("expected prompt to contain the direct personality's directive text")
+	// SOUL.md is present, so no personality directive should override it
+	if strings.Contains(prompt, orchestrator.PersonalityDirective("direct")) {
+		t.Error("expected SOUL.md to take precedence over channel personality directive")
 	}
 	if strings.Contains(prompt, defaultConversationPostfix) {
-		t.Error("expected the channel personality directive to replace the harness default, not sit alongside it")
+		t.Error("expected SOUL.md to take precedence over harness default postfix")
 	}
 
 	// An unrecognized Personality value falls back to the harness default
 	// (silent no-op for the personality, not an error).
 	channelRoleUnknown := &orchestrator.ChannelRole{Role: "manager-room", Personality: "nonexistent"}
 	promptUnknown := convCtx.buildPrompt(sess, agentCfg, "manager-room", channelRoleUnknown)
-	if !strings.Contains(promptUnknown, defaultConversationPostfix) {
-		t.Error("expected the harness default postfix when personality is unrecognized")
+	// SOUL.md is present, so postfix returns "" even for unrecognized personality
+	if strings.Contains(promptUnknown, defaultConversationPostfix) {
+		t.Error("expected SOUL.md to take precedence even when personality is unrecognized")
 	}
 
 	// An agent's own explicit conversation_postfix always wins over a
@@ -641,10 +643,11 @@ func TestBuildPrompt_PersonalityDirective(t *testing.T) {
 	}
 	convCtx.rebuildStaticSystemContent(agentCfgExplicit)
 	promptExplicit := convCtx.buildPrompt(sess, agentCfgExplicit, "manager-room", channelRole)
-	if !strings.Contains(promptExplicit, "Speak only in haiku.") {
-		t.Error("expected the agent's explicit conversation_postfix to appear")
+	// SOUL.md is present, so even explicit conversation_postfix is overridden
+	if strings.Contains(promptExplicit, "Speak only in haiku.") {
+		t.Error("expected SOUL.md to take precedence over explicit conversation_postfix")
 	}
 	if strings.Contains(promptExplicit, orchestrator.PersonalityDirective("direct")) {
-		t.Error("expected the agent's explicit conversation_postfix to override the channel personality directive")
+		t.Error("expected SOUL.md to take precedence over channel personality directive")
 	}
 }

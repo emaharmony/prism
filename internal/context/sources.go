@@ -8,8 +8,8 @@ import (
 
 // maxMemoryFiles caps how many memory/*.md files are loaded into context.
 // Files are sorted newest-first, so this keeps only the most recent entries.
-// 30 files ≈ 30 days of daily session memories. Set to 0 for no limit.
-const maxMemoryFiles = 30
+// Set to 0 for no limit — with 128k token budget, all memory files fit.
+const maxMemoryFiles = 0
 
 // readDirAsContext is the shared implementation for loading a directory of
 // .md files as context entries. Files are sorted newest-first (by filename
