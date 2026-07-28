@@ -399,18 +399,6 @@ func resolvePath(workspaceRoot, relPath string) string {
 // The local implementation has been removed to eliminate duplication.
 // All path containment checks should use safety.IsWithinRoot or safety.ResolveAndContain.
 
-// isWriteTool returns true for tools that modify the filesystem.
-func isWriteTool(toolName string) bool {
-	switch toolName {
-	case "write_file", "write_file_proposal", "write_file_dry_run",
-		"create_directory", "create_directory_proposal",
-		"git_add", "git_commit", "git_push", "git_checkout":
-		return true
-	default:
-		return false
-	}
-}
-
 // checkFrozenPath checks if the tool input targets a frozen path.
 // Returns the matched frozen path pattern and reason if found.
 func (cfg PolicyConfig) checkFrozenPath(input map[string]any) (string, string) {

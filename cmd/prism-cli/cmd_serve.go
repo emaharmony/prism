@@ -300,15 +300,14 @@ func executeServe(args []string) {
 	}
 		fmt.Println("  Task store: ready")
 
-		var commitStore *commitments.Store; commitStore = func() *commitments.Store {
-			s, e := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
-			if e != nil {
-				fmt.Printf("  Warning: commitments store failed: %v\n", e)
-				return nil
-			}
-			fmt.Println("  Commitments: ready")
-			return s
-	}()
+
+	// V61: Commitments store
+	commitStore, err := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
+	if err != nil {
+		fmt.Printf("  Warning: commitments store failed: %v\n", err)
+	} else {
+		fmt.Println("  Commitments: ready")
+	}
 	if cfg.Codex.Enabled {
 		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
 		codexWorker, err = codexworker.New(codexCfg)
