@@ -587,6 +587,8 @@ func main() {
 	case "search":
 		searchCmd(os.Args[2:])
 	case "chat":
+	case "skill":
+		cmdSkill(os.Args[2:])
 		executeChat(os.Args[2:])
 	case "serve":
 		executeServe(os.Args[2:])
