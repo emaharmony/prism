@@ -29,6 +29,7 @@ import (
 	"github.com/emaharmony/prism/internal/factorymonitor"
 	"github.com/emaharmony/prism/internal/gitx"
 	"github.com/emaharmony/prism/internal/improve"
+	"github.com/emaharmony/prism/internal/linkunderstanding"
 	"github.com/emaharmony/prism/internal/orchestrator"
 	"github.com/emaharmony/prism/internal/plan"
 	"github.com/emaharmony/prism/internal/provider"
@@ -646,6 +647,16 @@ func (wh *WakeHandler) handleScheduledEvent(msg *nats.Msg) {
 				systemPrompt += fmt.Sprintf("**[%s] %s:** %s\n", m.Timestamp, m.AuthorName, m.Content)
 			}
 			systemPrompt += "\n--- End of recent messages ---\n"
+
+	// V61: Link understanding — fetch content from URLs in recent channel messages
+	if len(recent) > 0 {
+		for _, m := range recent {
+			if linkCtx := linkunderstanding.ProcessLinks(m.Content, 2, 2000, 5*time.Second); linkCtx != "" {
+				systemPrompt += "\n" + linkCtx
+				break // only process the most recent message with links
+			}
+		}
+	}
 		}
 	}
 

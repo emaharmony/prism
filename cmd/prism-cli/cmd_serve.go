@@ -76,6 +76,7 @@ import (
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/governance"
+	"github.com/emaharmony/prism/internal/linkunderstanding"
 	"github.com/emaharmony/prism/internal/commitments"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
@@ -1198,12 +1199,24 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		log.Printf("[WARN] typing indicator failed: %v", err)
 	}
 
+	// V61: Link understanding — detect URLs in message, fetch content
+	linkContext := ""
+	if linkURLs := linkunderstanding.DetectURLs(sanitizedContent); len(linkURLs) > 0 {
+		linkContext = linkunderstanding.ProcessLinks(sanitizedContent, 3, 4000, 10*time.Second)
+		if linkContext != "" {
+			log.Printf("[LINK] fetched %d URL(s) from message", len(linkURLs))
+		}
+	}
+
 	// Step 7: Build the full prompt (session history + workspace context)
 	// Resolve the channel role for state action injection
 	stateActionKey := cc.cfg.ResolveChannelRole(msg.ChannelID)
 	channelRole := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
 	promptSession := sess
 	prompt := cc.buildPrompt(promptSession, agentCfg, stateActionKey, channelRole)
+	if linkContext != "" {
+		prompt += "\n" + linkContext
+	}
 
 	// Step 7b: Inject Remembrance context (if available, with 60s TTL cache)
 	// NOTE: This uses the same remembrance.Client as RemembranceStage but applies
