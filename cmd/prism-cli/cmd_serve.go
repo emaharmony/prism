@@ -141,6 +141,7 @@ type conversationContext struct {
 	toolPolicy    *tool.PolicyConfig       // V27: Tool policy configuration (pointer so free mode can mutate it live)
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
+	commitStore   *commitments.Store      // V61: Commitments store for promise tracking
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
@@ -299,7 +300,7 @@ func executeServe(args []string) {
 	}
 		fmt.Println("  Task store: ready")
 
-		_ = func() *commitments.Store {
+		var commitStore *commitments.Store; commitStore = func() *commitments.Store {
 			s, e := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
 			if e != nil {
 				fmt.Printf("  Warning: commitments store failed: %v\n", e)
@@ -657,6 +658,7 @@ func executeServe(args []string) {
 					10, // global refill 10 tokens/sec
 				),
 				toolGate:    stage.NewToolRelevanceGate(true), // P-008: enabled by default
+			commitStore: commitStore,
 				stateMgr:    stateMgr,                         // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,                          // V32: plan manager
 				improveMgr:  improveMgr,                       // V32: improvement manager
@@ -1496,6 +1498,13 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+
+	// V61: Background commitment extraction
+	if cc.commitStore != nil && sanitizedContent != "" && responseText != "" {
+		go func(userText, assistantText, agentID, sessionKey, channel, senderID string) {
+			cc.extractCommitments(userText, assistantText, agentID, sessionKey, channel, senderID)
+		}(sanitizedContent, responseText, result.AgentID, sess.ID, "discord", msg.UserID)
+	}
 	// Log and publish completion events
 	llmResult := finalRC.Results["llm"]
 	streamed := false
@@ -1809,6 +1818,14 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	}
 
 	// --- Session awareness (V29) ---
+
+	// --- Layer 8: Commitment delivery (V61) ---
+	if cc.commitStore != nil {
+		if commitPrompt := cc.deliverCommitments(agentCfg.ID, sess.ID, "discord"); commitPrompt != "" {
+			sb.WriteString("\n" + commitPrompt + "\n")
+			log.Printf("[COMMITMENTS] injected pending commitments into prompt")
+		}
+	}
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
 	sessionMsgCount := len(sess.Messages)
 	sb.WriteString(fmt.Sprintf("[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
