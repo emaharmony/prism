@@ -177,6 +177,10 @@ func ListInstalled(skillsDir string) ([]Info, error) {
 func deriveSkillName(gitURL string) string {
 	// Remove .git suffix
 	url := strings.TrimSuffix(gitURL, ".git")
+	// Handle SSH-style URLs (git@host:user/repo) by splitting on colon
+	if idx := strings.LastIndex(url, ":"); idx >= 0 && strings.Contains(url[:idx], "@") {
+		url = url[idx+1:]
+	}
 	// Get the last path component
 	parts := strings.Split(url, "/")
 	if len(parts) == 0 {
