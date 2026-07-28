@@ -77,6 +77,7 @@ import (
 	"github.com/emaharmony/prism/internal/state"
 	"github.com/emaharmony/prism/internal/governance"
 	"github.com/emaharmony/prism/internal/linkunderstanding"
+	"github.com/emaharmony/prism/internal/trajectory"
 	"github.com/emaharmony/prism/internal/commitments"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
@@ -143,6 +144,7 @@ type conversationContext struct {
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
 	commitStore   *commitments.Store      // V61: Commitments store for promise tracking
+	trajectoryStore *trajectory.Store     // V61: Trajectory flight recorder
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
@@ -308,6 +310,12 @@ func executeServe(args []string) {
 		fmt.Printf("  Warning: commitments store failed: %v\n", err)
 	} else {
 		fmt.Println("  Commitments: ready")
+	}
+
+	// V61: Trajectory store
+	trajectoryStore, _ := trajectory.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "trajectory.db"))
+	if trajectoryStore != nil {
+		fmt.Println("  Trajectory: ready")
 	}
 	if cfg.Codex.Enabled {
 		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
@@ -659,6 +667,7 @@ func executeServe(args []string) {
 				),
 				toolGate:    stage.NewToolRelevanceGate(true), // P-008: enabled by default
 			commitStore: commitStore,
+			trajectoryStore: trajectoryStore,
 				stateMgr:    stateMgr,                         // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,                          // V32: plan manager
 				improveMgr:  improveMgr,                       // V32: improvement manager
@@ -1125,6 +1134,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	finalSent := false
+	var trajRun trajectory.TrajectoryRun
 	finalStatus := "failed"
 	finalMessage := "I stopped before completing this task."
 	runID := ""
@@ -1187,6 +1197,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	runCtx, runCancel := ctxcontext.WithTimeout(ctxcontext.Background(), serveLLMTimeout(cc.cfg))
 	run := runtrack.NewRun(result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider)
 	runID = run.ID
+	trajRun = startTrajectory(run.ID, result.AgentID, sess.ID, agentCfg.Model, agentCfg.Provider, "discord", msg.ChannelID)
 	run.Cancel = runCancel
 	cc.cancelReg.Register(sess.ID, runCancel)
 	defer func() {
@@ -1517,6 +1528,8 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			cc.extractCommitments(userText, assistantText, agentID, sessionKey, channel, senderID)
 		}(sanitizedContent, responseText, result.AgentID, sess.ID, "discord", msg.UserID)
 	}
+	// V61: Trajectory — finalize and save
+	finalizeTrajectory(cc.trajectoryStore, &trajRun, finalStatus, run.Elapsed().Milliseconds(), 0, 0, finalMessage)
 	// Log and publish completion events
 	llmResult := finalRC.Results["llm"]
 	streamed := false
