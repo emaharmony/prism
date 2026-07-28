@@ -107,6 +107,12 @@ Focus on what matters. Skip trivia.`,
 		ChannelID: "1491622863118008431", // scheduled-reports destination
 		MaxTokens: 1024,
 	},
+	"skill_refresh": {
+		Prompt: "Reload skills from disk and report any new or removed skills.",
+		ChannelID: "1491622863118008431",
+		MaxTokens: 512,
+		SkipLLM: true,
+	},
 	"check_prs": {
 		Prompt: `You are summarizing PR status for a Discord channel. Take the raw PR data below and format it concisely:
 1. List each PR with number, title, author, review status, and CI status
@@ -896,6 +902,8 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 	switch action {
 	case "check_prs":
 		resultContent = wh.checkPRStatus()
+	case "skill_refresh":
+		resultContent = wh.refreshSkills()
 	case "factory_status_digest":
 		resultContent = wh.factoryStatusDigest()
 	case "status_report":
@@ -919,6 +927,24 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 		})
 	}
 	log.Printf("[WAKE] completed direct action %q", action)
+}
+
+// refreshSkills reloads the skill registry from disk and reports changes.
+func (wh *WakeHandler) refreshSkills() string {
+	if wh.skills == nil {
+		return "Skills: no skill registry configured"
+	}
+	workspaceRoot := wh.cfg.Prism.Workspace
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+	oldCount := wh.skills.Len()
+	wh.skills = skill.NewRegistry()
+	n, err := wh.skills.LoadDefault(workspaceRoot)
+	if err != nil {
+		return fmt.Sprintf("Skills: reload failed (%v)", err)
+	}
+	return fmt.Sprintf("Skills: reloaded %d skill(s) (was %d)", n, oldCount)
 }
 
 func (wh *WakeHandler) factoryStatusDigest() string {
