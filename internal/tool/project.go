@@ -22,7 +22,7 @@ type SearchFilesTool struct {
 
 func (t *SearchFilesTool) Name() string { return "search_files" }
 func (t *SearchFilesTool) Description() string {
-	return "Searches for a text pattern across project files (like grep). Returns matching lines with file paths and line numbers. Use this to find where functions, types, or patterns are defined or used."
+	return "Searches for text patterns across project files (like grep). All space-separated keywords in the pattern must be present in matching lines (AND logic, case-insensitive). Returns matching lines with file paths and line numbers. Use this to find where functions, types, or patterns are defined or used, or to search memory files for past decisions."
 }
 func (t *SearchFilesTool) Schema() ToolSchema {
 	return ToolSchema{
@@ -42,6 +42,12 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 	}
 	if pattern == "" {
 		return ToolResult{Success: false, Error: "pattern must not be empty"}, nil
+	}
+
+	// Split pattern into keywords for AND logic (case-insensitive)
+	keywords := strings.Fields(strings.ToLower(pattern))
+	if len(keywords) == 0 {
+		return ToolResult{Success: false, Error: "no keywords in pattern"}, nil
 	}
 
 	searchDir := "."
@@ -93,7 +99,16 @@ func (t *SearchFilesTool) Execute(ctx context.Context, input map[string]any) (To
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
-			if strings.Contains(scanner.Text(), pattern) {
+			// Multi-keyword AND: all keywords must be present (case-insensitive)
+			lineLower := strings.ToLower(scanner.Text())
+			allMatch := true
+			for _, kw := range keywords {
+				if !strings.Contains(lineLower, kw) {
+					allMatch = false
+					break
+				}
+			}
+			if allMatch {
 				totalMatches++
 				if len(matches) < maxResults {
 					lineText := scanner.Text()
