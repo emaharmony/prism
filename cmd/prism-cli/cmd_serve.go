@@ -47,6 +47,7 @@ import (
 	"github.com/emaharmony/prism/internal/claudeworker"
 	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/codexworker"
+	"github.com/emaharmony/prism/internal/commitments"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/cost"
 	"github.com/emaharmony/prism/internal/crossprism"
@@ -55,6 +56,7 @@ import (
 	"github.com/emaharmony/prism/internal/delegation"
 	"github.com/emaharmony/prism/internal/factory"
 	"github.com/emaharmony/prism/internal/factorymonitor"
+	"github.com/emaharmony/prism/internal/governance"
 	"github.com/emaharmony/prism/internal/guard"
 	"github.com/emaharmony/prism/internal/improve"
 	"github.com/emaharmony/prism/internal/orchestrator"
@@ -75,8 +77,6 @@ import (
 	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
-	"github.com/emaharmony/prism/internal/governance"
-	"github.com/emaharmony/prism/internal/commitments"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/tool/mcp"
@@ -141,14 +141,14 @@ type conversationContext struct {
 	toolPolicy    *tool.PolicyConfig       // V27: Tool policy configuration (pointer so free mode can mutate it live)
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
-	commitStore   *commitments.Store      // V61: Commitments store for promise tracking
+	commitStore   *commitments.Store       // V61: Commitments store for promise tracking
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
 	// Cached static system content — built once, reused every message.
 	staticSystemText string // For text-based provider path
 	staticSystemChat string // For ChatProvider path (includes toolUsageGuidance)
-	hasSoulContent   bool  // True when SOUL.md identity was loaded — SOUL.md takes precedence over postfix
+	hasSoulContent   bool   // True when SOUL.md identity was loaded — SOUL.md takes precedence over postfix
 }
 
 func executeServe(args []string) {
@@ -297,17 +297,17 @@ func executeServe(args []string) {
 		fmt.Printf("  Warning: task store failed: %v\n", err)
 	} else {
 		delegEngine = delegation.NewEngine(taskStore, natsConn)
-	}
 		fmt.Println("  Task store: ready")
+	}
 
-		var commitStore *commitments.Store; commitStore = func() *commitments.Store {
-			s, e := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
-			if e != nil {
-				fmt.Printf("  Warning: commitments store failed: %v\n", e)
-				return nil
-			}
-			fmt.Println("  Commitments: ready")
-			return s
+	commitStore := func() *commitments.Store {
+		s, e := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
+		if e != nil {
+			fmt.Printf("  Warning: commitments store failed: %v\n", e)
+			return nil
+		}
+		fmt.Println("  Commitments: ready")
+		return s
 	}()
 	if cfg.Codex.Enabled {
 		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
@@ -658,11 +658,11 @@ func executeServe(args []string) {
 					10, // global refill 10 tokens/sec
 				),
 				toolGate:    stage.NewToolRelevanceGate(true), // P-008: enabled by default
-			commitStore: commitStore,
-				stateMgr:    stateMgr,                         // V32: shared state manager (same instance as tools)
-				planMgr:     planMgr,                          // V32: plan manager
-				improveMgr:  improveMgr,                       // V32: improvement manager
-				guardian:    guardian,                         // V32: guard rail
+				commitStore: commitStore,
+				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
+				planMgr:     planMgr,    // V32: plan manager
+				improveMgr:  improveMgr, // V32: improvement manager
+				guardian:    guardian,   // V32: guard rail
 				pendingWork: make(map[string]pendingWorkStart),
 			}
 
@@ -1497,7 +1497,6 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			log.Printf("[WARN] failed to save agent response to session %s: %v", sess.ID, err)
 		}
 	}
-
 
 	// V61: Background commitment extraction
 	if cc.commitStore != nil && sanitizedContent != "" && responseText != "" {
