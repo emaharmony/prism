@@ -1,25 +1,33 @@
 package main
 
-import "github.com/emaharmony/prism/internal/orchestrator"
+import (
+	"github.com/emaharmony/prism/internal/orchestrator"
+)
 
-// defaultConversationPostfix shapes an agent's default conversational tone
-// when neither the agent's own conversation_postfix nor a channel's
-// Personality directive apply. Keep this reasonably neutral — anything more
-// opinionated here becomes the tone every agent gets whenever an operator
-// hasn't explicitly configured one.
-const defaultConversationPostfix = "Stay present in the conversation. Ask follow-up questions when appropriate. " +
-	"Don't wrap things up unless the topic is genuinely resolved. " +
-	"Be warm, curious, and engaged — not a transactional Q&A machine."
+// defaultConversationPostfix is the minimal fallback when an agent has no
+// SOUL.md (no identity content) AND no explicit conversation_postfix AND no
+// channel personality. This only applies to bare agents with no workspace
+// personality files — it should never override or compete with SOUL.md.
+const defaultConversationPostfix = "Stay present in the conversation. Be engaged and responsive."
 
 // resolveConversationPostfix picks the "How You Respond" directive for a
-// message, in priority order:
-//  1. The agent's own explicit conversation_postfix, if set — an operator's
-//     deliberate agent-level choice always wins.
-//  2. The resolved channel's Personality directive, if the channel role sets
-//     one and the agent has no explicit postfix — lets a channel override the
-//     harness's own generic default without touching agent config.
-//  3. defaultConversationPostfix, if neither of the above apply.
-func resolveConversationPostfix(agentCfg *orchestrator.AgentConfig, channelRole *orchestrator.ChannelRole) string {
+// message, with SOUL.md as the highest authority:
+//
+//  1. If the agent has SOUL.md identity content loaded (hasSoulContent),
+//     SOUL.md is the sole personality authority — return "" to signal
+//     that no postfix should be injected. The model follows SOUL.md.
+//  2. If no SOUL.md, use the agent's explicit conversation_postfix (if set).
+//  3. If no postfix, use the channel's Personality directive (if set).
+//  4. If none of the above, use defaultConversationPostfix.
+//
+// This ensures SOUL.md always takes precedence over config-level personality
+// directives. Config and channel personality are fallbacks for agents that
+// don't have a SOUL.md.
+func resolveConversationPostfix(agentCfg *orchestrator.AgentConfig, channelRole *orchestrator.ChannelRole, hasSoulContent bool) string {
+	// SOUL.md is the constitutional document — it always wins.
+	if hasSoulContent {
+		return ""
+	}
 	if agentCfg != nil && agentCfg.ConversationPostfix != "" {
 		return agentCfg.ConversationPostfix
 	}

@@ -75,6 +75,8 @@ import (
 	"github.com/emaharmony/prism/internal/skill"
 	"github.com/emaharmony/prism/internal/stage"
 	"github.com/emaharmony/prism/internal/state"
+	"github.com/emaharmony/prism/internal/governance"
+	"github.com/emaharmony/prism/internal/commitments"
 	"github.com/emaharmony/prism/internal/task"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/tool/mcp"
@@ -139,12 +141,14 @@ type conversationContext struct {
 	toolPolicy    *tool.PolicyConfig       // V27: Tool policy configuration (pointer so free mode can mutate it live)
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
+	commitStore   *commitments.Store      // V61: Commitments store for promise tracking
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
 	// Cached static system content — built once, reused every message.
 	staticSystemText string // For text-based provider path
 	staticSystemChat string // For ChatProvider path (includes toolUsageGuidance)
+	hasSoulContent   bool  // True when SOUL.md identity was loaded — SOUL.md takes precedence over postfix
 }
 
 func executeServe(args []string) {
@@ -293,9 +297,18 @@ func executeServe(args []string) {
 		fmt.Printf("  Warning: task store failed: %v\n", err)
 	} else {
 		delegEngine = delegation.NewEngine(taskStore, natsConn)
-		fmt.Println("  Task store: ready")
 	}
+		fmt.Println("  Task store: ready")
 
+		var commitStore *commitments.Store; commitStore = func() *commitments.Store {
+			s, e := commitments.NewStoreFromPath(filepath.Join(cfg.Prism.DataDir, "commitments.db"))
+			if e != nil {
+				fmt.Printf("  Warning: commitments store failed: %v\n", e)
+				return nil
+			}
+			fmt.Println("  Commitments: ready")
+			return s
+	}()
 	if cfg.Codex.Enabled {
 		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
 		codexWorker, err = codexworker.New(codexCfg)
@@ -577,6 +590,22 @@ func executeServe(args []string) {
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
+			// V61: Load governance docs and populate frozen paths in tool policy
+			govLoader := governance.NewLoader(cfg.Prism.Workspace, nil)
+			govLoader.Load()
+			for _, doc := range govLoader.Docs() {
+				for _, fp := range doc.Frontmatter.Governance.FrozenPaths {
+					toolPolicy.FrozenPaths = append(toolPolicy.FrozenPaths, fp)
+					reason := doc.Frontmatter.Governance.Reason
+					if reason == "" {
+						reason = fmt.Sprintf("Path %s is frozen per %s", fp, doc.Name)
+					}
+					if toolPolicy.FrozenPathReasons == nil {
+						toolPolicy.FrozenPathReasons = make(map[string]string)
+					}
+					toolPolicy.FrozenPathReasons[fp] = reason
+				}
+			}
 			toolExec = tool.NewExecutor(toolReg, &toolPolicy)
 			toolExec.SetApprovalStore(approval.NewStore(cfg.Prism.RunsDir))
 			toolExec.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -629,6 +658,7 @@ func executeServe(args []string) {
 					10, // global refill 10 tokens/sec
 				),
 				toolGate:    stage.NewToolRelevanceGate(true), // P-008: enabled by default
+			commitStore: commitStore,
 				stateMgr:    stateMgr,                         // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,                          // V32: plan manager
 				improveMgr:  improveMgr,                       // V32: improvement manager
@@ -1220,6 +1250,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		// Fun channel: no tools at all. The agent is purely conversational.
 		log.Printf("[TOOL-CHANNEL] tools excluded by channel role %q", channelRoleConfig.Role)
 		gateResult = &stage.GateResult{Decision: stage.ToolDecisionExclude, Reason: "channel role excludes all tools"}
+	} else if agentCfg.FirstClassTools {
+		// V61: First-class tools — bypass the tool relevance gate. All tools are
+		// always available, and tool calls auto-approve without per-call policy
+		// evaluation. This gives the agent direct, low-latency tool access like
+		// OpenClaw's first-class tool model.
+		log.Printf("[TOOL-CHANNEL] first-class tools enabled for agent %q — bypassing gate", agentCfg.ID)
+		gateResult = &stage.GateResult{Decision: stage.ToolDecisionInclude, Reason: "first-class tools: all tools available"}
+		cc.toolPolicy.AutoApproveMutations = true
+		defer func() { cc.toolPolicy.AutoApproveMutations = false }()
 	} else {
 		evalResult := cc.toolGate.Evaluate(msg.Content, toolNames)
 		gateResult = &evalResult
@@ -1228,6 +1267,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 	// Step 7c: Append tool instructions to prompt so the LLM knows it has tools
 	// Skip tool instructions if the gate excluded tools for this message
+	//
+	// V61: First-class tools — when agent.FirstClassTools is true, skip the
+	// tool relevance gate (all tools are always available) and set auto-approve
+	// so tool calls execute directly without per-call policy evaluation.
 	if cc.toolExec != nil && gateResult.Decision != stage.ToolDecisionExclude {
 		toolInfos := cc.toolExec.Registry.ListWithDescriptions()
 		toolInfos = filterToolInfosByAgentPolicy(toolInfos, *cc.toolPolicy, agentCfg.ID)
@@ -1455,6 +1498,13 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+
+	// V61: Background commitment extraction
+	if cc.commitStore != nil && sanitizedContent != "" && responseText != "" {
+		go func(userText, assistantText, agentID, sessionKey, channel, senderID string) {
+			cc.extractCommitments(userText, assistantText, agentID, sessionKey, channel, senderID)
+		}(sanitizedContent, responseText, result.AgentID, sess.ID, "discord", msg.UserID)
+	}
 	// Log and publish completion events
 	llmResult := finalRC.Results["llm"]
 	streamed := false
@@ -1609,6 +1659,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	if contextIdentity != "" {
 		// Use workspace identity content — it's the real source of truth
 		identityContent = contextIdentity
+		cc.hasSoulContent = true
 	} else {
 		// Fall back to config id/role — better than nothing
 		identityContent = fmt.Sprintf("You are %s, a %s assistant.", agentCfg.ID, agentCfg.Role)
@@ -1623,7 +1674,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
-			budget = 4000
+			budget = 128000
 		}
 
 		// Build context without soul/identity (already in Layer 1)
@@ -1668,7 +1719,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
 		budget := cc.cfg.Prism.ContextTokenBudget
 		if budget <= 0 {
-			budget = 4000
+			budget = 128000
 		}
 
 		otherContexts := make([]string, 0, len(agentCfg.Context))
@@ -1690,7 +1741,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 		}
 	}
 
-	postfix := resolveConversationPostfix(agentCfg, nil)
+	postfix := resolveConversationPostfix(agentCfg, nil, cc.hasSoulContent)
 	sbChat.WriteString("\n## How You Respond\n")
 	sbChat.WriteString(postfix + "\n")
 	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
@@ -1722,7 +1773,7 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	sb.WriteString(cc.staticSystemText)
 
 	// --- Layer 3: BEHAVIOR ---
-	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n\n")
+	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole, cc.hasSoulContent) + "\n\n")
 
 	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
@@ -1767,6 +1818,14 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	}
 
 	// --- Session awareness (V29) ---
+
+	// --- Layer 8: Commitment delivery (V61) ---
+	if cc.commitStore != nil {
+		if commitPrompt := cc.deliverCommitments(agentCfg.ID, sess.ID, "discord"); commitPrompt != "" {
+			sb.WriteString("\n" + commitPrompt + "\n")
+			log.Printf("[COMMITMENTS] injected pending commitments into prompt")
+		}
+	}
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
 	sessionMsgCount := len(sess.Messages)
 	sb.WriteString(fmt.Sprintf("[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge))
