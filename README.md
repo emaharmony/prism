@@ -203,6 +203,7 @@ New to Prism? Start here:
 11. [Version History](docs/history/VERSION_HISTORY.md) — the full V1–V58+ development story.
 12. [Public Preview Checklist](docs/operations/PUBLIC_PREVIEW_CHECKLIST.md) — release-prep status.
 13. [Dashboard Guide](docs/dashboard/README.md) — dashboard architecture, navigation, and UI development.
+14. [Multi-Agent Workflow](docs/MULTI_AGENT_WORKFLOW.md) — operate the supported bounded software-task flow.
 
 ---
 
@@ -467,6 +468,10 @@ prism workflow show <name>
 prism workflow run <name> --input input.json
 prism workflow start --project <id> --prompt "..."
 prism workflow status <run_id>
+prism workflow run multi-agent-software-task --input task.json --config prism.yaml
+prism workflow cancel <run_id>
+prism workflow resume <run_id> --config prism.yaml
+prism workflow report <run_id> [--json]
 prism preview [--config prism.yaml]          # static gated-loop preview
 prism watch [--config prism.yaml]            # live SSE run visibility
 prism runs [--json]                          # browse past runs & reports

@@ -52,6 +52,8 @@ the README "Core Packages" table for the full list.
 
 ## Related Docs
 
+- [Multi-Agent Loop Runtime Contracts](MULTI_AGENT_LOOP_RUNTIME.md)
+- [Multi-Agent Workflow Operations](../MULTI_AGENT_WORKFLOW.md)
 - [Package Boundaries](PACKAGE_BOUNDARIES.md)
 - [Multi-Agent Runtime Roadmap](MULTI_AGENT_RUNTIME_ROADMAP.md)
 - [Getting Started](../getting-started/GETTING_STARTED.md)

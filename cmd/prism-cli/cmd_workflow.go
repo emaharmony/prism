@@ -28,6 +28,7 @@ import (
 	"github.com/emaharmony/prism/internal/event"
 	"github.com/emaharmony/prism/internal/tool"
 	"github.com/emaharmony/prism/internal/workflow"
+	"github.com/emaharmony/prism/internal/workflow/multiagent"
 )
 
 // newWorkflowRegistry loads workflow definitions from examples/workflows/.
@@ -57,12 +58,27 @@ func executeWorkflowList() {
 		}
 		fmt.Printf("  %-30s v%d — %s\n", name, w.Version, w.Description)
 	}
+	fmt.Printf("  %-30s v%d — %s\n", multiagent.ReferenceWorkflowID, 1, "Bounded Planner → Developer → Tester → Reviewer workflow")
 	fmt.Println("═══════════════════════════════════════════")
 }
 
 // executeWorkflowShow displays the steps of a workflow definition.
 // Each step shows its type, ID, and optional condition (when clause).
 func executeWorkflowShow(workflowName string) {
+	if workflowName == multiagent.ReferenceWorkflowID {
+		definition := multiagent.DefaultReferenceDefinition()
+		fmt.Printf("Workflow: %s\n", definition.ID)
+		fmt.Println("Description: Bounded multi-agent software delivery with deterministic correction loops")
+		fmt.Printf("Version: %d\nRoles: %d\n", definition.Version, len(definition.Roles))
+		for index, role := range definition.Roles {
+			fmt.Printf("  %d. %s (agent profile: %s)\n", index+1, role.Role, role.AgentRef)
+		}
+		fmt.Printf("Safety ceilings: %d transitions, %d tokens, %s\n",
+			definition.Budgets.MaxTransitions,
+			definition.Budgets.MaxTokens,
+			definition.Budgets.MaxDuration)
+		return
+	}
 	registry := newWorkflowRegistry()
 	w, err := registry.Resolve(workflowName)
 	if err != nil {

@@ -508,12 +508,15 @@ func main() {
 		executeDashboard(*dashPort, *dashRunDir, *dashPolicyDir)
 	case "workflow":
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (start, list, show, run, or status)")
+			fmt.Fprintln(os.Stderr, "Error: workflow subcommand required (start, list, show, run, status, cancel, resume, or report)")
 			fmt.Fprintln(os.Stderr, "Usage: prism workflow start --project <id> --prompt \"...\"")
 			fmt.Fprintln(os.Stderr, "       prism workflow list")
 			fmt.Fprintln(os.Stderr, "       prism workflow show <workflow_name>")
 			fmt.Fprintln(os.Stderr, "       prism workflow run <workflow_name> --input <file.json>")
 			fmt.Fprintln(os.Stderr, "       prism workflow status <run_id>")
+			fmt.Fprintln(os.Stderr, "       prism workflow cancel <run_id>")
+			fmt.Fprintln(os.Stderr, "       prism workflow resume <run_id>")
+			fmt.Fprintln(os.Stderr, "       prism workflow report <run_id>")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
@@ -528,16 +531,24 @@ func main() {
 			}
 			executeWorkflowShow(os.Args[3])
 		case "run":
-			workflowRunCmd := flag.NewFlagSet("workflow run", flag.ExitOnError)
-			workflowInput := workflowRunCmd.String("input", "", "JSON input file for workflow (optional)")
-			workflowRunDir := workflowRunCmd.String("run-dir", "./runs", "Directory for run outputs")
-			workflowRunCmd.Parse(os.Args[4:])
 			if len(os.Args) < 4 {
 				fmt.Fprintln(os.Stderr, "Error: workflow name required")
 				fmt.Fprintln(os.Stderr, "Usage: prism workflow run <workflow_name> --input <file.json>")
 				os.Exit(1)
 			}
+			workflowRunCmd := flag.NewFlagSet("workflow run", flag.ExitOnError)
+			workflowInput := workflowRunCmd.String("input", "", "JSON input file for workflow (optional)")
+			workflowRunDir := workflowRunCmd.String("run-dir", "./runs", "Directory for run outputs")
+			workflowConfig := workflowRunCmd.String("config", "prism.yaml", "Path to prism.yaml configuration file")
+			workflowRunCmd.Parse(os.Args[4:])
 			workflowName := os.Args[3]
+			if workflowName == "multi-agent-software-task" {
+				if err := executeReferenceWorkflowRun(*workflowInput, *workflowRunDir, *workflowConfig); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				break
+			}
 			executeWorkflowRun(workflowName, *workflowInput, *workflowRunDir)
 		case "status":
 			if len(os.Args) < 4 {
@@ -546,8 +557,55 @@ func main() {
 			}
 			wsCmd := flag.NewFlagSet("workflow status", flag.ExitOnError)
 			wsRunDir := wsCmd.String("run-dir", "./runs", "Directory for run outputs")
+			wsJSON := wsCmd.Bool("json", false, "Print structured JSON")
 			wsCmd.Parse(os.Args[4:])
+			if isReferenceWorkflowRun(*wsRunDir, os.Args[3]) {
+				if err := executeReferenceWorkflowStatus(os.Args[3], *wsRunDir, *wsJSON); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				break
+			}
 			executeWorkflowStatus(os.Args[3], *wsRunDir)
+		case "cancel":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: run ID required")
+				os.Exit(1)
+			}
+			cancelCmd := flag.NewFlagSet("workflow cancel", flag.ExitOnError)
+			cancelRunDir := cancelCmd.String("run-dir", "./runs", "Directory for run outputs")
+			cancelReason := cancelCmd.String("reason", "cancelled by user", "Cancellation reason")
+			cancelCmd.Parse(os.Args[4:])
+			if err := executeReferenceWorkflowCancel(os.Args[3], *cancelRunDir, *cancelReason); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		case "resume":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: run ID required")
+				os.Exit(1)
+			}
+			resumeCmd := flag.NewFlagSet("workflow resume", flag.ExitOnError)
+			resumeRunDir := resumeCmd.String("run-dir", "./runs", "Directory for run outputs")
+			resumeConfig := resumeCmd.String("config", "prism.yaml", "Path to prism.yaml configuration file")
+			resumeCmd.Parse(os.Args[4:])
+			if err := executeReferenceWorkflowResume(os.Args[3], *resumeRunDir, *resumeConfig); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		case "report":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Error: run ID required")
+				os.Exit(1)
+			}
+			reportCmd := flag.NewFlagSet("workflow report", flag.ExitOnError)
+			reportRunDir := reportCmd.String("run-dir", "./runs", "Directory for run outputs")
+			reportJSON := reportCmd.Bool("json", false, "Print structured JSON")
+			reportCmd.Parse(os.Args[4:])
+			if err := executeReferenceWorkflowReport(os.Args[3], *reportRunDir, *reportJSON); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "Error: unknown workflow subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
@@ -651,6 +709,8 @@ func commandUsage() string {
 			"prism workflow run <name> [--input <file>]    Run a named workflow",
 			"prism workflow start --project <id> --prompt  Start a gated-loop workflow",
 			"prism workflow status <run_id>                Inspect workflow state",
+			"prism workflow cancel | resume <run_id>         Control a durable multi-agent run",
+			"prism workflow report <run_id> [--json]         Show its terminal report",
 		}},
 		{"Observe runs", []string{
 			"prism watch [--config prism.yaml]             Live view of a running gated-loop workflow",
