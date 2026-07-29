@@ -479,6 +479,18 @@ type AgentConfig struct {
 	// must opt in explicitly, since this is a new network-reachable surface
 	// that lets any caller with API access trigger a real (billed) LLM call.
 	InvocableViaAPI bool `yaml:"invocable_via_api"`
+
+	// FirstClassTools gives the agent direct tool access without per-call
+	// policy evaluation. When true, the agent's system prompt includes tool
+	// descriptions as first-class capabilities (like OpenClaw) and tool calls
+	// execute directly without going through the policy gate loop.
+	// This is intended for trusted agents in free mode — the policy engine
+	// still applies in gated mode. Use this for agents that need fluid, low-latency
+	// tool access (reading files, running commands, searching memory) without
+	// the overhead of the tool-loop + policy evaluation cycle.
+	// Requires: the agent must be in a channel with mode: free or be triggered
+	// by an autonomous action (auto_patch, project_work, etc.).
+	FirstClassTools bool `yaml:"first_class_tools"`
 }
 
 // ModelFallback describes one ordered provider/model fallback for an agent.

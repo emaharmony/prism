@@ -74,6 +74,7 @@ type chatContext struct {
 	stateMgr    *state.Manager // V32: Working state manager for adaptive context
 	planMgr     *plan.Manager  // V32: Plan manager for plan-first pipeline
 	guardian    *guard.Guard   // V32: Guard rail for plan enforcement
+	hasSoulContent bool        // True when SOUL.md is loaded — takes precedence over postfix
 
 	// Cached static system content — built once, reused every message.
 	// Includes: agent identity, workspace context, postfix, tool instructions.
@@ -719,6 +720,7 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 	// --- Layer 1: IDENTITY ---
 	// V33: Derive identity from workspace files, fall back to config id/role.
 	identityContent := ""
+	cc.hasSoulContent = false
 	if cc.ctxBuilder != nil {
 		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).WithNamedContexts([]string{"soul", "identity"})
 		injected, err := builder.Build()
@@ -726,6 +728,7 @@ func (cc *chatContext) buildStaticSystemContent(agentCfg *orchestrator.AgentConf
 			for _, f := range injected.Files {
 				if f.Name == "soul" && f.Content != "" {
 					identityContent = f.Content
+					cc.hasSoulContent = true
 				}
 			}
 		}
@@ -816,7 +819,7 @@ func (cc *chatContext) buildChatPrompt(sess *session.Session, agentCfg *orchestr
 	sb.WriteString(cc.staticSystemText)
 
 	// --- Layer 3: BEHAVIOR ---
-	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n\n")
+	sb.WriteString("## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole, cc.hasSoulContent) + "\n\n")
 
 	// --- Layer 4: TOOLS (text path) ---
 	if cc.toolExec != nil {
@@ -890,7 +893,7 @@ func (cc *chatContext) buildChatMessages(sess *session.Session, agentCfg *orches
 	systemContent += cc.staticSystemChat
 
 	// --- Layer 3: BEHAVIOR ---
-	systemContent += "\n## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole) + "\n"
+	systemContent += "\n## How You Respond\n" + resolveConversationPostfix(agentCfg, channelRole, cc.hasSoulContent) + "\n"
 
 	// --- Layer 4: TOOLS ---
 	if cc.toolExec != nil {
