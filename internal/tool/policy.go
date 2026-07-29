@@ -198,9 +198,9 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 
 	case "write_file":
 		if cfg.AutoApproveMutations {
-		if frozenPath, reason := cfg.checkFrozenPath(input); frozenPath != "" {
-			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("governance: %s (frozen path: %s)", reason, frozenPath)}
-		}
+			if frozenPath, reason := cfg.checkFrozenPath(input); frozenPath != "" {
+				return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("governance: %s (frozen path: %s)", reason, frozenPath)}
+			}
 			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: direct write approved for autonomous wake action"}
 		}
 		return PolicyResult{Decision: PolicyDenied, Reason: "direct write_file is denied — use write_file_proposal for approval-gated mutations"}
@@ -398,18 +398,6 @@ func resolvePath(workspaceRoot, relPath string) string {
 // Path containment is now provided by internal/safety.IsWithinRoot.
 // The local implementation has been removed to eliminate duplication.
 // All path containment checks should use safety.IsWithinRoot or safety.ResolveAndContain.
-
-// isWriteTool returns true for tools that modify the filesystem.
-func isWriteTool(toolName string) bool {
-	switch toolName {
-	case "write_file", "write_file_proposal", "write_file_dry_run",
-		"create_directory", "create_directory_proposal",
-		"git_add", "git_commit", "git_push", "git_checkout":
-		return true
-	default:
-		return false
-	}
-}
 
 // checkFrozenPath checks if the tool input targets a frozen path.
 // Returns the matched frozen path pattern and reason if found.
