@@ -87,6 +87,7 @@ func (t *ShellTool) Execute(ctx context.Context, input map[string]any) (ToolResu
 	// Build the command
 	cmd := exec.CommandContext(execCtx, "sh", "-c", command)
 	cmd.Dir = cwd
+	configureShellCommand(cmd)
 
 	// Capture stdout and stderr
 	var stdout, stderr strings.Builder
