@@ -225,3 +225,46 @@ func TestSQLiteEventStore_WALMode(t *testing.T) {
 		t.Errorf("journal_mode = %q, want wal", mode)
 	}
 }
+
+func TestSQLiteEventStore_DuplicateEventIDIsIdempotent(t *testing.T) {
+	store, err := NewSQLiteEventStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteEventStore() error = %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	evt := Event{
+		ID:        "evt_idempotent_reemit",
+		Type:      "prism.workflow.multi_agent.recovery.completed",
+		Timestamp: "2026-07-23T12:00:00Z",
+		Payload: map[string]any{
+			"run_id":      "run_idempotent",
+			"workflow_id": "phase1-reference",
+			"status":      "completed",
+			"reason":      "terminal run unchanged",
+		},
+		Metadata: EventMetadata{RunID: "run_idempotent"},
+	}
+	if err := store.Store(ctx, evt); err != nil {
+		t.Fatalf("first store: %v", err)
+	}
+	if err := store.Store(ctx, evt); err != nil {
+		t.Fatalf("duplicate store: %v", err)
+	}
+	if err := store.StoreBatch(ctx, []Event{evt, evt}); err != nil {
+		t.Fatalf("duplicate batch: %v", err)
+	}
+
+	results, err := store.Query(ctx, EventFilter{
+		RunID: "run_idempotent",
+		Type:  evt.Type,
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("stored duplicates = %d, want 1", len(results))
+	}
+}
