@@ -52,6 +52,8 @@ the README "Core Packages" table for the full list.
 
 ## Related Docs
 
+- [Package Boundaries](PACKAGE_BOUNDARIES.md)
+- [Multi-Agent Runtime Roadmap](MULTI_AGENT_RUNTIME_ROADMAP.md)
 - [Getting Started](../getting-started/GETTING_STARTED.md)
 - [Configuration Guide](../operations/CONFIGURATION.md)
 - [Capability Status](../reference/CAPABILITY_STATUS.md)
