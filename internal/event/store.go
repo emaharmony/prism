@@ -110,7 +110,8 @@ func (s *SQLiteEventStore) Store(ctx context.Context, event Event) error {
 
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO events (id, run_id, type, timestamp, correlation_id, parent_id, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`,
 		event.ID, event.Metadata.RunID, event.Type, event.Timestamp,
 		event.CorrelationID, event.ParentID, string(payload),
 	)
@@ -131,7 +132,8 @@ func (s *SQLiteEventStore) StoreBatch(ctx context.Context, events []Event) error
 
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO events (id, run_id, type, timestamp, correlation_id, parent_id, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("event store: prepare: %w", err)
 	}
