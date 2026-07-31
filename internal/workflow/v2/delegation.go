@@ -103,6 +103,9 @@ type TaskCompletion struct {
 	// HandleTaskCompletion). Zero when the worker did not report usage.
 	PromptTokens     int `json:"prompt_tokens,omitempty"`
 	CompletionTokens int `json:"completion_tokens,omitempty"`
+	Iterations       int `json:"iterations,omitempty"`
+	ToolCalls        int `json:"tool_calls,omitempty"`
+	DeniedToolCalls  int `json:"denied_tool_calls,omitempty"`
 }
 
 type CompletionArtifacts struct {

@@ -37,6 +37,26 @@ func TestCapabilityToolScope(t *testing.T) {
 	}
 }
 
+func TestCapabilityToolScope_ExplicitRoleAllowlist(t *testing.T) {
+	scope := DefaultToolScope()
+	runtime := AgentRuntime{
+		AgentID:             "atlas",
+		Capabilities:        []string{"code"},
+		AllowedTools:        []string{"read_file"},
+		EnforceAllowedTools: true,
+	}
+	if !scope.Allowed(runtime, "read_file") {
+		t.Error("explicitly allowlisted read_file was denied")
+	}
+	if scope.Allowed(runtime, "git_commit") {
+		t.Error("capability must not widen the explicit role allowlist")
+	}
+	runtime.AllowedTools = nil
+	if scope.Allowed(runtime, "read_file") {
+		t.Error("an enforced empty allowlist must deny every tool")
+	}
+}
+
 // The runner must NOT execute a scoped-out tool, and must feed the denial back.
 func TestLoopRunner_ToolScopeDeniesExecution(t *testing.T) {
 	var executed []string
@@ -66,6 +86,10 @@ func TestLoopRunner_ToolScopeDeniesExecution(t *testing.T) {
 	}
 	if !strings.Contains(res.Summary, "out of role") {
 		t.Errorf("summary = %q", res.Summary)
+	}
+	if res.ToolCalls != 1 || res.DeniedToolCalls != 1 || res.Iterations != 2 {
+		t.Errorf("denial telemetry = calls %d denied %d iterations %d",
+			res.ToolCalls, res.DeniedToolCalls, res.Iterations)
 	}
 }
 
