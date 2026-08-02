@@ -610,6 +610,46 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: unknown workflow subcommand '%s'\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "graph":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "Error: graph subcommand required (validate, compile, inspect, run, or test)")
+			fmt.Fprintln(os.Stderr, "Usage: prism graph validate <file|dir>... [--json]")
+			fmt.Fprintln(os.Stderr, "       prism graph compile <file> [--out <file>]")
+			fmt.Fprintln(os.Stderr, "       prism graph inspect --file <path> [--format text|mermaid|json]")
+			fmt.Fprintln(os.Stderr, "       prism graph run --workflow <id> [--version <n>] | --file <path> [--input <file.json>]")
+			fmt.Fprintln(os.Stderr, "       prism graph test <file|dir>... [--json]")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "validate":
+			if err := executeGraphValidate(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		case "compile":
+			if err := executeGraphCompile(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		case "inspect":
+			if err := executeGraphInspect(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		case "run":
+			if err := executeGraphRun(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		case "test":
+			if err := executeGraphTest(os.Args[3:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown graph subcommand '%s' (want validate, compile, inspect, run, or test)\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "context":
 		if len(os.Args) < 3 {
 			fmt.Fprintln(os.Stderr, "Error: context subcommand required (show)")
@@ -711,6 +751,7 @@ func commandUsage() string {
 			"prism workflow status <run_id>                Inspect workflow state",
 			"prism workflow cancel | resume <run_id>         Control a durable multi-agent run",
 			"prism workflow report <run_id> [--json]         Show its terminal report",
+			"prism graph validate|compile|inspect|test     Work with developer-authored workflow graphs",
 		}},
 		{"Observe runs", []string{
 			"prism watch [--config prism.yaml]             Live view of a running gated-loop workflow",
