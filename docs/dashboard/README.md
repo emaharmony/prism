@@ -9,6 +9,10 @@ It is deliberately framework-free: static HTML, shared CSS tokens in
 - Overview (`index.html`): live status, task queue, approvals, and agent roster.
 - Operations (`v2.html`): detailed live system views.
 - Agents, Workflow, Scheduler, and Settings: existing operational editors.
+- Multi-Agent Runs (`multiagent-runs.html`) and the per-run execution graph page
+  (`multiagent-run.html`): a read-only, live-updating, replayable view of one
+  durable multi-agent run, plus pause/resume/cancel operator controls. See
+  [Multi-Agent Execution Graph Dashboard](../architecture/MULTI_AGENT_EXECUTION_GRAPH.md).
 
 The dashboard consumes the existing `/api/v1` API only. Run `go test
 ./internal/dashboard` after UI changes; build or restart `prism serve` to refresh
