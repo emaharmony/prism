@@ -110,7 +110,8 @@ func (s *SQLiteEventStore) Store(ctx context.Context, event Event) error {
 
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO events (id, run_id, type, timestamp, correlation_id, parent_id, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`,
 		event.ID, event.Metadata.RunID, event.Type, event.Timestamp,
 		event.CorrelationID, event.ParentID, string(payload),
 	)
@@ -131,7 +132,8 @@ func (s *SQLiteEventStore) StoreBatch(ctx context.Context, events []Event) error
 
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO events (id, run_id, type, timestamp, correlation_id, parent_id, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`)
 	if err != nil {
 		return fmt.Errorf("event store: prepare: %w", err)
 	}
@@ -185,7 +187,11 @@ func (s *SQLiteEventStore) Query(ctx context.Context, filter EventFilter) ([]Eve
 		args = append(args, filter.EndTime.Format(time.RFC3339Nano))
 	}
 
-	query += " ORDER BY timestamp ASC"
+	// ORDER BY id, not timestamp: event.Event.ID is a ULID (lexicographically
+	// sortable and unique), so this is the correct cursor field. Two events
+	// with colliding timestamps (same millisecond) still sort deterministically
+	// by ID; ordering by timestamp alone does not.
+	query += " ORDER BY id ASC"
 
 	limit := filter.Limit
 	if limit <= 0 {

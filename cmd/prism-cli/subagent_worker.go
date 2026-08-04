@@ -108,7 +108,7 @@ func (b *subAgentBackend) executorFor(workDir string) *tool.Executor {
 			_ = reg.Register(t)
 		}
 	}
-	return tool.NewExecutor(reg, b.exec.Policy)  // b.exec.Policy is already *PolicyConfig
+	return tool.NewExecutor(reg, b.exec.Policy) // b.exec.Policy is already *PolicyConfig
 }
 
 func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, subagent.Parser, subagent.ToolExec, error) {
@@ -150,7 +150,23 @@ func (b *subAgentBackend) Bind(rt subagent.AgentRuntime) (subagent.LLMFunc, suba
 	execFn := func(ctx stdcontext.Context, toolName string, input map[string]any) (string, error) {
 		// The executor's tools are already rooted at the worktree (executorFor),
 		// so no per-call repo_path injection is needed.
-		res, xerr := ex.ExecuteWithPolicy(ctx, toolName, rt.AgentID, "subagent", rt.AgentID, input)
+		execInput := make(map[string]any, len(input)+1)
+		for key, value := range input {
+			execInput[key] = value
+		}
+		project := "subagent"
+		correlationID := rt.AgentID
+		if rt.RunID != "" {
+			execInput["_run_id"] = rt.RunID
+			project = "multiagent"
+			correlationID = rt.RunID
+		}
+		if rt.ExecutionKey != "" {
+			execInput["_execution_key"] = rt.ExecutionKey
+			correlationID = rt.ExecutionKey
+		}
+		res, xerr := ex.ExecuteWithPolicy(
+			ctx, toolName, rt.AgentID, project, correlationID, execInput)
 		if xerr != nil {
 			return "", xerr
 		}

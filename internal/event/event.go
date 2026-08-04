@@ -23,7 +23,6 @@
 package event
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -164,29 +163,37 @@ type TokenUsage struct {
 
 // NewID generates a unique, sortable event ID using ULID.
 // Format: evt_<ulid>
+//
+// Entropy is ulid.DefaultEntropy(), the library's thread-safe, per-process
+// monotonically increasing source, not crypto/rand directly: plain
+// crypto/rand entropy makes two ULIDs minted within the same millisecond
+// sort in effectively random relative order, silently breaking the
+// "ORDER BY id ASC" chronological-ordering guarantee event stores rely on
+// (see store.go's Query). DefaultEntropy guarantees strictly increasing IDs
+// for same-millisecond calls within this process.
 func NewID() string {
-	id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader)
+	id := ulid.MustNew(ulid.Timestamp(time.Now()), ulid.DefaultEntropy())
 	return fmt.Sprintf("evt_%s", id.String())
 }
 
 // NewCorrelationID generates a correlation ID.
 // Format: corr_<ulid>
 func NewCorrelationID() string {
-	id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader)
+	id := ulid.MustNew(ulid.Timestamp(time.Now()), ulid.DefaultEntropy())
 	return fmt.Sprintf("corr_%s", id.String())
 }
 
 // NewRunID generates a run ID.
 // Format: run_<ulid>
 func NewRunID() string {
-	id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader)
+	id := ulid.MustNew(ulid.Timestamp(time.Now()), ulid.DefaultEntropy())
 	return fmt.Sprintf("run_%s", id.String())
 }
 
 // NewSessionID generates a session ID.
 // Format: sess_<ulid>
 func NewSessionID() string {
-	id := ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader)
+	id := ulid.MustNew(ulid.Timestamp(time.Now()), ulid.DefaultEntropy())
 	return fmt.Sprintf("sess_%s", id.String())
 }
 

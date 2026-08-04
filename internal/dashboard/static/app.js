@@ -4,7 +4,8 @@
   const labels = {
     '/index.html': 'Overview', '/': 'Overview', '/v2.html': 'Operations',
     '/usage.html': 'Usage', '/workflow-editor.html': 'Workflow', '/editor.html': 'Agents',
-    '/workspace.html': 'Workspace', '/scheduler.html': 'Scheduler', '/config.html': 'Settings'
+    '/workspace.html': 'Workspace', '/scheduler.html': 'Scheduler', '/config.html': 'Settings',
+    '/multiagent-runs.html': 'Multi-Agent Runs'
   };
 
   function escape(value) {
@@ -32,7 +33,7 @@
 
   function statusClass(status) {
     const value = String(status || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    if (/fail|deny|reject|error|cancel/.test(value)) return 'danger';
+    if (/fail|deny|reject|error|cancel|exhausted/.test(value)) return 'danger';
     if (/pending|wait|approval|pause|warn|validat/.test(value)) return 'warning';
     if (/run|progress|active|assigned|created|queue/.test(value)) return 'info';
     if (/complete|success|healthy|running|approved|ok/.test(value)) return 'success';

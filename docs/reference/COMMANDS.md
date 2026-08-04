@@ -58,11 +58,16 @@ embedded NATS or start `cmd/prism-bus` separately. Key `run` flags:
 | `prism workflow show <name>` | Show a workflow's steps | Preview | `prism workflow show demo.echo_tool` |
 | `prism workflow run <name>` | Run a named workflow | Preview | `prism workflow run demo.echo_tool` |
 | `prism workflow status <run_id>` | Show a workflow run's status | Preview | `prism workflow status <run_id>` |
+| `prism workflow cancel <run_id>` | Request durable multi-agent cancellation | Phase 1 | `prism workflow cancel <run_id>` |
+| `prism workflow resume <run_id>` | Safely resume a durable multi-agent run | Phase 1 | `prism workflow resume <run_id>` |
+| `prism workflow report <run_id>` | Show a terminal multi-agent report | Phase 1 | `prism workflow report <run_id> --json` |
 | `prism workflow start` | Start a gated-loop run for a project | Preview | `prism workflow start --project example --prompt "..."` |
 
-`workflow run` accepts optional `--input <file.json>` and `--run-dir <dir>`.
-Artifacts land in the run directory: `events.jsonl`, `prompt.md`, `output.md`,
-`summary.json`.
+Generic `workflow run` accepts optional `--input <file.json>` and
+`--run-dir <dir>`. The `multi-agent-software-task` workflow requires a strict
+JSON input and also accepts `--config <prism.yaml>`. Its status and report
+commands support `--json`. See the
+[Multi-Agent Workflow](../MULTI_AGENT_WORKFLOW.md) for its input and artifacts.
 
 ## Policy Commands
 
