@@ -83,7 +83,7 @@ func TestBuildRunGraphMidRunLoopbackTraversedAndActiveEdge(t *testing.T) {
 
 	state.CurrentRole = RoleTester
 	state.TransitionCount = 4
-	state.LoopTraversals.Counts = map[LoopKind]int{LoopTesterToDeveloper: 1}
+	state.LoopTraversals.TesterToDeveloper = 1
 
 	events := []event.Event{
 		transitionSelectedEvent(RolePlanner, OutcomePlanReady, RoleDeveloper, 1),
