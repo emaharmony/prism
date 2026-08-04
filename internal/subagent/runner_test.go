@@ -130,6 +130,23 @@ func TestLoopRunner_IterationBudgetExceeded(t *testing.T) {
 	}
 }
 
+func TestLoopRunner_RuntimeIterationBudgetNarrowsRunnerLimit(t *testing.T) {
+	backend := &scriptBackend{
+		parse: func(string) Action {
+			return Action{Tool: "read_file", Input: map[string]any{}}
+		},
+	}
+	r := NewLoopRunner(LoopRunnerConfig{Backend: backend, MaxIterations: 10})
+	_, err := r.Run(context.Background(), v2.TaskPacket{TaskID: "T-role-limit"},
+		AgentRuntime{AgentID: "scout", MaxIterations: 2})
+	if err == nil || !strings.Contains(err.Error(), "did not complete within 2 iterations") {
+		t.Fatalf("expected role iteration-budget error, got %v", err)
+	}
+	if len(backend.toolCalls) != 2 {
+		t.Errorf("expected 2 tool calls before role budget, got %d", len(backend.toolCalls))
+	}
+}
+
 func TestLoopRunner_TokenBudgetExceeded(t *testing.T) {
 	backend := &scriptBackend{
 		parse: func(string) Action { return Action{Tool: "read_file", Input: map[string]any{}} },

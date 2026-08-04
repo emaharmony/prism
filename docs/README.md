@@ -60,6 +60,7 @@ Pick the path that matches what you're doing:
 *   [System Overview](./architecture/ARCHITECTURE.md) - High-level architectural design.
 *   [Safety & Policy](./concepts/SAFETY.md) - How Prism ensures safe execution.
 *   [Prism Vision](./concepts/PRISM-VISION.md) - The core philosophy and long-term goals.
+*   [Multi-Agent Workflow](./MULTI_AGENT_WORKFLOW.md) - Run, inspect, cancel, resume, and report the Phase 1 reference flow.
 
 ## 🛠️ Reference
 *   [Stability Matrix](./reference/stability-matrix.md) - Feature status and production readiness.
