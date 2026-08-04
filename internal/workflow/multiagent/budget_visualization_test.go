@@ -45,10 +45,10 @@ func TestBuildBudgetVisualizationThresholds(t *testing.T) {
 				TotalLocalIterations: test.used,
 				RepeatedFailures:     test.used,
 			}
-			loops := LoopTraversalCounts{Counts: map[LoopKind]int{
-				LoopTesterToDeveloper:   test.used,
-				LoopReviewerToDeveloper: test.used,
-			}}
+			loops := LoopTraversalCounts{
+				TesterToDeveloper:   test.used,
+				ReviewerToDeveloper: test.used,
+			}
 			elapsed := time.Duration(test.used) * time.Second
 
 			viz := BuildBudgetVisualization(usage, limits, loops, elapsed, test.used, map[Role]int{RolePlanner: test.used})
@@ -96,10 +96,10 @@ func TestBuildBudgetVisualizationUnlimitedNeverApproaches(t *testing.T) {
 		TotalLocalIterations: 1_000_000,
 		RepeatedFailures:     1_000_000,
 	}
-	loops := LoopTraversalCounts{Counts: map[LoopKind]int{
-		LoopTesterToDeveloper:   1_000_000,
-		LoopReviewerToDeveloper: 1_000_000,
-	}}
+	loops := LoopTraversalCounts{
+		TesterToDeveloper:   1_000_000,
+		ReviewerToDeveloper: 1_000_000,
+	}
 
 	viz := BuildBudgetVisualization(usage, limits, loops, 1_000_000*time.Second, 1_000_000, map[Role]int{RolePlanner: 1_000_000})
 
