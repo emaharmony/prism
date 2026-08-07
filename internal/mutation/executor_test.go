@@ -3,10 +3,13 @@ package mutation
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/emaharmony/prism/internal/approval"
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 func TestExecutorApplyApprovedWrites(t *testing.T) {
@@ -64,6 +67,144 @@ func TestExecutorApplyApprovedWrites(t *testing.T) {
 	}
 	if !hasApplied {
 		t.Error("expected prism.mutation.applied event")
+	}
+}
+
+func TestExecutorApplyToolCallExecutesShellCommand(t *testing.T) {
+	runsDir := t.TempDir()
+	store := approval.NewStore(runsDir)
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "shell tool requires approval in gated mode"}
+	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prism", approval.MutationToolCall, "echo hello", "", policy)
+	a.ToolName = "shell"
+	a.Input = map[string]any{"command": "echo hello"}
+	store.Save(a)
+
+	executor := NewExecutor(".", store)
+	executor.SetShellTool(&tool.ShellTool{
+		Policy:         tool.ShellPolicy{Tier: "tier_3"},
+		DefaultTimeout: 10,
+		MaxOutputBytes: 10240,
+		MaxStderrBytes: 5120,
+	})
+
+	result, err := executor.ApplyWithRun(context.Background(), "run_shell", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Message)
+	}
+	if !strings.Contains(result.Message, "hello") {
+		t.Errorf("expected stdout to contain 'hello', got %q", result.Message)
+	}
+}
+
+func TestExecutorApplyToolCallWithoutShellToolFailsClearly(t *testing.T) {
+	runsDir := t.TempDir()
+	store := approval.NewStore(runsDir)
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prism", approval.MutationToolCall, "echo hello", "", policy)
+	a.ToolName = "shell"
+	a.Input = map[string]any{"command": "echo hello"}
+	store.Save(a)
+
+	executor := NewExecutor(".", store) // no SetShellTool call
+
+	result, err := executor.ApplyWithRun(context.Background(), "run_shell", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Fatal("expected failure without a configured shell tool")
+	}
+	if !strings.Contains(result.Message, "not configured") {
+		t.Errorf("expected a clear 'not configured' message, got %q", result.Message)
+	}
+}
+
+func TestExecutorApplyToolCallHardBlocklistSurvivesApproval(t *testing.T) {
+	runsDir := t.TempDir()
+	store := approval.NewStore(runsDir)
+
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	// Simulates a stale/tampered approval record targeting a hard-blocklisted
+	// command — validateSafety must refuse this even with a tier_3 shell tool
+	// configured, since the hard blocklist is always enforced first.
+	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prism", approval.MutationToolCall, "rm -rf /*", "", policy)
+	a.ToolName = "shell"
+	a.Input = map[string]any{"command": "rm -rf /*"}
+	store.Save(a)
+
+	executor := NewExecutor(".", store)
+	executor.SetShellTool(&tool.ShellTool{Policy: tool.ShellPolicy{Tier: "tier_3"}})
+
+	result, err := executor.ApplyWithRun(context.Background(), "run_shell", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Success {
+		t.Fatal("expected hard-blocklisted command to fail even when approved")
+	}
+}
+
+func TestExecutorApplyToolCallExecutesGitAddViaRegistry(t *testing.T) {
+	root := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.email", "test@prism.local")
+	runGit("config", "user.name", "Prism Test")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
+
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("content\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runsDir := t.TempDir()
+	store := approval.NewStore(runsDir)
+	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
+	a := approval.NewApproval("run_git", "corr_git", "lumi", "prism", approval.MutationToolCall, "file.txt", "", policy)
+	a.ToolName = "git_add"
+	a.Input = map[string]any{"path": "file.txt", "repo_path": root}
+	store.Save(a)
+
+	registry := tool.NewRegistry()
+	if err := registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: root}}); err != nil {
+		t.Fatalf("register git_add tool: %v", err)
+	}
+	executor := NewExecutor(root, store)
+	executor.SetRegistry(registry)
+
+	result, err := executor.ApplyWithRun(context.Background(), "run_git", a.ApprovalID, "ema")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success, got: %s", result.Message)
+	}
+
+	// Confirm the file was actually staged, exactly once — this is the real
+	// side effect of the approval, not just an after-the-fact record.
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = root
+	out, err := statusCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "A  file.txt") {
+		t.Fatalf("expected file.txt to be staged after approval, got status:\n%s", out)
 	}
 }
 

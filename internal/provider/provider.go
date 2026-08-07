@@ -12,12 +12,25 @@
 //	p := mock.New()
 package provider
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Provider is the interface for LLM generation backends.
 type Provider interface {
 	Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error)
 }
+
+// ErrQuotaExhausted indicates a provider/model has hit an account-level
+// usage quota (e.g. "weekly usage limit reached"), as opposed to a
+// transient rate limit. Implementations should wrap their returned error
+// with this (fmt.Errorf("...: %w", ErrQuotaExhausted)) when they detect
+// this condition, so FailoverProvider knows not to retry the same target
+// and to skip it for the rest of the process's lifetime — retrying
+// immediately (or on the next message) can't succeed since the quota
+// won't reset until the provider's own billing cycle does.
+var ErrQuotaExhausted = errors.New("provider: quota exhausted")
 
 // GenerateRequest is the input to a provider's Generate call.
 type GenerateRequest struct {

@@ -13,6 +13,7 @@ package discordbot
 
 import (
 	"context"
+	"bytes"
 	"fmt"
 	"log"
 	"strings"
@@ -461,4 +462,31 @@ func safeSplitIndex(content string, maxLen int) int {
 	// Fallback: skip the first rune entirely
 	_, size := utf8.DecodeRuneInString(content)
 	return size
+}
+
+// SendAudio sends an audio file to a Discord channel as a voice message.
+// The audio data should be a WAV file. It's sent as an attachment with
+// the flag 8192 (IS_VOICE_MESSAGE) so Discord renders it as a voice clip.
+func (b *BotAdapter) SendAudio(channelID string, audio []byte) error {
+	if b.session == nil {
+		return fmt.Errorf("discord-bot: not connected")
+	}
+
+	// Create a reader for the audio data
+	audioReader := bytes.NewReader(audio)
+
+	// Send as a file attachment with voice message flag
+	files := []*discordgo.File{
+		{
+			Name:        "voice.wav",
+			ContentType: "audio/wav",
+			Reader:      audioReader,
+		},
+	}
+
+	_, err := b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Files: files,
+		Flags: 8192, // IS_VOICE_MESSAGE
+	})
+	return err
 }

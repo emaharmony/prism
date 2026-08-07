@@ -23,10 +23,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/emaharmony/prism/internal/approval"
 	"github.com/emaharmony/prism/internal/mutation"
 	"github.com/emaharmony/prism/internal/orchestrator"
+	"github.com/emaharmony/prism/internal/tool"
 )
 
 // executeApprovalList shows all approvals, optionally filtered to a single run.
@@ -156,8 +158,25 @@ func executeApprovalApprove(approvalID, approvedBy, runID, workspace, runsDir, c
 	}
 
 	store := approval.NewStore(runsDir)
+
+	// MCP tool approvals need a live, connected MCP client — this
+	// short-lived CLI process doesn't have one. Fail early with clear
+	// guidance instead of a confusing "tool not found" error.
+	if pending, err := store.Load(runID, approvalID); err == nil && strings.HasPrefix(pending.ToolName, "mcp_") {
+		fmt.Fprintf(os.Stderr, "Error: %q is an MCP tool approval — the CLI has no live MCP connection.\nApprove it from the Discord button instead (requires `prism serve` running).\n", pending.ToolName)
+		os.Exit(1)
+	}
+
 	writeRoots := approvalWriteRoots(configPath)
 	executor := mutation.NewExecutor(workspace, store, writeRoots...)
+	// V62: enables applying MutationToolCall approvals — the human has
+	// already explicitly approved this exact command/action, so tier_3 is
+	// used for shell (the hard blocklist, always enforced first regardless
+	// of tier, is re-checked in validateSafety before execution). Git
+	// mutation tools are re-invoked via the registry with the exact
+	// original input.
+	executor.SetShellTool(approvalShellTool(configPath))
+	executor.SetRegistry(approvalRegistry(workspace, configPath))
 
 	// Print events as they happen (CLI doesn't have NATS bus)
 	executor.SetEmitter(func(eventType, source string, payload map[string]any) {
@@ -249,4 +268,43 @@ func approvalWriteRoots(configPath string) []string {
 		os.Exit(1)
 	}
 	return configuredWriteRoots(cfg)
+}
+
+// approvalShellTool builds a ShellTool for re-running an approved shell
+// command. Missing/unreadable config falls back to a tier_3 shell tool with
+// no extra blocked patterns — the hard blocklist still applies.
+func approvalShellTool(configPath string) *tool.ShellTool {
+	if configPath == "" {
+		configPath = "prism.yaml"
+	}
+	cfg, err := orchestrator.LoadConfig(configPath)
+	if err != nil {
+		return &tool.ShellTool{Policy: tool.ShellPolicy{Tier: "tier_3"}}
+	}
+	return &tool.ShellTool{
+		Policy:         tool.BuildShellPolicyFromConfig("tier_3", cfg.Shell.Allowlists, cfg.Shell.Defaults.BlockedPatterns),
+		DefaultTimeout: cfg.Shell.Defaults.TimeoutSeconds,
+		MaxOutputBytes: cfg.Shell.Defaults.MaxOutputBytes,
+	}
+}
+
+// approvalRegistry builds a tool registry for re-invoking approved git
+// mutations (git_checkout, git_add, git_commit, git_push, create_pr) from
+// the CLI. Mirrors the git tool registration in cmd_serve.go's server
+// startup. MCP tools are deliberately not included here — they need a live
+// connection this short-lived CLI process doesn't have; those approvals
+// must be applied via the Discord button (or `prism serve` running) instead.
+func approvalRegistry(workspace, configPath string) *tool.Registry {
+	if configPath == "" {
+		configPath = "prism.yaml"
+	}
+	writeRoots := approvalWriteRoots(configPath)
+	protectedBranch := ""
+	if cfg, err := orchestrator.LoadConfig(configPath); err == nil {
+		protectedBranch = cfg.ProtectedBranch()
+	}
+	registry := tool.NewRegistry()
+	tool.RegisterBuiltinsV4(registry, workspace, 0, protectedBranch, writeRoots...)
+	registry.Register(&tool.GitCreatePRTool{})
+	return registry
 }

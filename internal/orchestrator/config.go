@@ -132,6 +132,9 @@ type PrismConfig struct {
 	OllamaURL string `yaml:"ollama_url"`
 
 	// ContextTokenBudget is the max tokens for workspace context injection.
+	// TTS holds text-to-speech (Voicebox) configuration.
+	// When enabled, Prism generates voice messages alongside text responses.
+	TTS TTSConfig `yaml:"tts"`
 	// Default: 4000. Higher = more context but less room for conversation.
 	ContextTokenBudget int `yaml:"context_token_budget"`
 
@@ -664,6 +667,9 @@ type ChannelRole struct {
 	// "social" = warm, conversational, present
 	// When empty, uses the agent's conversation_postfix.
 	Personality string `yaml:"personality,omitempty"`
+	// TTS enables voice messages in this channel. Overrides global TTS setting.
+	// When true and global TTS is enabled, responses are also sent as voice messages.
+	TTS bool `yaml:"tts,omitempty"`
 
 	// Context is structured channel context that replaces state_actions.inject.
 	// It provides rich context about where the agent is, who it's talking to,
@@ -1476,4 +1482,13 @@ func (c *Config) RegisterAgents(registry *agent.Registry) error {
 		}
 	}
 	return nil
+}
+
+// TTSConfig holds Voicebox text-to-speech settings.
+type TTSConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	ProfileID   string `yaml:"profile_id"`
+	Engine      string `yaml:"engine"`
+	VoiceboxURL string `yaml:"voicebox_url"`
+	MaxChars    int    `yaml:"max_chars"`
 }
