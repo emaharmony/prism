@@ -63,6 +63,15 @@ type PolicyConfig struct {
 	// unattended when an operator explicitly turns this on.
 	AutoApproveMCP bool
 
+	// SafeShellPolicy classifies shell commands that are safe enough to
+	// auto-run even in gated mode (e.g. the tier_1 allowlist: read-only
+	// git/build/test commands). It is deliberately separate from
+	// AutoApproveMutations — a command that fails this check still falls
+	// through to the normal requires_approval gate rather than being denied.
+	// The hard blocklist inside EvaluateShellPolicy is always enforced
+	// first, regardless of this policy's tier.
+	SafeShellPolicy ShellPolicy
+
 	// FrozenPaths is a list of file paths that are governance-frozen. Any write
 	// operation targeting these paths is denied regardless of other policy
 	// settings. Populated by the governance loader on startup. Supports exact
@@ -263,6 +272,11 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 		}
 		if cfg.AutoApproveMutations {
 			return PolicyResult{Decision: PolicyApproved, Reason: "auto-approve: shell tool approved for free mode / autonomous wake action"}
+		}
+		if command, _ := input["command"].(string); command != "" {
+			if safeResult := EvaluateShellPolicy(cfg.SafeShellPolicy, command); safeResult.Allowed {
+				return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("auto-approve: safe command — %s", safeResult.Reason)}
+			}
 		}
 		return PolicyResult{Decision: PolicyRequiresApproval, Reason: "shell tool requires approval in gated mode"}
 

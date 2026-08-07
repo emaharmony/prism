@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	natsserver "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
@@ -78,7 +79,7 @@ func StartEmbeddedBus(port int) (string, func(), error) {
 // This is a convenience function for connecting to either an embedded
 // or external NATS server.
 func ConnectToBus(url string) (*nats.Conn, error) {
-	nc, err := nats.Connect(url)
+	nc, err := nats.Connect(url, nats.Timeout(15*time.Second), nats.MaxReconnects(10))
 	if err != nil {
 		return nil, fmt.Errorf("bus: connect: %w", err)
 	}

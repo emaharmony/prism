@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/emaharmony/prism/internal/approval"
@@ -134,14 +135,29 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 			"policy_reason":   policyResult.Reason,
 		})
 
-		// Execute the tool (which will return approval_id)
-		result, err := e.Registry.Execute(ctx, toolName, execInput)
-		if err != nil {
-			return ToolResult{
-				Success: false,
-				Output:  nil,
-				Error:   err.Error(),
-			}, err
+		// write_file_proposal/create_directory_proposal are safe to actually
+		// invoke here — they only build a preview/proposal object, with no
+		// real side effect (the real write happens later, in
+		// mutation.Executor.ApplyWithRun, once a human approves). Every
+		// other approval-gated tool (shell, git_*, mcp_*) has no such
+		// dry-run mode — its Execute() performs the real, irreversible
+		// action immediately — so it must NOT be invoked here. persistApproval
+		// (via describeToolCall) derives everything it needs from the raw
+		// input alone, and the real invocation is deferred to approval time.
+		var result ToolResult
+		switch toolName {
+		case "write_file_proposal", "create_directory_proposal":
+			var err error
+			result, err = e.Registry.Execute(ctx, toolName, execInput)
+			if err != nil {
+				return ToolResult{
+					Success: false,
+					Output:  nil,
+					Error:   err.Error(),
+				}, err
+			}
+		default:
+			result = ToolResult{Success: true, Output: map[string]any{}}
 		}
 		if result.Output == nil {
 			result.Output = map[string]any{}
@@ -301,23 +317,31 @@ func (e *Executor) persistApproval(toolName, agent, project, correlationID, runI
 		result.Output["approval_id"] = approvalID
 	}
 
-	targetPath, _ := result.Output["target_path"].(string)
-	if targetPath == "" {
-		targetPath, _ = input["path"].(string)
+	// write_file_proposal/create_directory_proposal are safe, side-effect-free
+	// tools that already build their own preview and set mutation_type/
+	// target_path in Output — use that. Every other approval-gated tool
+	// (shell, git_*, mcp_*) has no proposal variant; its Execute() was never
+	// called for this request (see ExecuteWithPolicy's PolicyRequiresApproval
+	// branch), so derive target/preview generically from the original input
+	// and persist it as a MutationToolCall for later re-invocation.
+	var targetPath, content, preview string
+	mutationType, _ := result.Output["mutation_type"].(string)
+	if mutationType != "" {
+		targetPath, _ = result.Output["target_path"].(string)
+		if targetPath == "" {
+			targetPath, _ = input["path"].(string)
+		}
+		content, _ = input["content"].(string)
+		preview = content
+		if preview == "" {
+			preview, _ = result.Output["preview"].(string)
+		}
+	} else {
+		mutationType = approval.MutationToolCall
+		targetPath, preview = describeToolCall(toolName, input)
 	}
 	if targetPath == "" {
 		return fmt.Errorf("target_path is required for approval persistence")
-	}
-
-	content, _ := input["content"].(string)
-	mutationType, _ := result.Output["mutation_type"].(string)
-	if mutationType == "" {
-		mutationType = approval.MutationWriteFile
-	}
-
-	preview := content
-	if preview == "" {
-		preview, _ = result.Output["preview"].(string)
 	}
 	if len(preview) > 500 {
 		preview = preview[:500] + "..."
@@ -334,6 +358,8 @@ func (e *Executor) persistApproval(toolName, agent, project, correlationID, runI
 		TargetPath:    targetPath,
 		Content:       content,
 		Preview:       preview,
+		ToolName:      toolName,
+		Input:         input,
 		CreatedAt:     time.Now().UTC(),
 		Policy: approval.PolicyDecision{
 			Decision: approval.DecisionRequiresApproval,
@@ -352,17 +378,69 @@ func (e *Executor) persistApproval(toolName, agent, project, correlationID, runI
 	// Emit event for Discord notification (approval card with buttons)
 	e.emitEvent("prism.approval.file_requested", map[string]any{
 		"approval_id":    approvalID,
-		"run_id":          runID,
-		"agent":           agent,
-		"project":         project,
-		"target_path":     targetPath,
-		"mutation_type":   mutationType,
-		"preview":         preview,
-		"content_length":  len(content),
-		"_channel_id":     channelID,
+		"run_id":         runID,
+		"agent":          agent,
+		"project":        project,
+		"target_path":    targetPath,
+		"mutation_type":  mutationType,
+		"tool_name":      toolName,
+		"preview":        preview,
+		"content_length": len(content),
+		"_channel_id":    channelID,
 	})
 
 	return nil
+}
+
+// describeToolCall derives a human-readable target label and preview for an
+// approval-gated tool call that has no dedicated "_proposal" variant (i.e.
+// nothing in result.Output already describes it). Used to persist a
+// meaningful MutationToolCall approval record and to render the Discord
+// approval card, without ever having executed the tool.
+func describeToolCall(toolName string, input map[string]any) (target, preview string) {
+	str := func(key string) string {
+		v, _ := input[key].(string)
+		return v
+	}
+	switch toolName {
+	case "shell":
+		cmd := str("command")
+		return cmd, cmd
+	case "git_checkout":
+		branch := str("branch")
+		return branch, fmt.Sprintf("git checkout %s", branch)
+	case "git_add":
+		path := str("path")
+		return path, fmt.Sprintf("git add %s", path)
+	case "git_commit":
+		msg := str("message")
+		return msg, fmt.Sprintf("git commit -m %q", msg)
+	case "git_push":
+		remote, branch := str("remote"), str("branch")
+		if remote == "" {
+			remote = "origin"
+		}
+		label := remote
+		if branch != "" {
+			label = remote + "/" + branch
+		}
+		return label, fmt.Sprintf("git push %s %s", remote, branch)
+	case "create_pr":
+		title := str("title")
+		return title, fmt.Sprintf("gh pr create --title %q", title)
+	}
+	if strings.HasPrefix(toolName, "mcp_") {
+		return toolName, fmt.Sprintf("%s(%v)", toolName, input)
+	}
+	// Generic fallback for any other tool: try common field names, then
+	// fall back to a raw summary so target is never empty.
+	if path := str("path"); path != "" {
+		return path, path
+	}
+	if cmd := str("command"); cmd != "" {
+		return cmd, cmd
+	}
+	return toolName, fmt.Sprintf("%s(%v)", toolName, input)
 }
 
 func metadataString(input map[string]any, key string) string {
