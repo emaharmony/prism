@@ -133,7 +133,7 @@ func (t *ShellTool) Execute(ctx context.Context, input map[string]any) (ToolResu
 
 	// Emit event for audit
 	if t.Emit != nil {
-		t.Emit("prism.tool.shell.executed", "prism-shell-tool", map[string]any{
+		t.Emit("prizm.tool.shell.executed", "prizm-shell-tool", map[string]any{
 			"command":     command,
 			"cwd":         cwd,
 			"exit_code":   exitCode,

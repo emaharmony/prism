@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	v2 "github.com/emaharmony/prism/internal/workflow/v2"
+	v2 "github.com/emaharmony/prizm/internal/workflow/v2"
 )
 
 func TestCapabilityToolScope(t *testing.T) {

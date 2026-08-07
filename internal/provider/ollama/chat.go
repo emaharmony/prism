@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prizm/internal/provider"
 )
 
 // ChatProvider implements provider.ChatProvider using Ollama's /api/chat endpoint

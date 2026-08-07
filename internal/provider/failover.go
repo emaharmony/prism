@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/emaharmony/prism/internal/retry"
+	"github.com/emaharmony/prizm/internal/retry"
 )
 
 // FailoverTarget identifies one concrete provider/model attempt.
@@ -105,7 +105,7 @@ func flattenChatRequest(req ChatGenerateRequest) string {
 		fmt.Fprintf(&b, "[%s] %s\n", message.Role, message.Content)
 	}
 	if len(req.Tools) > 0 {
-		b.WriteString("\nAvailable Prism tools:\n")
+		b.WriteString("\nAvailable Prizm tools:\n")
 		for _, tool := range req.Tools {
 			schema, _ := json.Marshal(tool.Function.Parameters)
 			fmt.Fprintf(&b, "- %s: %s Parameters: %s\n", tool.Function.Name, tool.Function.Description, schema)

@@ -1,4 +1,4 @@
-// Package context provides workspace context injection for Prism runs.
+// Package context provides workspace context injection for Prizm runs.
 // It reads OpenClaw workspace files, applies selection rules, respects token budgets,
 // and produces formatted context strings for LLM prompts.
 //
@@ -6,7 +6,7 @@
 //
 //	Connection → Context → Remembrance → LLM → Tool → Approval → Validation → Review
 //
-// Context is read-only — Prism never writes back to the workspace.
+// Context is read-only — Prizm never writes back to the workspace.
 package context
 
 import (

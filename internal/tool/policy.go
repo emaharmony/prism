@@ -1,4 +1,4 @@
-// Package tool implements Prism's tool execution system (V3+) — the controlled way
+// Package tool implements Prizm's tool execution system (V3+) — the controlled way
 // an AI agent interacts with the outside world.
 //
 // The key insight: the LLM doesn't decide what tools can do. A deterministic Policy
@@ -9,7 +9,7 @@
 //
 // Why is the LLM NOT in charge of policy? Because an LLM can be tricked via prompt
 // injection. If the LLM could decide "yes, write to /etc/passwd", a clever prompt
-// could make it say yes. By keeping policy deterministic, Prism is safe even if
+// could make it say yes. By keeping policy deterministic, Prizm is safe even if
 // the model is compromised.
 //
 // Current policies (V4):
@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prizm/internal/safety"
 )
 
 // PolicyConfig holds the configuration for policy decisions.

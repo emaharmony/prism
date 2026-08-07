@@ -1,4 +1,4 @@
-// Package mutation implements Prism V4's approval-gated mutation execution.
+// Package mutation implements Prizm V4's approval-gated mutation execution.
 // After an approval is granted, the mutation executor applies the approved
 // file change, with comprehensive safety checks before writing any file.
 package mutation
@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/emaharmony/prism/internal/approval"
-	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prizm/internal/approval"
+	"github.com/emaharmony/prizm/internal/safety"
 )
 
 // MaxContentSize is the maximum allowed content size (1MB).
@@ -67,7 +67,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	// 1. Load the approval
 	a, err := e.approvalStore.Load(runID, approvalID)
 	if err != nil {
-		e.emitEvent("prism.mutation.failed", map[string]any{
+		e.emitEvent("prizm.mutation.failed", map[string]any{
 			"approval_id": approvalID,
 			"run_id":      runID,
 			"error":       "approval not found: " + err.Error(),
@@ -77,7 +77,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 
 	// 2. Status check: must be pending (we'll approve first) or already approved
 	if a.Status != approval.StatusPending && a.Status != approval.StatusApproved {
-		e.emitEvent("prism.mutation.failed", map[string]any{
+		e.emitEvent("prizm.mutation.failed", map[string]any{
 			"approval_id":     approvalID,
 			"run_id":          runID,
 			"mutation_type":   a.MutationType,
@@ -92,7 +92,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	// 3. Safety checks
 	safetyErr := e.validateSafety(a)
 	if safetyErr != nil {
-		e.emitEvent("prism.mutation.failed", map[string]any{
+		e.emitEvent("prizm.mutation.failed", map[string]any{
 			"approval_id":    approvalID,
 			"run_id":         runID,
 			"mutation_type":  a.MutationType,
@@ -106,7 +106,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	// 4. Approve if still pending
 	if a.Status == approval.StatusPending {
 		if err := a.Approve(approvedBy); err != nil {
-			e.emitEvent("prism.mutation.failed", map[string]any{
+			e.emitEvent("prizm.mutation.failed", map[string]any{
 				"approval_id": approvalID,
 				"error":       "failed to approve: " + err.Error(),
 			})
@@ -119,7 +119,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	}
 
 	// 5. Emit approval.granted
-	e.emitEvent("prism.approval.granted", map[string]any{
+	e.emitEvent("prizm.approval.granted", map[string]any{
 		"approval_id":     approvalID,
 		"run_id":          runID,
 		"mutation_type":   a.MutationType,
@@ -131,7 +131,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	})
 
 	// 6. Emit mutation.validated
-	e.emitEvent("prism.mutation.validated", map[string]any{
+	e.emitEvent("prizm.mutation.validated", map[string]any{
 		"approval_id":    approvalID,
 		"run_id":         runID,
 		"mutation_type":  a.MutationType,
@@ -142,7 +142,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	// 7. Apply the mutation
 	absPath, resolveErr := e.resolveTargetPath(a.TargetPath)
 	if resolveErr != nil {
-		e.emitEvent("prism.mutation.failed", map[string]any{
+		e.emitEvent("prizm.mutation.failed", map[string]any{
 			"approval_id":    approvalID,
 			"mutation_type":  a.MutationType,
 			"target_path":    a.TargetPath,
@@ -155,7 +155,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	switch a.MutationType {
 	case approval.MutationCreateDirectory:
 		if err := os.MkdirAll(absPath, 0755); err != nil {
-			e.emitEvent("prism.mutation.failed", map[string]any{
+			e.emitEvent("prizm.mutation.failed", map[string]any{
 				"approval_id":    approvalID,
 				"mutation_type":  a.MutationType,
 				"target_path":    a.TargetPath,
@@ -168,7 +168,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 		// Ensure parent directory exists
 		parentDir := filepath.Dir(absPath)
 		if err := os.MkdirAll(parentDir, 0755); err != nil {
-			e.emitEvent("prism.mutation.failed", map[string]any{
+			e.emitEvent("prizm.mutation.failed", map[string]any{
 				"approval_id":    approvalID,
 				"mutation_type":  a.MutationType,
 				"target_path":    a.TargetPath,
@@ -178,7 +178,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 			return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "failed to create parent directory"}, nil
 		}
 		if err := os.WriteFile(absPath, []byte(a.Content), 0644); err != nil {
-			e.emitEvent("prism.mutation.failed", map[string]any{
+			e.emitEvent("prizm.mutation.failed", map[string]any{
 				"approval_id":    approvalID,
 				"mutation_type":  a.MutationType,
 				"target_path":    a.TargetPath,
@@ -188,7 +188,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 			return &MutationResult{Success: false, ApprovalID: approvalID, TargetPath: a.TargetPath, Message: "file write failed: " + err.Error()}, nil
 		}
 	default:
-		e.emitEvent("prism.mutation.failed", map[string]any{
+		e.emitEvent("prizm.mutation.failed", map[string]any{
 			"approval_id":    approvalID,
 			"mutation_type":  a.MutationType,
 			"target_path":    a.TargetPath,
@@ -199,7 +199,7 @@ func (e *Executor) ApplyWithRun(ctx context.Context, runID, approvalID, approved
 	}
 
 	// 8. Emit mutation.applied
-	e.emitEvent("prism.mutation.applied", map[string]any{
+	e.emitEvent("prizm.mutation.applied", map[string]any{
 		"approval_id":    approvalID,
 		"run_id":         runID,
 		"mutation_type":  a.MutationType,
@@ -291,7 +291,7 @@ func (e *Executor) DenyApproval(runID, approvalID, deniedBy, reason string) erro
 		return fmt.Errorf("failed to save denied approval: %w", err)
 	}
 
-	e.emitEvent("prism.approval.denied", map[string]any{
+	e.emitEvent("prizm.approval.denied", map[string]any{
 		"approval_id":     approvalID,
 		"run_id":          runID,
 		"mutation_type":   a.MutationType,
@@ -308,6 +308,6 @@ func (e *Executor) DenyApproval(runID, approvalID, deniedBy, reason string) erro
 // emitEvent calls the configured emitter if it exists.
 func (e *Executor) emitEvent(eventType string, payload map[string]any) {
 	if e.emit != nil {
-		e.emit(eventType, "prism-mutation-executor", payload)
+		e.emit(eventType, "prizm-mutation-executor", payload)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	v2 "github.com/emaharmony/prism/internal/workflow/v2"
+	v2 "github.com/emaharmony/prizm/internal/workflow/v2"
 )
 
 // runner.go implements a production TaskRunner: a bounded single-agent tool
