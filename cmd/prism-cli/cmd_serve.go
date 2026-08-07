@@ -48,9 +48,11 @@ import (
 	"github.com/emaharmony/prism/internal/codesummary"
 	"github.com/emaharmony/prism/internal/codexworker"
 	"github.com/emaharmony/prism/internal/commitments"
+	"github.com/emaharmony/prism/internal/tts"
 	"github.com/emaharmony/prism/internal/context"
 	"github.com/emaharmony/prism/internal/cost"
 	"github.com/emaharmony/prism/internal/crossprism"
+	"github.com/emaharmony/prism/internal/mutation"
 	"github.com/emaharmony/prism/internal/dashboard"
 	"github.com/emaharmony/prism/internal/debounce"
 	"github.com/emaharmony/prism/internal/delegation"
@@ -103,6 +105,7 @@ type discordBotClient interface {
 	Typing(channelID string) error
 	Send(msg *discordbot.OutboundMessage) error
 	SendPlaceholder(channelID, content string) (string, error)
+	SendAudio(channelID string, audio []byte) error
 	EditMessage(channelID, messageID, content string) error
 	SelfID() string
 	GetRecentMessages(channelID string, limit int) []discordbot.RecentMessage
@@ -139,9 +142,12 @@ type conversationContext struct {
 	improveMgr    *improve.Manager         // V32: Self-improvement loop
 	guardian      *guard.Guard             // V32: Guard rail for plan enforcement
 	toolPolicy    *tool.PolicyConfig       // V27: Tool policy configuration (pointer so free mode can mutate it live)
+	gateMu        sync.Mutex               // V62: guards the free-mode/first-class-tools mutate-then-reset window on toolPolicy and the shared shell tool's Policy, since Discord dispatches messages (and thus handleDiscordMessage) concurrently per-message
 	rateLimiter   *safety.UserRateLimiter  // V28: Per-user rate limiting
 	toolGate      *stage.ToolRelevanceGate // P-008: Tool relevance gate
 	commitStore   *commitments.Store       // V61: Commitments store for promise tracking
+	ttsClient     *tts.Client               // V61: Voicebox TTS client
+	ttsConfig     tts.Config                // V61: TTS configuration
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
@@ -309,6 +315,25 @@ func executeServe(args []string) {
 		fmt.Println("  Commitments: ready")
 		return s
 	}()
+	// V61: TTS client — initialized independently of Codex
+	ttsConfig := tts.DefaultConfig()
+	if cfg.Prism.TTS.Enabled {
+		ttsConfig.Enabled = cfg.Prism.TTS.Enabled
+		ttsConfig.ProfileID = cfg.Prism.TTS.ProfileID
+		ttsConfig.Engine = cfg.Prism.TTS.Engine
+		ttsConfig.VoiceboxURL = cfg.Prism.TTS.VoiceboxURL
+		ttsConfig.MaxChars = cfg.Prism.TTS.MaxChars
+	}
+	var ttsClient *tts.Client
+	if ttsConfig.Enabled {
+		ttsClient = tts.NewClient(ttsConfig.VoiceboxURL)
+		profileDisplay := ttsConfig.ProfileID
+		if len(profileDisplay) > 8 {
+			profileDisplay = profileDisplay[:8]
+		}
+		fmt.Printf("  TTS: ready (engine=%s, profile=%s)\n", ttsConfig.Engine, profileDisplay)
+	}
+
 	if cfg.Codex.Enabled {
 		codexCfg := codexConfigFromOrchestrator(cfg.Codex, cfg)
 		codexWorker, err = codexworker.New(codexCfg)
@@ -590,6 +615,10 @@ func executeServe(args []string) {
 			toolPolicy.WriteRoots = writeRoots
 			toolPolicy.OrchestratorAgentID = configuredOrchestratorAgentID(cfg)
 			toolPolicy.AutoApproveMCP = cfg.MCPAutoApprove // unattended MCP execution (default off)
+			// V62: safe shell commands (tier_1 allowlist) auto-approve even in
+			// gated mode — the hard blocklist inside EvaluateShellPolicy still
+			// applies regardless of tier.
+			toolPolicy.SafeShellPolicy = tool.BuildShellPolicyFromConfig("tier_1", cfg.Shell.Allowlists, cfg.Shell.Defaults.BlockedPatterns)
 			// V61: Load governance docs and populate frozen paths in tool policy
 			govLoader := governance.NewLoader(cfg.Prism.Workspace, nil)
 			govLoader.Load()
@@ -617,12 +646,14 @@ func executeServe(args []string) {
 					targetPath, _ := payload["target_path"].(string)
 					agentName, _ := payload["agent"].(string)
 					preview, _ := payload["preview"].(string)
+					mutationType, _ := payload["mutation_type"].(string)
+					toolName, _ := payload["tool_name"].(string)
 					if approvalID != "" && runID != "" {
 						// Send approval card to the channel where the conversation is happening
 						// The channel ID is passed via the payload if available
 						channelID, _ := payload["_channel_id"].(string)
 						if channelID != "" && bot != nil {
-							sendFileApprovalCard(bot, channelID, approvalID, runID, targetPath, agentName, preview)
+							sendApprovalCard(bot, channelID, approvalID, runID, targetPath, agentName, preview, mutationType, toolName)
 						}
 					}
 				}
@@ -659,6 +690,8 @@ func executeServe(args []string) {
 				),
 				toolGate:    stage.NewToolRelevanceGate(true), // P-008: enabled by default
 				commitStore: commitStore,
+			ttsClient: ttsClient,
+			ttsConfig: ttsConfig,
 				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,    // V32: plan manager
 				improveMgr:  improveMgr, // V32: improvement manager
@@ -677,37 +710,47 @@ func executeServe(args []string) {
 			// the typed approve/changes/reject commands do.
 			if natsConn != nil {
 				nc := natsConn
+				// V62: route Discord approve/deny buttons through the same
+				// mutation.Executor the `prism approval` CLI uses, instead of a
+				// second, hand-rolled apply implementation — this closes the gap
+				// where tool-call approvals (shell, git_*, mcp_*) silently did
+				// nothing (or ran a second time) when approved via Discord, and
+				// keeps safety checks (validateSafety) consistent across both
+				// approval surfaces. SetRegistry reuses the live server's
+				// registry, so git tool AND MCP tool approvals are fully
+				// functional here (unlike the standalone CLI, which has no live
+				// MCP connection).
+				buttonMutExec := mutation.NewExecutor(workspaceRoot, approval.NewStore(cfg.Prism.RunsDir), writeRoots...)
+				buttonMutExec.SetShellTool(&tool.ShellTool{
+					Policy:         tool.BuildShellPolicyFromConfig("tier_3", cfg.Shell.Allowlists, cfg.Shell.Defaults.BlockedPatterns),
+					DefaultTimeout: cfg.Shell.Defaults.TimeoutSeconds,
+					MaxOutputBytes: cfg.Shell.Defaults.MaxOutputBytes,
+				})
+				buttonMutExec.SetRegistry(toolReg)
 				bot.OnButton(func(customID, userID, userName string) {
 					log.Printf("[BUTTON] clicked: customID=%q user=%q(%s)", customID, userName, userID)
 
 					// File approval buttons (prismapprove: prefix)
 					if approvalID, runID, action, ok := decodeFileApprovalButtonID(customID); ok {
 						log.Printf("[BUTTON] file approval: approvalID=%s runID=%s action=%s", approvalID, runID, action)
-						store := approval.NewStore(cfg.Prism.RunsDir)
-						a, err := store.Load(runID, approvalID)
-						if err != nil {
-							log.Printf("[BUTTON] file approval: failed to load approval: %v", err)
-							return
-						}
+						approvedBy := firstNonEmptyCommandArg(userName, userID, "discord")
 						if action == "approve" {
-							// Write the file to disk
-							if err := os.MkdirAll(filepath.Dir(a.TargetPath), 0755); err != nil {
-								log.Printf("[BUTTON] file approval: mkdir failed: %v", err)
+							result, err := buttonMutExec.ApplyWithRun(ctxcontext.Background(), runID, approvalID, approvedBy)
+							if err != nil {
+								log.Printf("[BUTTON] file approval: apply failed: %v", err)
 								return
 							}
-							if err := os.WriteFile(a.TargetPath, []byte(a.Content), 0644); err != nil {
-								log.Printf("[BUTTON] file approval: write failed: %v", err)
+							if !result.Success {
+								log.Printf("[BUTTON] file approval: apply failed: %s", result.Message)
 								return
 							}
-							a.Status = approval.StatusApproved
-							a.ApprovedBy = firstNonEmptyCommandArg(userName, userID, "discord")
-							store.Save(a)
-							log.Printf("[BUTTON] file approval: APPROVED and written to %s by %s", a.TargetPath, a.ApprovedBy)
+							log.Printf("[BUTTON] file approval: APPROVED and applied to %s by %s: %s", result.TargetPath, approvedBy, result.Message)
 						} else if action == "deny" {
-							a.Status = approval.StatusDenied
-							a.ApprovedBy = firstNonEmptyCommandArg(userName, userID, "discord")
-							store.Save(a)
-							log.Printf("[BUTTON] file approval: DENIED by %s", a.ApprovedBy)
+							if err := buttonMutExec.DenyApproval(runID, approvalID, approvedBy, "denied via Discord button"); err != nil {
+								log.Printf("[BUTTON] file approval: deny failed: %v", err)
+								return
+							}
+							log.Printf("[BUTTON] file approval: DENIED by %s", approvedBy)
 						}
 						return
 					}
@@ -995,6 +1038,20 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+	// V62: holdsGateLock/gateMu guard the window during which this message's
+	// free-mode or first-class-tools handling below leaves cc.toolPolicy and
+	// the shared shell tool's Policy in a permissive state. Discord dispatches
+	// messages concurrently (one goroutine per message), so without this lock
+	// a gated channel's concurrent message could transiently observe another
+	// channel's elevated policy. Registered before either mutation site so it
+	// unlocks last, after both sites' own reset defers have run.
+	holdsGateLock := false
+	defer func() {
+		if holdsGateLock {
+			cc.gateMu.Unlock()
+		}
+	}()
+
 	// V60: Free mode — check if this channel is in free mode and the sender is the master user.
 	// Free mode skips phase gates, registers all tools including shell at the channel's tier,
 	// and allows direct mutations without proposal/approval.
@@ -1004,6 +1061,11 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		if masterUserID != "" && msg.UserID == masterUserID {
 			freeMode = true
 			log.Printf("[FREE-MODE] activated for master user %s in channel %s", msg.UserID, msg.ChannelID)
+
+			if !holdsGateLock {
+				cc.gateMu.Lock()
+				holdsGateLock = true
+			}
 
 			// Set auto-approve mutations so write_file, git mutations, etc. execute directly
 			cc.toolPolicy.AutoApproveMutations = true
@@ -1257,6 +1319,10 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		// OpenClaw's first-class tool model.
 		log.Printf("[TOOL-CHANNEL] first-class tools enabled for agent %q — bypassing gate", agentCfg.ID)
 		gateResult = &stage.GateResult{Decision: stage.ToolDecisionInclude, Reason: "first-class tools: all tools available"}
+		if !holdsGateLock {
+			cc.gateMu.Lock()
+			holdsGateLock = true
+		}
 		cc.toolPolicy.AutoApproveMutations = true
 		defer func() { cc.toolPolicy.AutoApproveMutations = false }()
 	} else {
@@ -1487,6 +1553,33 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		} else {
 			finalStatus = "completed"
 			finalSent = true
+		}
+	}
+
+	// V61: TTS — generate voice from response if enabled
+	if finalSent && responseText != "" && cc.ttsClient != nil {
+		ttsChannelRole := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
+		channelTTS := false
+		if ttsChannelRole != nil {
+			channelTTS = ttsChannelRole.TTS
+		}
+		if shouldVoice := tts.ShouldVoice(cc.ttsConfig, channelTTS, len(responseText)); shouldVoice {
+			go func(text, channelID string) {
+				ttsCtx, ttsCancel := ctxcontext.WithTimeout(ctxcontext.Background(), 90*time.Second)
+				defer ttsCancel()
+
+				audio, err := cc.ttsClient.GenerateAndWait(ttsCtx, cc.ttsConfig.ProfileID, text, cc.ttsConfig.Engine)
+				if err != nil {
+					log.Printf("[TTS] failed: %v", err)
+					return
+				}
+				// Send audio to Discord
+				if err := cc.bot.SendAudio(channelID, audio); err != nil {
+					log.Printf("[TTS] failed to send voice message: %v", err)
+					return
+				}
+				log.Printf("[TTS] sent voice message (%d bytes)", len(audio))
+			}(responseText, msg.ChannelID)
 		}
 	}
 
@@ -2371,8 +2464,33 @@ func mcpServerSpecs(cfg *orchestrator.Config) []mcp.ServerSpec {
 	return specs
 }
 
-// sendFileApprovalCard sends a Discord message with Approve/Deny buttons for a file write approval.
-func sendFileApprovalCard(bot *discordbot.BotAdapter, channelID, approvalID, runID, targetPath, agentName, preview string) {
+// approvalCardCopy returns the title/icon and field label to use for an
+// approval card, based on what's actually being approved — a file
+// mutation (target is a filesystem path) reads differently from a tool
+// call (target is a command, git branch/message, or MCP tool name).
+func approvalCardCopy(mutationType, toolName string) (title, fieldLabel string) {
+	switch mutationType {
+	case approval.MutationWriteFile:
+		return "📝 **File write approval requested**", "Path"
+	case approval.MutationCreateDirectory:
+		return "📁 **Directory creation approval requested**", "Path"
+	case approval.MutationToolCall:
+		switch {
+		case toolName == "shell":
+			return "🖥️ **Shell command approval requested**", "Command"
+		case strings.HasPrefix(toolName, "git_") || toolName == "create_pr":
+			return "🔧 **Git action approval requested**", "Action"
+		case strings.HasPrefix(toolName, "mcp_"):
+			return "🔌 **MCP tool approval requested**", "Tool"
+		}
+	}
+	return "📋 **Approval requested**", "Target"
+}
+
+// sendApprovalCard sends a Discord message with Approve/Deny buttons for a
+// pending approval, whether it's a file mutation or a re-invocable tool call
+// (shell, git, MCP).
+func sendApprovalCard(bot *discordbot.BotAdapter, channelID, approvalID, runID, targetPath, agentName, preview, mutationType, toolName string) {
 	if bot == nil || channelID == "" {
 		return
 	}
@@ -2385,7 +2503,8 @@ func sendFileApprovalCard(bot *discordbot.BotAdapter, channelID, approvalID, run
 			CustomID: b.CustomID,
 		}
 	}
-	content := fmt.Sprintf("📋 **File write approval requested**\n**Agent:** %s\n**Path:** `%s`\n**Preview:**\n```\n%s\n```", agentName, targetPath, preview)
+	title, fieldLabel := approvalCardCopy(mutationType, toolName)
+	content := fmt.Sprintf("%s\n**Agent:** %s\n**%s:** `%s`\n**Preview:**\n```\n%s\n```", title, agentName, fieldLabel, targetPath, preview)
 	if err := bot.Send(&discordbot.OutboundMessage{
 		ChannelID: channelID,
 		Content:   content,

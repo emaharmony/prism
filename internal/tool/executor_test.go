@@ -271,6 +271,126 @@ func TestExecutorCreateDirectoryProposalPersistsApproval(t *testing.T) {
 	}
 }
 
+func TestExecutorShellRequiresApprovalDoesNotExecute(t *testing.T) {
+	runsDir := t.TempDir()
+	markerDir := t.TempDir()
+	marker := filepath.Join(markerDir, "marker.txt")
+
+	reg := NewRegistry()
+	if err := reg.Register(&ShellTool{
+		Policy:         ShellPolicy{Tier: "tier_3", Allowlist: []string{"*"}, Blocklist: []string{}},
+		DefaultTimeout: 10,
+		MaxOutputBytes: 10240,
+		MaxStderrBytes: 5120,
+	}); err != nil {
+		t.Fatalf("register shell tool: %v", err)
+	}
+
+	// Gated mode: AutoApproveMutations is false, so the shell tool requires
+	// approval. This reproduces two historical bugs in one test: (1)
+	// persistApproval used to error out on tools with no "path" input, and
+	// (2) the shell command used to actually run immediately, before any
+	// human approval — asserted here by checking the marker file was NOT
+	// created by this call.
+	cfg := DefaultPolicyConfig()
+	store := approval.NewStore(runsDir)
+	exec := NewExecutor(reg, &cfg)
+	exec.SetApprovalStore(store)
+
+	command := "touch " + marker
+	result, err := exec.ExecuteWithPolicy(context.Background(), "shell", "lumi", "prism", "corr_test", map[string]any{
+		"_run_id": "run_test",
+		"command": command,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("shell call should succeed, got error: %s", result.Error)
+	}
+
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("shell command must not execute before approval — marker file exists")
+	}
+
+	approvalID, _ := result.Output["approval_id"].(string)
+	if approvalID == "" {
+		t.Fatal("expected approval_id in tool result")
+	}
+
+	a, err := store.Load("run_test", approvalID)
+	if err != nil {
+		t.Fatalf("expected persisted approval: %v", err)
+	}
+	if a.MutationType != approval.MutationToolCall {
+		t.Fatalf("mutation type = %q, want %q", a.MutationType, approval.MutationToolCall)
+	}
+	if a.TargetPath != command {
+		t.Fatalf("target path = %q, want %q", a.TargetPath, command)
+	}
+	if a.ToolName != "shell" {
+		t.Fatalf("tool name = %q, want %q", a.ToolName, "shell")
+	}
+	if a.Input["command"] != command {
+		t.Fatalf("input[command] = %v, want %q", a.Input["command"], command)
+	}
+}
+
+func TestExecutorGitCommitRequiresApprovalDoesNotExecute(t *testing.T) {
+	root := initGitRepo(t)
+	writeAndStage(t, root, "file.txt", "content\n")
+	before := currentSHA(t, root)
+
+	runsDir := t.TempDir()
+	reg := NewRegistry()
+	if err := reg.Register(&GitCommitTool{ToolPaths: ToolPaths{WorkspaceRoot: root}}); err != nil {
+		t.Fatalf("register git_commit tool: %v", err)
+	}
+
+	// Gated mode (AutoApproveMutations=false): historically git_commit's
+	// Execute() ran the real commit immediately here, before any human
+	// approval — asserted by checking HEAD hasn't moved.
+	cfg := DefaultPolicyConfig()
+	store := approval.NewStore(runsDir)
+	exec := NewExecutor(reg, &cfg)
+	exec.SetApprovalStore(store)
+
+	result, err := exec.ExecuteWithPolicy(context.Background(), "git_commit", "lumi", "prism", "corr_test", map[string]any{
+		"_run_id": "run_test",
+		"message": "should not commit yet",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("git_commit call should succeed, got error: %s", result.Error)
+	}
+
+	after := currentSHA(t, root)
+	if before != after {
+		t.Fatalf("git_commit must not execute before approval — HEAD moved from %s to %s", before, after)
+	}
+
+	approvalID, _ := result.Output["approval_id"].(string)
+	if approvalID == "" {
+		t.Fatal("expected approval_id in tool result — this used to fail with 'target_path is required'")
+	}
+
+	a, err := store.Load("run_test", approvalID)
+	if err != nil {
+		t.Fatalf("expected persisted approval: %v", err)
+	}
+	if a.MutationType != approval.MutationToolCall {
+		t.Fatalf("mutation type = %q, want %q", a.MutationType, approval.MutationToolCall)
+	}
+	if a.ToolName != "git_commit" {
+		t.Fatalf("tool name = %q, want %q", a.ToolName, "git_commit")
+	}
+	if a.Input["message"] != "should not commit yet" {
+		t.Fatalf("input[message] = %v, want %q", a.Input["message"], "should not commit yet")
+	}
+}
+
 func TestExecutorToolFailedEvent(t *testing.T) {
 	reg := NewRegistry()
 	// Don't register builtins — resolve will fail for unknown tools

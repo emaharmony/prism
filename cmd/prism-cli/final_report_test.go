@@ -23,6 +23,9 @@ func (b *finalReportBot) EditMessage(channelID, messageID, content string) error
 	return nil
 }
 func (b *finalReportBot) SelfID() string { return "bot-self" }
+func (b *finalReportBot) SendAudio(channelID string, audio []byte) error {
+	return nil
+}
 func (b *finalReportBot) GetRecentMessages(channelID string, limit int) []discordbot.RecentMessage {
 	return nil
 }
