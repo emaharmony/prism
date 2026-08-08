@@ -1,12 +1,12 @@
-﻿# Prism Architecture
+﻿# Prizm Architecture
 
-A concise map of how Prism works internally. For the full design rationale and
+A concise map of how Prizm works internally. For the full design rationale and
 per-version design notes, see [DESIGN.md](../history/DESIGN.md) and the `V*-DESIGN.md`
 documents in this directory.
 
 ## Overview
 
-Prism is a Go, event-native AI agent platform that runs as a persistent service.
+Prizm is a Go, event-native AI agent platform that runs as a persistent service.
 Agents communicate through a NATS event bus, maintain conversation sessions,
 remember context through Remembrance, use tools under policy, and expose a local
 API and dashboard.
@@ -17,7 +17,7 @@ model generates outputs inside that lifecycle.
 ## Runtime Components
 
 ```text
-Prism Runtime
+Prizm Runtime
   - Config + orchestrator
   - Embedded or external NATS JetStream
   - SQLite-backed sessions, tasks, approvals, events, and run artifacts
@@ -47,7 +47,7 @@ Prism Runtime
 
 All application code lives under `internal/` as focused domains (e.g.
 `internal/event`, `internal/session`, `internal/tool`, `internal/policy`,
-`internal/workflow`, `internal/provider`). The CLI is in `cmd/prism-cli/`. See
+`internal/workflow`, `internal/provider`). The CLI is in `cmd/prizm-cli/`. See
 the README "Core Packages" table for the full list.
 
 ## Related Docs

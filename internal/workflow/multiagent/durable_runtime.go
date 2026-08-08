@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emaharmony/prism/internal/event"
-	"github.com/emaharmony/prism/internal/validation"
+	"github.com/emaharmony/prizm/internal/event"
+	"github.com/emaharmony/prizm/internal/validation"
 )
 
-const durableEventSource = "prism-multi-agent-durable-runtime"
+const durableEventSource = "prizm-multi-agent-durable-runtime"
 
 // DurableRuntimeOptions contains deterministic supervisor seams.
 type DurableRuntimeOptions struct {

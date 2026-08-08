@@ -8,7 +8,7 @@
  *
  * Like multiagent-graph.js / multiagent-live.js / multiagent-inspector.js /
  * multiagent-replay.js, this file has no import/export syntax so it works
- * unmodified as a plain browser <script> (window.PrismMultiAgentOperator)
+ * unmodified as a plain browser <script> (window.PrizmMultiAgentOperator)
  * AND as a CommonJS module for the plain-node tests under
  * internal/dashboard/static/tests/ (no npm, no build step). It depends on
  * multiagent-live.js (edgeIdFor, the stable edge id builder) and
@@ -37,7 +37,7 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = factory(require('./multiagent-live.js'), require('./multiagent-replay.js'));
   } else {
-    root.PrismMultiAgentOperator = factory(root.PrismMultiAgentLive, root.PrismMultiAgentReplay);
+    root.PrizmMultiAgentOperator = factory(root.PrizmMultiAgentLive, root.PrizmMultiAgentReplay);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function (live, replay) {
   'use strict';

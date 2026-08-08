@@ -3,7 +3,7 @@ package multiagent
 import (
 	"strings"
 
-	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prizm/internal/event"
 )
 
 // GraphNodeStatus is the dashboard-facing lifecycle state of one graph node.

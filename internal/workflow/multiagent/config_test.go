@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emaharmony/prism/internal/retry"
+	"github.com/emaharmony/prizm/internal/retry"
 )
 
 func TestDefinitionValidate(t *testing.T) {

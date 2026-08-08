@@ -2,7 +2,7 @@
 
 Status: Architectural policy
 
-This document defines the package-boundary rules for Prism. It applies to new
+This document defines the package-boundary rules for Prizm. It applies to new
 code and to changes that alter ownership, dependencies, or architectural
 responsibilities. It does not require a retrospective package reorganization.
 
@@ -26,7 +26,7 @@ to be convenient. The result may still compile, but changes become difficult to
 reason about, authority leaks across trust boundaries, and apparently local
 work has system-wide effects.
 
-Prism has an additional reason to be strict: models are untrusted generators
+Prizm has an additional reason to be strict: models are untrusted generators
 inside a deterministic runtime. Policy, approval, validation, persistence, and
 execution authority must remain explicit. Package boundaries make those
 responsibilities reviewable.
@@ -37,7 +37,7 @@ A Go package is the set of non-test source files in one directory that declare
 the same package name. Its boundary is the API imported by other packages, not
 the number or size of its files.
 
-For Prism:
+For Prizm:
 
 - A directory under `internal/` is a package boundary. The `internal` mechanism
   limits who may import it; it does not by itself make the package cohesive.
@@ -57,7 +57,7 @@ File boundaries organize source. Package boundaries organize authority.
 
 ## Bounded domains, not helper categories
 
-A Prism package SHOULD represent a bounded domain: a cohesive area with its own
+A Prizm package SHOULD represent a bounded domain: a cohesive area with its own
 vocabulary, invariants, and reason to change. Its name should describe the
 concept it owns.
 
@@ -87,13 +87,13 @@ Names such as `util`, `utils`, `helper`, `helpers`, `common`, `misc`, and
 those roles are prohibited unless an architectural review demonstrates a
 specific bounded domain and gives it a domain name.
 
-## Prism domain map
+## Prizm domain map
 
 The following names are the preferred architectural vocabulary. They describe
 bounded responsibilities, not a mandate to create, merge, move, or rename
 current packages.
 
-| Domain | Owns | Does not own | Current Prism anchors |
+| Domain | Owns | Does not own | Current Prizm anchors |
 | --- | --- | --- | --- |
 | Runtime | Process and run lifecycle, composition, and system supervision | Workflow semantics, policy decisions, or UI behavior | `internal/run`, `internal/orchestrator` |
 | Workflow | Workflow definitions, execution semantics, progress, and completion | Agent identity, approval authority, transport, or storage mechanics | `internal/workflow` |
@@ -110,8 +110,8 @@ current packages.
 | API | Public request, response, authentication, and compatibility contracts | The domain behavior reached through an endpoint | `internal/api` |
 
 Tool and provider integrations belong at the system edge. `internal/tool/mcp`
-adapts MCP servers into Prism's tool contract; provider packages adapt model
-services into Prism's provider contract. An adapter may translate, validate
+adapts MCP servers into Prizm's tool contract; provider packages adapt model
+services into Prizm's provider contract. An adapter may translate, validate
 protocol shape, and manage an external connection. It MUST NOT become an
 alternate authority path around policy, approval, validation, or persistence.
 
@@ -293,7 +293,7 @@ contract, translate at its boundary, or remain a caller.
 
 ### Good: separate authority domains
 
-Prism keeps policy evaluation, human approval, and validation in distinct
+Prizm keeps policy evaluation, human approval, and validation in distinct
 packages. They participate in one controlled mutation lifecycle, but they do
 not mean the same thing:
 
@@ -312,12 +312,12 @@ would make the workflow runtime the owner of rules it should only coordinate.
 
 `internal/tool/mcp` translates an external tool protocol at the tool boundary.
 The adapter does not become a policy engine. Similarly, `internal/provider`
-implementations adapt model services while the Prism runtime retains lifecycle
+implementations adapt model services while the Prizm runtime retains lifecycle
 and effect authority.
 
 ### Good: distinguish contract from delivery
 
-`internal/event` defines Prism's canonical event vocabulary.
+`internal/event` defines Prizm's canonical event vocabulary.
 `internal/bus` provides NATS integration and embedded bus operation. Event
 meaning can remain stable while delivery mechanisms evolve.
 

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/emaharmony/prism/internal/approval"
-	"github.com/emaharmony/prism/internal/tool"
+	"github.com/emaharmony/prizm/internal/approval"
+	"github.com/emaharmony/prizm/internal/tool"
 )
 
 func TestExecutorApplyApprovedWrites(t *testing.T) {
@@ -17,7 +17,7 @@ func TestExecutorApplyApprovedWrites(t *testing.T) {
 	store := approval.NewStore(tmpDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "output.txt", "hello world", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "output.txt", "hello world", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -51,22 +51,22 @@ func TestExecutorApplyApprovedWrites(t *testing.T) {
 	hasApplied := false
 	for _, evt := range events {
 		switch evt {
-		case "prism.approval.granted":
+		case "prizm.approval.granted":
 			hasGranted = true
-		case "prism.mutation.validated":
+		case "prizm.mutation.validated":
 			hasValidated = true
-		case "prism.mutation.applied":
+		case "prizm.mutation.applied":
 			hasApplied = true
 		}
 	}
 	if !hasGranted {
-		t.Error("expected prism.approval.granted event")
+		t.Error("expected prizm.approval.granted event")
 	}
 	if !hasValidated {
-		t.Error("expected prism.mutation.validated event")
+		t.Error("expected prizm.mutation.validated event")
 	}
 	if !hasApplied {
-		t.Error("expected prism.mutation.applied event")
+		t.Error("expected prizm.mutation.applied event")
 	}
 }
 
@@ -75,7 +75,7 @@ func TestExecutorApplyToolCallExecutesShellCommand(t *testing.T) {
 	store := approval.NewStore(runsDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "shell tool requires approval in gated mode"}
-	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prism", approval.MutationToolCall, "echo hello", "", policy)
+	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prizm", approval.MutationToolCall, "echo hello", "", policy)
 	a.ToolName = "shell"
 	a.Input = map[string]any{"command": "echo hello"}
 	store.Save(a)
@@ -105,7 +105,7 @@ func TestExecutorApplyToolCallWithoutShellToolFailsClearly(t *testing.T) {
 	store := approval.NewStore(runsDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prism", approval.MutationToolCall, "echo hello", "", policy)
+	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prizm", approval.MutationToolCall, "echo hello", "", policy)
 	a.ToolName = "shell"
 	a.Input = map[string]any{"command": "echo hello"}
 	store.Save(a)
@@ -132,7 +132,7 @@ func TestExecutorApplyToolCallHardBlocklistSurvivesApproval(t *testing.T) {
 	// Simulates a stale/tampered approval record targeting a hard-blocklisted
 	// command — validateSafety must refuse this even with a tier_3 shell tool
 	// configured, since the hard blocklist is always enforced first.
-	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prism", approval.MutationToolCall, "rm -rf /*", "", policy)
+	a := approval.NewApproval("run_shell", "corr_shell", "lumi", "prizm", approval.MutationToolCall, "rm -rf /*", "", policy)
 	a.ToolName = "shell"
 	a.Input = map[string]any{"command": "rm -rf /*"}
 	store.Save(a)
@@ -160,8 +160,8 @@ func TestExecutorApplyToolCallExecutesGitAddViaRegistry(t *testing.T) {
 		}
 	}
 	runGit("init", "-b", "main")
-	runGit("config", "user.email", "test@prism.local")
-	runGit("config", "user.name", "Prism Test")
+	runGit("config", "user.email", "test@prizm.local")
+	runGit("config", "user.name", "Prizm Test")
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestExecutorApplyToolCallExecutesGitAddViaRegistry(t *testing.T) {
 	runsDir := t.TempDir()
 	store := approval.NewStore(runsDir)
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_git", "corr_git", "lumi", "prism", approval.MutationToolCall, "file.txt", "", policy)
+	a := approval.NewApproval("run_git", "corr_git", "lumi", "prizm", approval.MutationToolCall, "file.txt", "", policy)
 	a.ToolName = "git_add"
 	a.Input = map[string]any{"path": "file.txt", "repo_path": root}
 	store.Save(a)
@@ -220,7 +220,7 @@ func TestExecutorApplyApprovedAbsolutePathWithinAllowedRoot(t *testing.T) {
 	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_clear", "corr_clear", "test-cli", "prism", "write_file", targetPath, "", policy)
+	a := approval.NewApproval("run_clear", "corr_clear", "test-cli", "prizm", "write_file", targetPath, "", policy)
 	if err := store.Save(a); err != nil {
 		t.Fatalf("save approval: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestExecutorDeniedApprovalDoesNotWrite(t *testing.T) {
 	store := approval.NewStore(tmpDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "output.txt", "hello world", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "output.txt", "hello world", policy)
 	a.Deny("ema", "not needed")
 	store.Save(a)
 
@@ -276,7 +276,7 @@ func TestExecutorUnsafePathDoesNotWrite(t *testing.T) {
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
 
 	// Path traversal
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "../outside.txt", "malicious", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "../outside.txt", "malicious", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -296,12 +296,12 @@ func TestExecutorUnsafePathDoesNotWrite(t *testing.T) {
 
 	hasFailed := false
 	for _, evt := range events {
-		if evt == "prism.mutation.failed" {
+		if evt == "prizm.mutation.failed" {
 			hasFailed = true
 		}
 	}
 	if !hasFailed {
-		t.Error("expected prism.mutation.failed event")
+		t.Error("expected prizm.mutation.failed event")
 	}
 }
 
@@ -310,7 +310,7 @@ func TestExecutorAbsolutePathDoesNotWrite(t *testing.T) {
 	store := approval.NewStore(tmpDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "/etc/passwd", "malicious", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "/etc/passwd", "malicious", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -330,7 +330,7 @@ func TestExecutorFailedMutationEmitsFailed(t *testing.T) {
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
 	// Trying to write to a directory that doesn't exist, but path goes outside
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "", "", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "", "", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -350,12 +350,12 @@ func TestExecutorFailedMutationEmitsFailed(t *testing.T) {
 
 	hasFailed := false
 	for _, evt := range events {
-		if evt == "prism.mutation.failed" {
+		if evt == "prizm.mutation.failed" {
 			hasFailed = true
 		}
 	}
 	if !hasFailed {
-		t.Error("expected prism.mutation.failed event for empty path")
+		t.Error("expected prizm.mutation.failed event for empty path")
 	}
 }
 
@@ -364,7 +364,7 @@ func TestExecutorDenyApproval(t *testing.T) {
 	store := approval.NewStore(tmpDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "test.txt", "content", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "test.txt", "content", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -391,12 +391,12 @@ func TestExecutorDenyApproval(t *testing.T) {
 	// Verify event emitted
 	hasDenied := false
 	for _, evt := range events {
-		if evt == "prism.approval.denied" {
+		if evt == "prizm.approval.denied" {
 			hasDenied = true
 		}
 	}
 	if !hasDenied {
-		t.Error("expected prism.approval.denied event")
+		t.Error("expected prizm.approval.denied event")
 	}
 }
 
@@ -411,7 +411,7 @@ func TestExecutorContentSizeLimit(t *testing.T) {
 	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "big.txt", string(largeContent), policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "big.txt", string(largeContent), policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -446,12 +446,12 @@ func TestExecutorApprovalNotFound(t *testing.T) {
 
 	hasFailed := false
 	for _, evt := range events {
-		if evt == "prism.mutation.failed" {
+		if evt == "prizm.mutation.failed" {
 			hasFailed = true
 		}
 	}
 	if !hasFailed {
-		t.Error("expected prism.mutation.failed event")
+		t.Error("expected prizm.mutation.failed event")
 	}
 }
 
@@ -460,7 +460,7 @@ func TestExecutorWriteToSubdirectory(t *testing.T) {
 	store := approval.NewStore(tmpDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "subdir/output.txt", "hello world", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "subdir/output.txt", "hello world", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -488,7 +488,7 @@ func TestExecutorCreateDirectoryApprovedCreatesDirectory(t *testing.T) {
 	store := approval.NewStore(tmpDir)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_mkdir", "corr_mkdir", "test-cli", "prism", approval.MutationCreateDirectory, "empty/child", "", policy)
+	a := approval.NewApproval("run_mkdir", "corr_mkdir", "test-cli", "prizm", approval.MutationCreateDirectory, "empty/child", "", policy)
 	if err := store.Save(a); err != nil {
 		t.Fatalf("save approval: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestExecutorCreateDirectoryApprovedAbsolutePathWithinAllowedRoot(t *testing
 
 	targetPath := filepath.Join(allowedRoot, "empty")
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_mkdir_abs", "corr_mkdir_abs", "test-cli", "prism", approval.MutationCreateDirectory, targetPath, "", policy)
+	a := approval.NewApproval("run_mkdir_abs", "corr_mkdir_abs", "test-cli", "prizm", approval.MutationCreateDirectory, targetPath, "", policy)
 	if err := store.Save(a); err != nil {
 		t.Fatalf("save approval: %v", err)
 	}
@@ -550,7 +550,7 @@ func TestExecutorCreateDirectoryRejectsExistingFile(t *testing.T) {
 	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_mkdir_file", "corr_mkdir_file", "test-cli", "prism", approval.MutationCreateDirectory, "file.txt", "", policy)
+	a := approval.NewApproval("run_mkdir_file", "corr_mkdir_file", "test-cli", "prizm", approval.MutationCreateDirectory, "file.txt", "", policy)
 	if err := store.Save(a); err != nil {
 		t.Fatalf("save approval: %v", err)
 	}
@@ -574,7 +574,7 @@ func TestExecutorCannotOverwriteDirectory(t *testing.T) {
 	os.MkdirAll(dirPath, 0755)
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prism", "write_file", "mydir", "content", policy)
+	a := approval.NewApproval("run_01KM", "corr_01KM", "test-cli", "prizm", "write_file", "mydir", "content", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -616,7 +616,7 @@ func TestExecutorSymlinkEscapeBlocked(t *testing.T) {
 	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_symlink", "corr_symlink", "test-cli", "prism", "write_file", "escape_link/malicious.txt", "malicious content", policy)
+	a := approval.NewApproval("run_symlink", "corr_symlink", "test-cli", "prizm", "write_file", "escape_link/malicious.txt", "malicious content", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -651,7 +651,7 @@ func TestExecutorDirectSymlinkBlocked(t *testing.T) {
 	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_sym2", "corr_sym2", "test-cli", "prism", "write_file", "target_link", "overwritten", policy)
+	a := approval.NewApproval("run_sym2", "corr_sym2", "test-cli", "prizm", "write_file", "target_link", "overwritten", policy)
 	store.Save(a)
 
 	executor := NewExecutor(tmpDir, store)
@@ -669,7 +669,7 @@ func TestExecutorAlreadyApprovedAppliesWithoutReapproval(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := approval.NewStore(tmpDir)
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_approved", "corr", "test", "prism", approval.MutationWriteFile, "approved.txt", "content", policy)
+	a := approval.NewApproval("run_approved", "corr", "test", "prizm", approval.MutationWriteFile, "approved.txt", "content", policy)
 	if err := a.Approve("first-reviewer"); err != nil {
 		t.Fatal(err)
 	}
@@ -699,7 +699,7 @@ func TestExecutorDenyApprovalErrors(t *testing.T) {
 	}
 
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_deny_error", "corr", "test", "prism", approval.MutationWriteFile, "file.txt", "content", policy)
+	a := approval.NewApproval("run_deny_error", "corr", "test", "prizm", approval.MutationWriteFile, "file.txt", "content", policy)
 	if err := a.Approve("reviewer"); err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +715,7 @@ func TestExecutorRejectsEmptyApprover(t *testing.T) {
 	tmpDir := t.TempDir()
 	store := approval.NewStore(tmpDir)
 	policy := approval.PolicyDecision{Decision: "requires_approval", Reason: "test"}
-	a := approval.NewApproval("run_empty_approver", "corr", "test", "prism", approval.MutationWriteFile, "file.txt", "content", policy)
+	a := approval.NewApproval("run_empty_approver", "corr", "test", "prizm", approval.MutationWriteFile, "file.txt", "content", policy)
 	if err := store.Save(a); err != nil {
 		t.Fatal(err)
 	}

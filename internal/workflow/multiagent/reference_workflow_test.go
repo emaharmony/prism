@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prizm/internal/event"
 )
 
 func TestDefaultReferenceDefinitionSafetyCeilings(t *testing.T) {

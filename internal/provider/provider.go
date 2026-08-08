@@ -1,4 +1,4 @@
-// Package provider defines the LLM provider interface for Prism.
+// Package provider defines the LLM provider interface for Prizm.
 //
 // Provider implementations live in sub-packages:
 //   - provider/mock     — deterministic mock for testing
@@ -8,7 +8,7 @@
 //
 // Import the sub-package directly to use a provider:
 //
-//	import "github.com/emaharmony/prism/internal/provider/mock"
+//	import "github.com/emaharmony/prizm/internal/provider/mock"
 //	p := mock.New()
 package provider
 

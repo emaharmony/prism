@@ -1,5 +1,5 @@
-// Package approval implements Prism V4's approval-gated mutation model.
-// Approvals are the gate between an agent proposing a file change and Prism
+// Package approval implements Prizm V4's approval-gated mutation model.
+// Approvals are the gate between an agent proposing a file change and Prizm
 // actually performing it. Every approval is persisted as a JSON artifact and
 // every state transition is emitted as an event.
 package approval

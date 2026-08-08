@@ -11,7 +11,7 @@ func TestParseFrontmatter(t *testing.T) {
 governance:
   status: frozen
   frozen_paths:
-    - schema.prisma
+    - schema.prizma
     - internal/db/
   reason: "Production freeze"
 ---
@@ -29,8 +29,8 @@ Body text here.
 	if len(fm.Governance.FrozenPaths) != 2 {
 		t.Fatalf("expected 2 frozen paths, got %d", len(fm.Governance.FrozenPaths))
 	}
-	if fm.Governance.FrozenPaths[0] != "schema.prisma" {
-		t.Errorf("expected first path 'schema.prisma', got %q", fm.Governance.FrozenPaths[0])
+	if fm.Governance.FrozenPaths[0] != "schema.prizma" {
+		t.Errorf("expected first path 'schema.prizma', got %q", fm.Governance.FrozenPaths[0])
 	}
 	if fm.Governance.FrozenPaths[1] != "internal/db/" {
 		t.Errorf("expected second path 'internal/db/', got %q", fm.Governance.FrozenPaths[1])
@@ -63,12 +63,12 @@ title: "Some doc"
 }
 
 func TestMatchesFrozenPath_ExactMatch(t *testing.T) {
-	matched, pattern := MatchesFrozenPath("schema.prisma", []string{"schema.prisma"})
+	matched, pattern := MatchesFrozenPath("schema.prizma", []string{"schema.prizma"})
 	if !matched {
 		t.Error("expected exact match")
 	}
-	if pattern != "schema.prisma" {
-		t.Errorf("expected pattern 'schema.prisma', got %q", pattern)
+	if pattern != "schema.prizma" {
+		t.Errorf("expected pattern 'schema.prizma', got %q", pattern)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestMatchesFrozenPath_BasenameGlob(t *testing.T) {
 }
 
 func TestMatchesFrozenPath_NoMatch(t *testing.T) {
-	matched, _ := MatchesFrozenPath("README.md", []string{"schema.prisma", "internal/db/"})
+	matched, _ := MatchesFrozenPath("README.md", []string{"schema.prizma", "internal/db/"})
 	if matched {
 		t.Error("expected no match")
 	}
@@ -130,7 +130,7 @@ func TestLoader_LoadWithFrontmatter(t *testing.T) {
 governance:
   status: frozen
   frozen_paths:
-    - schema.prisma
+    - schema.prizma
     - internal/db/
   reason: "Production freeze"
   requires_approval_from: ema

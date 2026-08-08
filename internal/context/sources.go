@@ -84,7 +84,7 @@ func (b *Builder) readMemoryDir() []ContextFile {
 
 // readCorrespondenceDir reads correspondence/*.md files from the workspace's
 // correspondence directory. These are inter-agent letters between OpenClaw
-// Lumi and Prism Lumi. Priority 65: above memory files but below named
+// Lumi and Prizm Lumi. Priority 65: above memory files but below named
 // sources — letters are more time-sensitive than historical memory but
 // less foundational than identity docs. No cap (letters are rare).
 func (b *Builder) readCorrespondenceDir() []ContextFile {
