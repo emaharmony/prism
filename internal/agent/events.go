@@ -15,7 +15,7 @@
 // at the start of a run.
 package agent
 
-import "github.com/emaharmony/prism/internal/event"
+import "github.com/emaharmony/prizm/internal/event"
 
 // V13 agent event type constants.
 const (

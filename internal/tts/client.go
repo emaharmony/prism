@@ -4,7 +4,7 @@
 // This package calls the Voicebox REST API to generate speech from text
 // and returns the audio file path for Discord delivery.
 //
-// Configuration is in prism.yaml under the `tts` key. Per-channel
+// Configuration is in prizm.yaml under the `tts` key. Per-channel
 // overrides are in the channel_roles section with a `tts: true/false` field.
 package tts
 
@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// Config holds TTS settings from prism.yaml.
+// Config holds TTS settings from prizm.yaml.
 type Config struct {
 	Enabled     bool   `yaml:"enabled"`
 	ProfileID   string `yaml:"profile_id"`

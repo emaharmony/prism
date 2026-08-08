@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/cost"
-	"github.com/emaharmony/prism/internal/event"
-	"github.com/emaharmony/prism/internal/validation"
+	"github.com/emaharmony/prizm/internal/cost"
+	"github.com/emaharmony/prizm/internal/event"
+	"github.com/emaharmony/prizm/internal/validation"
 )
 
-const supervisorEventSource = "prism-multi-agent-supervisor"
+const supervisorEventSource = "prizm-multi-agent-supervisor"
 
 // SupervisorOptions contains deterministic seams for tests and embedding.
 type SupervisorOptions struct {

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emaharmony/prism/internal/cost"
+	"github.com/emaharmony/prizm/internal/cost"
 )
 
 func TestBuildBudgetVisualizationThresholds(t *testing.T) {

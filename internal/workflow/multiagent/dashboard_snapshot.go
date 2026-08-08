@@ -1,6 +1,6 @@
 package multiagent
 
-import "github.com/emaharmony/prism/internal/event"
+import "github.com/emaharmony/prizm/internal/event"
 
 // DashboardSnapshotSchemaVersion is the dashboard contract version for
 // DashboardRunSnapshot. It is independent of RunStateSchemaVersion and

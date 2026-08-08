@@ -1,4 +1,4 @@
-// Package session provides the session manager for Prism V20.
+// Package session provides the session manager for Prizm V20.
 //
 // A session tracks a conversation between a user and an agent on a channel.
 // Sessions persist across messages, compact when they grow too large, and
@@ -48,7 +48,7 @@ type Message struct {
 	Archived  bool      `json:"archived,omitempty"`
 }
 
-// LocalSummary is Prism's deterministic short-term summary for older recent
+// LocalSummary is Prizm's deterministic short-term summary for older recent
 // local conversation. It is separate from Remembrance semantic memory.
 type LocalSummary struct {
 	OwnerID          string    `json:"owner_id"`

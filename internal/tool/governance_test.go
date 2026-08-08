@@ -9,19 +9,19 @@ func TestGovernance_FrozenPathBlocksWriteFile(t *testing.T) {
 	cfg := PolicyConfig{
 		WorkspaceRoot:       ".",
 		AutoApproveMutations: true, // Even with auto-approve, governance should block
-		FrozenPaths:         []string{"schema.prisma", "internal/db/"},
+		FrozenPaths:         []string{"schema.prizma", "internal/db/"},
 		FrozenPathReasons: map[string]string{
-			"schema.prisma":  "Path schema.prisma is frozen per BASSBOOK-SCHEMA-FREEZE.md",
+			"schema.prizma":  "Path schema.prizma is frozen per BASSBOOK-SCHEMA-FREEZE.md",
 			"internal/db/":   "Directory internal/db/ is frozen per BASSBOOK-SCHEMA-FREEZE.md",
 		},
 	}
 
 	// write_file_proposal targeting a frozen exact path should be DENIED
 	result := EvaluatePolicyForAgent(cfg, "write_file_proposal", "lumi", map[string]any{
-		"path": "schema.prisma",
+		"path": "schema.prizma",
 	})
 	if result.Decision != PolicyDenied {
-		t.Errorf("expected DENIED for write to frozen path schema.prisma, got %s: %s", result.Decision, result.Reason)
+		t.Errorf("expected DENIED for write to frozen path schema.prizma, got %s: %s", result.Decision, result.Reason)
 	}
 	if result.Reason == "" {
 		t.Error("expected denial reason to mention governance freeze")
@@ -70,9 +70,9 @@ func TestGovernance_NonFrozenPathAllowed(t *testing.T) {
 	cfg := PolicyConfig{
 		WorkspaceRoot:       ".",
 		AutoApproveMutations: true,
-		FrozenPaths:         []string{"schema.prisma"},
+		FrozenPaths:         []string{"schema.prizma"},
 		FrozenPathReasons: map[string]string{
-			"schema.prisma": "schema.prisma is frozen",
+			"schema.prizma": "schema.prizma is frozen",
 		},
 	}
 
@@ -91,16 +91,16 @@ func TestGovernance_BypassesAutoApprove(t *testing.T) {
 	cfg := PolicyConfig{
 		WorkspaceRoot:       ".",
 		AutoApproveMutations: true,
-		FrozenPaths:         []string{"schema.prisma"},
+		FrozenPaths:         []string{"schema.prizma"},
 		FrozenPathReasons: map[string]string{
-			"schema.prisma": "schema.prisma is frozen per SCHEMA-FREEZE.md",
+			"schema.prizma": "schema.prizma is frozen per SCHEMA-FREEZE.md",
 		},
 	}
 
 	// Direct write_file (normally denied anyway, but with auto-approve it would be approved)
 	// Governance should deny it BEFORE auto-approve is checked
 	result := EvaluatePolicyForAgent(cfg, "write_file", "lumi", map[string]any{
-		"path": "schema.prisma",
+		"path": "schema.prizma",
 	})
 	if result.Decision != PolicyDenied {
 		t.Errorf("expected DENIED for direct write to frozen path even with auto-approve, got %s", result.Decision)
@@ -130,14 +130,14 @@ func TestGovernance_ReadOnlyToolsNotBlocked(t *testing.T) {
 	cfg := PolicyConfig{
 		WorkspaceRoot:       ".",
 		AutoApproveMutations: true,
-		FrozenPaths:         []string{"schema.prisma"},
+		FrozenPaths:         []string{"schema.prizma"},
 		FrozenPathReasons: map[string]string{
-			"schema.prisma": "schema.prisma is frozen",
+			"schema.prizma": "schema.prizma is frozen",
 		},
 	}
 
 	result := EvaluatePolicyForAgent(cfg, "read_file", "lumi", map[string]any{
-		"path": "schema.prisma",
+		"path": "schema.prizma",
 	})
 	// read_file goes through evaluatePathPolicy which may approve or require approval
 	// but it should NOT be denied for governance reasons
@@ -150,14 +150,14 @@ func TestGovernance_GitAddBlockedOnFrozenPath(t *testing.T) {
 	cfg := PolicyConfig{
 		WorkspaceRoot:       ".",
 		AutoApproveMutations: true,
-		FrozenPaths:         []string{"schema.prisma"},
+		FrozenPaths:         []string{"schema.prizma"},
 		FrozenPathReasons: map[string]string{
-			"schema.prisma": "schema.prisma is frozen",
+			"schema.prizma": "schema.prizma is frozen",
 		},
 	}
 
 	result := EvaluatePolicyForAgent(cfg, "git_add", "lumi", map[string]any{
-		"path": "schema.prisma",
+		"path": "schema.prizma",
 	})
 	if result.Decision != PolicyDenied {
 		t.Errorf("expected DENIED for git_add on frozen path, got %s: %s", result.Decision, result.Reason)

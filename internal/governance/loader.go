@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/emaharmony/prism/internal/context"
-	"github.com/emaharmony/prism/internal/policy"
+	"github.com/emaharmony/prizm/internal/context"
+	"github.com/emaharmony/prizm/internal/policy"
 	"gopkg.in/yaml.v3"
 )
 

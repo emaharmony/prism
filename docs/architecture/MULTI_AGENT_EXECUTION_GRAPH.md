@@ -1,25 +1,25 @@
 # Multi-Agent Execution Graph Dashboard
 
 A read-only, live-updating, replayable execution-graph view of one durable
-multi-agent run, served from Prism's embedded dashboard. This document covers
+multi-agent run, served from Prizm's embedded dashboard. This document covers
 the dashboard-facing read model, the live/replay/operator behavior of the run
 page, and the operational limits of the current implementation. It is for
 operators and contributors, not for the runtime contracts themselves — those
 are defined in [Multi-Agent Loop Runtime Contracts](MULTI_AGENT_LOOP_RUNTIME.md)
 and [Multi-Agent Software Task Workflow](../MULTI_AGENT_WORKFLOW.md).
 
-> Prism is source-available and preview-stage. See
+> Prizm is source-available and preview-stage. See
 > [Capability Status](../reference/CAPABILITY_STATUS.md) before relying on any
 > capability described here.
 
 ## Where this fits
 
 The multi-agent runtime (`internal/workflow/multiagent`) already persists
-durable run state, canonical events, and CLI-facing inspection (`prism
+durable run state, canonical events, and CLI-facing inspection (`prizm
 workflow status|cancel|resume|report`). This feature adds a second, read-only
 consumer of that same durable state: a dashboard read model
 (`DashboardRunSnapshot`), a run-scoped SSE event tail, and three narrow
-operator-control endpoints, all served by `prism serve`. It does not change
+operator-control endpoints, all served by `prizm serve`. It does not change
 routing, budgets, persistence, policy, approval, or validation authority —
 those remain exactly as described in the runtime contracts doc. The dashboard
 is a projection, never a second source of truth.
@@ -46,7 +46,7 @@ routes (`internal/api/server.go`):
 `GET /api/v1/multiagent/runs` and the snapshot/stream routes require
 `multiagent.RunLocator` to be configured (`503` otherwise). The three `POST`
 routes additionally require a `MultiAgentController` to be wired (`503`
-otherwise) — in `prism serve` this reuses `cmd/prism-cli`'s existing,
+otherwise) — in `prizm serve` this reuses `cmd/prizm-cli`'s existing,
 already-tested run-opening helpers (`openLiveReferenceRuntime` for Resume,
 `RunLocator.OpenInspection` for Cancel/Pause), not a separate code path.
 
@@ -335,7 +335,7 @@ configured, then use **Resume** here once it has been decided.
 
 ### Auth gap on mutating requests (and the SSE stream)
 
-Prism's dashboard shares one HTTP client helper (`app.js`'s `request()`) and
+Prizm's dashboard shares one HTTP client helper (`app.js`'s `request()`) and
 none of the three operator POSTs, nor this page's `EventSource` connection,
 attach an `Authorization: Bearer <token>` header or a `?token=` query
 parameter. `internal/api/server.go`'s `authMiddleware` gates every `POST`
@@ -344,7 +344,7 @@ request and (separately) this run's own SSE stream path
 token whenever one is set (`Config.AuthToken`); plain `GET` snapshot/list
 requests remain open. So:
 
-- If the Prism server has an auth token configured, **Pause/Resume/Cancel
+- If the Prizm server has an auth token configured, **Pause/Resume/Cancel
   will 401.**
 - The **live SSE stream will also 401** under the same condition — this page
   follows the same no-token convention as the dashboard's only other SSE
@@ -356,13 +356,13 @@ This is a **pre-existing, dashboard-wide gap**, not something Phase 2
 introduced or fixed — the same issue affects other existing mutating
 dashboard actions (e.g. approve/deny on the Operations page). Workaround:
 run without an auth token for local/loopback use of this dashboard, or use
-the equivalent CLI commands (`prism workflow pause|resume|cancel <run-id>`)
+the equivalent CLI commands (`prizm workflow pause|resume|cancel <run-id>`)
 which pass credentials through the normal CLI auth path. See
 [Recommended Phase 3 roadmap](#recommended-phase-3-roadmap).
 
 ### Resume and live agent wiring
 
-`prism serve` composes a real, fully-wired multi-agent role runner on demand
+`prizm serve` composes a real, fully-wired multi-agent role runner on demand
 to support Resume from the dashboard — the same tested composition function
 the CLI uses (`openLiveReferenceRuntime`), not a separate or lighter-weight
 path. Because Resume is fire-and-forget and a resume may execute one or more
@@ -399,8 +399,8 @@ ultimately succeeded.
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| `503 multi-agent run locator not configured` on the runs list or a run page | `prism serve` was started without a configured multi-agent run root. | Configure the run locator root (the same directory `prism workflow run` writes to) and restart `prism serve`. |
-| `503 multi-agent controller not configured` on Pause/Resume/Cancel | `prism serve` was started without a `MultiAgentController` wired. | This is a `cmd/prism-cli` composition concern, not something fixable from the dashboard; confirm the serve command includes multi-agent control wiring. |
+| `503 multi-agent run locator not configured` on the runs list or a run page | `prizm serve` was started without a configured multi-agent run root. | Configure the run locator root (the same directory `prizm workflow run` writes to) and restart `prizm serve`. |
+| `503 multi-agent controller not configured` on Pause/Resume/Cancel | `prizm serve` was started without a `MultiAgentController` wired. | This is a `cmd/prizm-cli` composition concern, not something fixable from the dashboard; confirm the serve command includes multi-agent control wiring. |
 | Pause/Resume/Cancel returns `401 unauthorized` | Server has an auth token configured; the dashboard's operator buttons don't send it. | See [Auth gap on mutating requests](#auth-gap-on-mutating-requests-and-the-sse-stream). Use the equivalent CLI command, or run without an auth token for local use. |
 | Live graph/timeline stop updating, no error banner | SSE stream 401'd (auth token configured) or dropped silently. | Check the browser console/network tab for the `events/stream` request status. Reload the page; if it recurs, see the auth-gap note above. |
 | "This run is no longer available" banner, live updates stopped | `reconcile()` saw enough consecutive 404s to latch "unavailable" — the run's manifest/database is genuinely gone (removed or relocated). | If the run should still exist, verify the run root/ID; otherwise this is expected. Reload the page only after confirming the run is back. |
@@ -417,9 +417,9 @@ ultimately succeeded.
   token configured will 401 all four. Pre-existing, dashboard-wide gap — not
   introduced by, or fixed in, Phase 2.
 - **Approve/Reject are not offered from this page.** `WaitingState` has no
-  approval-ID field to wire a button to; approval must go through Prism's
+  approval-ID field to wire a button to; approval must go through Prizm's
   existing, separate approvals mechanism, then Resume from here.
-- **Resume composes a real, fully-wired role runner** on demand in `prism
+- **Resume composes a real, fully-wired role runner** on demand in `prizm
   serve`; async failures during a dashboard-triggered Resume are only
   observable via the SSE stream or server logs, not the initiating HTTP
   response.
@@ -506,7 +506,7 @@ dashboard (not speculative feature requests):
   runtime this dashboard observes, including the delegation-graph vs
   execution-graph distinction.
 - [Multi-Agent Software Task Workflow](../MULTI_AGENT_WORKFLOW.md) — the CLI
-  control plane (`prism workflow status|cancel|resume|report`) this
+  control plane (`prizm workflow status|cancel|resume|report`) this
   dashboard complements.
 - [Multi-Agent Runtime Roadmap](MULTI_AGENT_RUNTIME_ROADMAP.md) — the larger,
   multi-year architectural staging this feature sits within (Graph Runtime,

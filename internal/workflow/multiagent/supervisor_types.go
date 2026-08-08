@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/emaharmony/prism/internal/cost"
-	"github.com/emaharmony/prism/internal/event"
-	"github.com/emaharmony/prism/internal/validation"
+	"github.com/emaharmony/prizm/internal/cost"
+	"github.com/emaharmony/prizm/internal/event"
+	"github.com/emaharmony/prizm/internal/validation"
 )
 
 // LoopKind identifies a bounded correction edge in the Phase 1 flow.
@@ -112,7 +112,7 @@ type RoleRunner interface {
 	RunRole(context.Context, RoleRunRequest) (RoleRunResult, error)
 }
 
-// EventSink consumes canonical Prism events emitted by the supervisor.
+// EventSink consumes canonical Prizm events emitted by the supervisor.
 type EventSink interface {
 	Emit(event.Event)
 }

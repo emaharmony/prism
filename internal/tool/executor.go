@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/approval"
-	"github.com/emaharmony/prism/internal/policy"
-	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prizm/internal/approval"
+	"github.com/emaharmony/prizm/internal/policy"
+	"github.com/emaharmony/prizm/internal/safety"
 )
 
 // Executor runs a tool through the full lifecycle: policy check → event
@@ -73,7 +73,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	execInput := stripMetadata(input)
 
 	// Emit tool.requested
-	e.emitEvent("prism.tool.requested", map[string]any{
+	e.emitEvent("prizm.tool.requested", map[string]any{
 		"tool_name":      toolName,
 		"agent":          agent,
 		"project":        project,
@@ -90,7 +90,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 			policy.Context{Project: project},
 		)
 
-		e.emitEvent("prism.policy.checked", map[string]any{
+		e.emitEvent("prizm.policy.checked", map[string]any{
 			"tool_name":       toolName,
 			"policy_decision": string(v8Decision.Decision),
 			"policy_rule_id":  v8Decision.RuleID,
@@ -99,7 +99,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 
 		switch v8Decision.Decision {
 		case policy.DecisionDenied:
-			e.emitEvent("prism.tool.denied", map[string]any{
+			e.emitEvent("prizm.tool.denied", map[string]any{
 				"tool_name":       toolName,
 				"agent":           agent,
 				"project":         project,
@@ -126,7 +126,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 
 	// Handle requires_approval — this is not a denial, it's a request for human approval
 	if policyResult.Decision == PolicyRequiresApproval {
-		e.emitEvent("prism.tool.approved", map[string]any{
+		e.emitEvent("prizm.tool.approved", map[string]any{
 			"tool_name":       toolName,
 			"agent":           agent,
 			"project":         project,
@@ -167,7 +167,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		result.Output["policy_decision"] = string(PolicyRequiresApproval)
 		result.Output["policy_reason"] = policyResult.Reason
 		if err := e.persistApproval(toolName, agent, project, correlationID, runID, channelID, execInput, policyResult, &result); err != nil {
-			e.emitEvent("prism.approval.persist_failed", map[string]any{
+			e.emitEvent("prizm.approval.persist_failed", map[string]any{
 				"tool_name":      toolName,
 				"agent":          agent,
 				"project":        project,
@@ -187,7 +187,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 
 	// Emit denied event
 	if policyResult.Decision == PolicyDenied {
-		e.emitEvent("prism.tool.denied", map[string]any{
+		e.emitEvent("prizm.tool.denied", map[string]any{
 			"tool_name":       toolName,
 			"agent":           agent,
 			"project":         project,
@@ -202,7 +202,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 		}, nil
 	}
 
-	e.emitEvent("prism.tool.approved", map[string]any{
+	e.emitEvent("prizm.tool.approved", map[string]any{
 		"tool_name":       toolName,
 		"agent":           agent,
 		"project":         project,
@@ -212,7 +212,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	})
 
 	// Emit tool.started
-	e.emitEvent("prism.tool.started", map[string]any{
+	e.emitEvent("prizm.tool.started", map[string]any{
 		"tool_name":      toolName,
 		"agent":          agent,
 		"project":        project,
@@ -225,7 +225,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	// Resolve and execute the tool
 	result, err := e.Registry.Execute(ctx, toolName, sanitizedInput)
 	if err != nil {
-		e.emitEvent("prism.tool.failed", map[string]any{
+		e.emitEvent("prizm.tool.failed", map[string]any{
 			"tool_name":      toolName,
 			"agent":          agent,
 			"project":        project,
@@ -264,7 +264,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 					result.Output["status"] = "written"
 					result.Output["written_path"] = resolvedPath
 					result.Output["auto_approved"] = true
-					e.emitEvent("prism.mutation.applied", map[string]any{
+					e.emitEvent("prizm.mutation.applied", map[string]any{
 						"tool_name":      toolName,
 						"agent":           agent,
 						"project":         project,
@@ -279,7 +279,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 	}
 
 	// Emit tool.completed
-	e.emitEvent("prism.tool.completed", map[string]any{
+	e.emitEvent("prizm.tool.completed", map[string]any{
 		"tool_name":      toolName,
 		"agent":          agent,
 		"project":        project,
@@ -293,7 +293,7 @@ func (e *Executor) ExecuteWithPolicy(ctx context.Context, toolName, agent, proje
 // emitEvent calls the configured emitter if it exists.
 func (e *Executor) emitEvent(eventType string, payload map[string]any) {
 	if e.Emit != nil {
-		e.Emit(eventType, "prism-tool-executor", payload)
+		e.Emit(eventType, "prizm-tool-executor", payload)
 	}
 }
 
@@ -373,10 +373,10 @@ func (e *Executor) persistApproval(toolName, agent, project, correlationID, runI
 	result.Output["run_id"] = runID
 	result.Output["correlation_id"] = correlationID
 	result.Output["status"] = "pending_approval"
-	result.Output["instruction"] = fmt.Sprintf("Use 'prism approval approve %s --run %s --by <name>' or 'prism approval deny %s --run %s --by <name>' to proceed.", approvalID, runID, approvalID, runID)
+	result.Output["instruction"] = fmt.Sprintf("Use 'prizm approval approve %s --run %s --by <name>' or 'prizm approval deny %s --run %s --by <name>' to proceed.", approvalID, runID, approvalID, runID)
 
 	// Emit event for Discord notification (approval card with buttons)
-	e.emitEvent("prism.approval.file_requested", map[string]any{
+	e.emitEvent("prizm.approval.file_requested", map[string]any{
 		"approval_id":    approvalID,
 		"run_id":         runID,
 		"agent":          agent,

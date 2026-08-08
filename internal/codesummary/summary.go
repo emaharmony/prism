@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/provider"
+	"github.com/emaharmony/prizm/internal/provider"
 )
 
 const (
@@ -26,9 +26,9 @@ func RequestMatches(message string) bool {
 	text := strings.ToLower(message)
 	action := containsAny(text, "summarize", "summary", "overview", "architecture", "explain", "analyze", "analyse", "read")
 	target := containsAny(text, "codebase", "repo", "repository", "source", "project")
-	prismHint := strings.Contains(text, "prism")
+	prizmHint := strings.Contains(text, "prizm")
 	workflowEditorOnly := strings.Contains(text, "workflow editor") && !containsAny(text, "codebase", "repo", "repository")
-	return action && target && !workflowEditorOnly && (prismHint || strings.Contains(text, "code"))
+	return action && target && !workflowEditorOnly && (prizmHint || strings.Contains(text, "code"))
 }
 
 // Config controls one summary run.
@@ -87,7 +87,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		return Result{}, err
 	}
 	if cfg.ArtifactDir == "" {
-		cfg.ArtifactDir = filepath.Join(root, ".prism", "data", "codebase-summary", cfg.TaskID)
+		cfg.ArtifactDir = filepath.Join(root, ".prizm", "data", "codebase-summary", cfg.TaskID)
 	}
 	if err := os.MkdirAll(cfg.ArtifactDir, 0755); err != nil {
 		return Result{}, err
@@ -155,7 +155,7 @@ func Collect(ctx context.Context, root string) (Evidence, error) {
 // BuildReport creates the deterministic architecture-map report.
 func BuildReport(ev Evidence, synthesis string) string {
 	var b strings.Builder
-	b.WriteString("# Prism Codebase Architecture Summary\n\n")
+	b.WriteString("# Prizm Codebase Architecture Summary\n\n")
 	b.WriteString(fmt.Sprintf("Generated: %s\n\n", ev.GeneratedAt))
 
 	if strings.TrimSpace(synthesis) != "" {
@@ -165,7 +165,7 @@ func BuildReport(ev Evidence, synthesis string) string {
 	}
 
 	b.WriteString("## Architecture Map\n")
-	b.WriteString("Prism is organized as a Go service/CLI with command entrypoints under `cmd/`, runtime subsystems under `internal/`, Python semantic memory under `remembrance/`, and local dashboard assets under `internal/dashboard/static/`.\n\n")
+	b.WriteString("Prizm is organized as a Go service/CLI with command entrypoints under `cmd/`, runtime subsystems under `internal/`, Python semantic memory under `remembrance/`, and local dashboard assets under `internal/dashboard/static/`.\n\n")
 
 	b.WriteString("## Entrypoints\n")
 	for _, e := range ev.Entrypoints {
@@ -189,12 +189,12 @@ func BuildReport(ev Evidence, synthesis string) string {
 	b.WriteString("\n")
 
 	b.WriteString("## Runtime Flow\n")
-	b.WriteString("- `prism serve` loads `prism.yaml`, connects to NATS, registers agents/providers, starts sessions/tasks, wires Discord, exposes health/API endpoints, and injects Remembrance/context/tool guidance before LLM calls.\n")
+	b.WriteString("- `prizm serve` loads `prizm.yaml`, connects to NATS, registers agents/providers, starts sessions/tasks, wires Discord, exposes health/API endpoints, and injects Remembrance/context/tool guidance before LLM calls.\n")
 	b.WriteString("- Codebase-level questions should use the async summary task because normal Discord turns have a short handler timeout and tool loops are intentionally bounded.\n")
 	b.WriteString("- Remembrance is a separate Python/FastAPI memory service that supplies semantic context over HTTP.\n\n")
 
 	b.WriteString("## Configuration And UI\n")
-	b.WriteString("- `prism.yaml` is the live service config for agents, channels, bridge, memory, paths, sessions, and timeouts.\n")
+	b.WriteString("- `prizm.yaml` is the live service config for agents, channels, bridge, memory, paths, sessions, and timeouts.\n")
 	b.WriteString("- The workflow editor converts agent config into graph nodes/edges, exposes CRUD through `/api/v1/editor`, and previews YAML through `/api/v1/editor/save`.\n\n")
 
 	b.WriteString("## Evidence\n")
@@ -214,12 +214,12 @@ func BuildReport(ev Evidence, synthesis string) string {
 
 func synthesize(ctx context.Context, cfg Config, ev Evidence) (string, error) {
 	payload, _ := json.MarshalIndent(ev, "", "  ")
-	prompt := "Create a concise architecture-map summary of this Prism codebase evidence. Focus on entrypoints, major subsystems, runtime flow, config, memory/RagCAG, UI/editor, and risks. Do not invent facts.\n\n" + string(payload)
+	prompt := "Create a concise architecture-map summary of this Prizm codebase evidence. Focus on entrypoints, major subsystems, runtime flow, config, memory/RagCAG, UI/editor, and risks. Do not invent facts.\n\n" + string(payload)
 	resp, err := cfg.Provider.Generate(ctx, provider.GenerateRequest{
 		RunID:       cfg.TaskID,
 		Agent:       cfg.AgentID,
 		Project:     cfg.Project,
-		Task:        "Summarize Prism codebase architecture",
+		Task:        "Summarize Prizm codebase architecture",
 		Prompt:      prompt,
 		Model:       cfg.Model,
 		Temperature: 0.2,
@@ -232,7 +232,7 @@ func synthesize(ctx context.Context, cfg Config, ev Evidence) (string, error) {
 }
 
 func readKeyFiles(root string) map[string]string {
-	names := []string{"README.md", "go.mod", "Makefile", "Dockerfile", "docker-compose.yaml", "prism.yaml", "prism.yaml.example", "docs/design/TASKS.md", "docs/ROADMAP.md", "remembrance/README.md", "remembrance/pyproject.toml"}
+	names := []string{"README.md", "go.mod", "Makefile", "Dockerfile", "docker-compose.yaml", "prizm.yaml", "prizm.yaml.example", "docs/design/TASKS.md", "docs/ROADMAP.md", "remembrance/README.md", "remembrance/pyproject.toml"}
 	out := make(map[string]string)
 	for _, name := range names {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
@@ -390,7 +390,7 @@ func writeJSON(path string, v any) error {
 
 func shouldSkipDir(name string) bool {
 	switch name {
-	case ".git", ".idea", ".prism", "runs", "node_modules", "vendor", "__pycache__", ".pytest_cache", ".cache", "dist", "build", "out", "bin", ".venv", "remembrance-data":
+	case ".git", ".idea", ".prizm", "runs", "node_modules", "vendor", "__pycache__", ".pytest_cache", ".cache", "dist", "build", "out", "bin", ".venv", "remembrance-data":
 		return true
 	default:
 		return false

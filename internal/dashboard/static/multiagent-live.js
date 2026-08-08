@@ -3,7 +3,7 @@
  * (internal/dashboard/static/multiagent-run.html), Milestone 4.
  *
  * Like multiagent-graph.js, this file has no import/export syntax so it
- * works unmodified as a plain browser <script> (window.PrismMultiAgentLive)
+ * works unmodified as a plain browser <script> (window.PrizmMultiAgentLive)
  * AND as a CommonJS module for the plain-node tests under
  * internal/dashboard/static/tests/ (no npm, no build step).
  *
@@ -26,25 +26,25 @@
   // String values copied verbatim from internal/event/multiagent.go. Do not
   // reformat/rename without updating that file's constants too.
   var EVENT_TYPES = {
-    RUN_CREATED:              'prism.workflow.multi_agent.run.created',
-    RUN_STARTED:              'prism.workflow.multi_agent.run.started',
-    ROLE_ENTERED:             'prism.workflow.multi_agent.role.entered',
-    ROLE_ITERATION_STARTED:   'prism.workflow.multi_agent.role.iteration.started',
-    ROLE_ITERATION_COMPLETED: 'prism.workflow.multi_agent.role.iteration.completed',
-    ROLE_COMPLETED:           'prism.workflow.multi_agent.role.completed',
-    HANDOFF_CREATED:          'prism.workflow.multi_agent.handoff.created',
-    TRANSITION_SELECTED:      'prism.workflow.multi_agent.transition.selected',
-    LOOP_TRAVERSAL_RECORDED:  'prism.workflow.multi_agent.loop.traversal.recorded',
-    BUDGET_WARNING:           'prism.workflow.multi_agent.budget.warning',
-    BUDGET_EXHAUSTED:         'prism.workflow.multi_agent.budget.exhausted',
-    RUN_PAUSED:               'prism.workflow.multi_agent.run.paused',
-    RUN_RESUMED:              'prism.workflow.multi_agent.run.resumed',
-    RUN_COMPLETED:            'prism.workflow.multi_agent.run.completed',
-    RUN_FAILED:               'prism.workflow.multi_agent.run.failed',
-    RUN_CANCELLED:            'prism.workflow.multi_agent.run.cancelled',
-    RECOVERY_STARTED:         'prism.workflow.multi_agent.recovery.started',
-    RECOVERY_COMPLETED:       'prism.workflow.multi_agent.recovery.completed',
-    RECOVERY_FAILED:          'prism.workflow.multi_agent.recovery.failed'
+    RUN_CREATED:              'prizm.workflow.multi_agent.run.created',
+    RUN_STARTED:              'prizm.workflow.multi_agent.run.started',
+    ROLE_ENTERED:             'prizm.workflow.multi_agent.role.entered',
+    ROLE_ITERATION_STARTED:   'prizm.workflow.multi_agent.role.iteration.started',
+    ROLE_ITERATION_COMPLETED: 'prizm.workflow.multi_agent.role.iteration.completed',
+    ROLE_COMPLETED:           'prizm.workflow.multi_agent.role.completed',
+    HANDOFF_CREATED:          'prizm.workflow.multi_agent.handoff.created',
+    TRANSITION_SELECTED:      'prizm.workflow.multi_agent.transition.selected',
+    LOOP_TRAVERSAL_RECORDED:  'prizm.workflow.multi_agent.loop.traversal.recorded',
+    BUDGET_WARNING:           'prizm.workflow.multi_agent.budget.warning',
+    BUDGET_EXHAUSTED:         'prizm.workflow.multi_agent.budget.exhausted',
+    RUN_PAUSED:               'prizm.workflow.multi_agent.run.paused',
+    RUN_RESUMED:              'prizm.workflow.multi_agent.run.resumed',
+    RUN_COMPLETED:            'prizm.workflow.multi_agent.run.completed',
+    RUN_FAILED:               'prizm.workflow.multi_agent.run.failed',
+    RUN_CANCELLED:            'prizm.workflow.multi_agent.run.cancelled',
+    RECOVERY_STARTED:         'prizm.workflow.multi_agent.recovery.started',
+    RECOVERY_COMPLETED:       'prizm.workflow.multi_agent.recovery.completed',
+    RECOVERY_FAILED:          'prizm.workflow.multi_agent.recovery.failed'
   };
 
   var ALL_EVENT_TYPES = Object.keys(EVENT_TYPES).map(function (key) { return EVENT_TYPES[key]; });
@@ -323,6 +323,6 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   } else {
-    root.PrismMultiAgentLive = api;
+    root.PrizmMultiAgentLive = api;
   }
 })(typeof window !== 'undefined' ? window : globalThis);

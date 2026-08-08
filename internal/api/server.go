@@ -1,4 +1,4 @@
-// Package api provides the Prism HTTP API server (REST + SSE).
+// Package api provides the Prizm HTTP API server (REST + SSE).
 //
 // Endpoints:
 //
@@ -30,14 +30,14 @@
 //	POST /api/v1/editor/save     — Validate + generate YAML
 //	GET /api/v1/costs             — Cost summary
 //	GET /api/v1/usage             — Token-usage time series + breakdowns (?range=)
-//	GET /api/v1/config            — Curated prism.yaml settings + scheduler jobs
+//	GET /api/v1/config            — Curated prizm.yaml settings + scheduler jobs
 //	GET /api/v1/config/agents     — Per-agent editable fields
 //	PUT /api/v1/config/agents/{id} — Surgically edit one agent's personality/rules
 //	GET /api/v1/workspace/files   — List shared workspace markdown files
 //	GET /api/v1/workspace/files/{name} — Read one workspace file
 //	PUT /api/v1/workspace/files/{name} — Write one workspace file (jailed, atomic)
-//	PUT /api/v1/config/settings   — Surgically edit curated prism.yaml settings
-//	PUT /api/v1/config/scheduler  — Surgically edit prism.scheduler jobs
+//	PUT /api/v1/config/settings   — Surgically edit curated prizm.yaml settings
+//	PUT /api/v1/config/scheduler  — Surgically edit prizm.scheduler jobs
 //	POST /api/v1/config/cron/validate — Validate a cron expression
 //	GET /api/v1/config/actions    — Known wake actions (cron presets)
 //	GET /                          — Embedded dashboard UI (when folded into serve)
@@ -59,25 +59,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/emaharmony/prism/internal/agentns"
-	"github.com/emaharmony/prism/internal/autopatch"
-	costpkg "github.com/emaharmony/prism/internal/cost"
-	"github.com/emaharmony/prism/internal/delegation"
-	"github.com/emaharmony/prism/internal/editor"
-	"github.com/emaharmony/prism/internal/invocation"
-	"github.com/emaharmony/prism/internal/orchestrator"
-	"github.com/emaharmony/prism/internal/provider"
-	"github.com/emaharmony/prism/internal/session"
-	"github.com/emaharmony/prism/internal/sessionreset"
-	"github.com/emaharmony/prism/internal/task"
-	"github.com/emaharmony/prism/internal/usage"
-	"github.com/emaharmony/prism/internal/workflow"
-	v2 "github.com/emaharmony/prism/internal/workflow/v2"
-	"github.com/emaharmony/prism/internal/workstart"
+	"github.com/emaharmony/prizm/internal/agentns"
+	"github.com/emaharmony/prizm/internal/autopatch"
+	costpkg "github.com/emaharmony/prizm/internal/cost"
+	"github.com/emaharmony/prizm/internal/delegation"
+	"github.com/emaharmony/prizm/internal/editor"
+	"github.com/emaharmony/prizm/internal/invocation"
+	"github.com/emaharmony/prizm/internal/orchestrator"
+	"github.com/emaharmony/prizm/internal/provider"
+	"github.com/emaharmony/prizm/internal/session"
+	"github.com/emaharmony/prizm/internal/sessionreset"
+	"github.com/emaharmony/prizm/internal/task"
+	"github.com/emaharmony/prizm/internal/usage"
+	"github.com/emaharmony/prizm/internal/workflow"
+	v2 "github.com/emaharmony/prizm/internal/workflow/v2"
+	"github.com/emaharmony/prizm/internal/workstart"
 	"github.com/nats-io/nats.go"
 )
 
-// Server provides the Prism HTTP API.
+// Server provides the Prizm HTTP API.
 type Server struct {
 	addr        string
 	orch        *orchestrator.Orchestrator
@@ -108,13 +108,13 @@ type Server struct {
 	// workflowConfigPath is the gated-loop workflow definition file the
 	// dashboard workflow editor reads and writes. Empty → read-only default.
 	workflowConfigPath string
-	// configPath is the prism.yaml file the config/scheduler editors read and
+	// configPath is the prizm.yaml file the config/scheduler editors read and
 	// surgically write. Empty → config editing disabled (endpoints 400).
 	configPath string
 	// schedulerActions are the known wake actions offered as cron-job presets.
 	schedulerActions []SchedulerAction
 	// staticUI serves the embedded dashboard pages at / when non-nil (folded
-	// into `prism serve`).
+	// into `prizm serve`).
 	staticUI http.Handler
 	// usage is the token-usage store backing GET /api/v1/usage. Nil → 503.
 	usage *usage.Store
@@ -164,7 +164,7 @@ type Config struct {
 	ConfigDir string
 	// WorkflowConfigPath is the gated-loop workflow definition file path.
 	WorkflowConfigPath string
-	// ConfigPath is the prism.yaml path the config/scheduler editors read/write.
+	// ConfigPath is the prizm.yaml path the config/scheduler editors read/write.
 	ConfigPath string
 	// SchedulerActions are the known wake actions offered as cron-job presets.
 	SchedulerActions []SchedulerAction
@@ -262,7 +262,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/costs", s.handleCosts)
 	s.mux.HandleFunc("/api/v1/usage", s.handleUsage)
 
-	// Config + scheduler editors (write prism.yaml surgically).
+	// Config + scheduler editors (write prizm.yaml surgically).
 	s.mux.HandleFunc("/api/v1/config", s.handleConfig)
 	s.mux.HandleFunc("/api/v1/config/settings", s.handleConfigSettings)
 	s.mux.HandleFunc("/api/v1/config/scheduler", s.handleConfigScheduler)
@@ -275,7 +275,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/api/v1/workspace/files", s.handleWorkspaceFiles)
 	s.mux.HandleFunc("/api/v1/workspace/files/", s.handleWorkspaceFile)
 
-	// Serve the embedded dashboard UI at / when wired (folded into `prism
+	// Serve the embedded dashboard UI at / when wired (folded into `prizm
 	// serve`). Specific /api/v1/... patterns above win under ServeMux
 	// longest-match, so this only catches UI/static paths.
 	if s.staticUI != nil {
@@ -485,7 +485,7 @@ func (s *Server) handleAgentGet(w http.ResponseWriter, r *http.Request, id strin
 //
 // A minimal, general "ask one configured agent one question, get a
 // structured result" primitive for external processes (addons) that can't
-// or shouldn't import Prism's internal Go packages. See internal/invocation
+// or shouldn't import Prizm's internal Go packages. See internal/invocation
 // for the rationale and the single-shot call shape (no session, no tool
 // loop — just a resolved provider/model, one prompt in, one result out).
 
@@ -651,7 +651,7 @@ func singleShotMessages(agentCfg orchestrator.AgentConfig, prompt string) []prov
 
 // invokeSessionMessages builds the prompt from persisted conversation history,
 // mapping session roles to chat roles the same way the built-in chat pipeline
-// does (see buildMessages in cmd/prism-cli/tool_loop_chat.go). The current user
+// does (see buildMessages in cmd/prizm-cli/tool_loop_chat.go). The current user
 // turn is already the last message in sess.Messages.
 func invokeSessionMessages(agentCfg orchestrator.AgentConfig, sess *session.Session) []provider.ChatMessage {
 	messages := make([]provider.ChatMessage, 0, len(sess.Messages)+1)
@@ -874,7 +874,7 @@ func (s *Server) handleTaskDetail(w http.ResponseWriter, r *http.Request) {
 // --- Autopatch ---
 
 // handleWorkflowStart triggers the gated loop for {project, prompt} by
-// publishing to prism.workflow.start, which the serve-mode WakeHandler consumes.
+// publishing to prizm.workflow.start, which the serve-mode WakeHandler consumes.
 func (s *Server) handleWorkflowStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -920,7 +920,7 @@ func (s *Server) handleWorkflowStart(w http.ResponseWriter, r *http.Request) {
 		req.Source = "api"
 	}
 	payload, _ := json.Marshal(req)
-	if err := s.nc.Publish("prism.workflow.start", payload); err != nil {
+	if err := s.nc.Publish("prizm.workflow.start", payload); err != nil {
 		writeJSONError(w, "failed to publish start request: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1050,7 +1050,7 @@ func (s *Server) handleWorkflowConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, s.loadWorkflowConfig())
 	case http.MethodPut:
 		if s.workflowConfigPath == "" {
-			writeJSONError(w, "no workflow_config path configured — set prism.workflow_config to enable editing", http.StatusBadRequest)
+			writeJSONError(w, "no workflow_config path configured — set prizm.workflow_config to enable editing", http.StatusBadRequest)
 			return
 		}
 		var cfg v2.WorkflowConfig
@@ -1122,7 +1122,7 @@ func (s *Server) handleWorkflowFeedback(w http.ResponseWriter, r *http.Request) 
 		"workflow_id": req.WorkflowID,
 		"dimensions":  req.Dimensions,
 	})
-	if err := s.nc.Publish("prism.workflow.feedback.response", payload); err != nil {
+	if err := s.nc.Publish("prizm.workflow.feedback.response", payload); err != nil {
 		writeJSONError(w, "publish failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1696,7 +1696,7 @@ func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 // handleEditorSave validates and optionally writes config to disk.
-// POST with {"confirm": true, "path": "/path/to/prism.yaml"} to write.
+// POST with {"confirm": true, "path": "/path/to/prizm.yaml"} to write.
 // POST with just the state to validate and preview YAML.
 func (s *Server) handleEditorSave(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

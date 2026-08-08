@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/retry"
+	"github.com/emaharmony/prizm/internal/retry"
 )
 
 // Definition is the stable, serializable contract consumed by a future
@@ -21,7 +21,7 @@ type Definition struct {
 	AllowSelfTransitions bool             `json:"allow_self_transitions,omitempty"`
 }
 
-// RoleConfig binds one logical role to an existing Prism agent or profile.
+// RoleConfig binds one logical role to an existing Prizm agent or profile.
 type RoleConfig struct {
 	Role               Role                `json:"role"`
 	AgentRef           string              `json:"agent_ref"`

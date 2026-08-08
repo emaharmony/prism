@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/emaharmony/prism/internal/plan"
+	"github.com/emaharmony/prizm/internal/plan"
 )
 
 // PlanManager interface for tool access to plan state.

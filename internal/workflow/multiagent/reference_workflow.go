@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/event"
-	"github.com/emaharmony/prism/internal/retry"
+	"github.com/emaharmony/prizm/internal/event"
+	"github.com/emaharmony/prizm/internal/retry"
 )
 
 // ReferenceWorkflowID is the single supported Phase 1 product workflow.

@@ -1,4 +1,4 @@
-module github.com/emaharmony/prism
+module github.com/emaharmony/prizm
 
 go 1.26.2
 

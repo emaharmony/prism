@@ -2,7 +2,7 @@
 
 Status: Architectural direction
 
-This document describes the sequence by which Prism can evolve from an
+This document describes the sequence by which Prizm can evolve from an
 event-native workflow runtime into a workflow-first multi-agent operating
 system. It defines goals and architectural outcomes. It intentionally does not
 select package names, APIs, event fields, storage schemas, scheduling
@@ -40,7 +40,7 @@ The following remain true throughout the roadmap:
 
 ## 1. Current architecture
 
-Prism today is a persistent, event-native Go runtime with:
+Prizm today is a persistent, event-native Go runtime with:
 
 - named workflows and gated execution;
 - canonical events delivered through NATS;
@@ -74,7 +74,7 @@ it. Human decisions remain human decisions, and the supervisor remains subject
 to the same policy, validation, persistence, and audit rules as any other
 runtime path.
 
-Architectural outcome: Prism can supervise a bounded multi-agent team as one
+Architectural outcome: Prizm can supervise a bounded multi-agent team as one
 observable unit of work with explicit responsibility and authority.
 
 ## 3. Loop Runtime
@@ -99,7 +99,7 @@ control flow in individual features.
 
 Goal: represent workflow structure beyond a single ordered sequence.
 
-The graph runtime gives Prism a canonical model for work with dependencies,
+The graph runtime gives Prizm a canonical model for work with dependencies,
 branches, joins, nested coordination, and explicit terminal states. Graph
 meaning is independent of how a graph is authored, displayed, or scheduled.
 The model must make authority gates and observable state transitions part of
@@ -109,7 +109,7 @@ Loops and supervised agent work become composable workflow capabilities. The
 graph defines their relationships without absorbing the semantics owned by the
 workflow, agents, policy, approval, or validation domains.
 
-Architectural outcome: Prism can validate, execute, inspect, and explain the
+Architectural outcome: Prizm can validate, execute, inspect, and explain the
 same workflow graph with unambiguous lifecycle and dependency semantics.
 
 ## 5. Visual Graph Editor
@@ -140,15 +140,15 @@ observable result of a join must be defined by graph semantics rather than by
 incidental completion timing.
 
 This stage follows the graph and editor stages because concurrency magnifies
-ambiguity. Prism must first be able to express and inspect independence,
+ambiguity. Prizm must first be able to express and inspect independence,
 coordination, and terminal behavior clearly.
 
-Architectural outcome: Prism can increase throughput for independent work
+Architectural outcome: Prizm can increase throughput for independent work
 without weakening reproducibility, governance, or operator understanding.
 
 ## 7. Distributed Runtime
 
-Goal: preserve Prism's runtime guarantees when coordinated work spans multiple
+Goal: preserve Prizm's runtime guarantees when coordinated work spans multiple
 runtime instances.
 
 The distributed stage establishes clear ownership of work, agent identity,
@@ -160,7 +160,7 @@ Distribution must not create a trusted bypass around local policy or conceal
 partial failure. Local-first operation remains valid; distribution is a scale
 and placement capability, not a prerequisite for correctness.
 
-Architectural outcome: multiple Prism runtimes can participate in one coherent,
+Architectural outcome: multiple Prizm runtimes can participate in one coherent,
 observable workflow while maintaining explicit authority and failure semantics.
 
 ## Stage gates
