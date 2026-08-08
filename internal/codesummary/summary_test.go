@@ -19,6 +19,25 @@ func TestRequestMatches(t *testing.T) {
 		{"review the workflow editor", false},
 		{"hello", false},
 		{"what is the status?", false},
+
+		// Previously-failing natural phrasings (the bug being fixed)
+		{"analyse this", true},
+		{"analyze this", true},
+		{"analyse it", true},
+		{"can you analyze it?", true},
+		{"can you analyse it?", true},
+		{"run an analysis", true},
+		{"run a full analysis please", true},
+		{"give me an analysis", true},
+		{"do an analysis on it", true},
+		{"summarize this", true},
+		{"give me a summary", true},
+		{"codebase overview please", true},
+		{"repo summary", true},
+
+		// Guard against regression / over-broadening
+		{"give me an analysis of the workflow editor", false}, // workflow-editor veto beats strong phrases
+		{"can you explain this error?", false},                // "explain this" deliberately not a strong trigger
 	}
 	for _, tt := range tests {
 		t.Run(tt.msg, func(t *testing.T) {

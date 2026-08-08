@@ -1145,20 +1145,28 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		log.Printf("[SECURITY] medium-severity flags in input from user %s: flags=%v", msg.UserID, injectionCheck.Flags)
 	}
 
-	if cc.handlePendingWorkStartReply(msg) {
+	if handled := cc.handlePendingWorkStartReply(msg); handled {
 		return
 	}
-	if codesummary.RequestMatches(sanitizedContent) {
+
+	codesummaryMatch := codesummary.RequestMatches(sanitizedContent)
+	autopatchMatch := autopatch.RequestMatches(sanitizedContent)
+	log.Printf("[CLASSIFY] channel=%s user=%s codesummary=%v autopatch=%v",
+		msg.ChannelID, msg.UserID, codesummaryMatch, autopatchMatch)
+
+	if codesummaryMatch {
 		cc.handleCodebaseSummaryRequest(msg, sanitizedContent)
 		return
 	}
-	if autopatch.RequestMatches(sanitizedContent) {
+	if autopatchMatch {
 		cc.handleAutoPatchRequest(msg, sanitizedContent)
 		return
 	}
-	if cc.maybeStartDetectedWork(msg, sanitizedContent) {
+	if detected := cc.maybeStartDetectedWork(msg, sanitizedContent); detected {
+		log.Printf("[CLASSIFY] channel=%s user=%s matched=detected_work", msg.ChannelID, msg.UserID)
 		return
 	}
+	log.Printf("[CLASSIFY] channel=%s user=%s matched=none — falling through to default chat/memory pipeline", msg.ChannelID, msg.UserID)
 
 	// Emit channel received event
 	cc.publishEvent("prizm.channel.received", map[string]any{
