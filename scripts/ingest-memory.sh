@@ -2,7 +2,7 @@
 # Ingest all memory/*.md files into Remembrance (Recall) vector store
 # Usage: bash ingest-memory.sh /path/to/memory/dir
 
-MEM_DIR="${1:-/Users/ema/projects/repos/prism/prism-workspace/memory}"
+MEM_DIR="${1:-/Users/ema/projects/repos/prizm/prizm-workspace/memory}"
 REM_URL="http://127.0.0.1:18790/v1/memory/ingest"
 COUNT=0
 FAILED=0
@@ -42,7 +42,7 @@ for f in "$MEM_DIR"/*.md; do
       \"source_type\": \"agent\",
       \"source_agent\": \"lumi\",
       \"importance_score\": 0.8,
-      \"project_id\": \"prism\"
+      \"project_id\": \"prizm\"
     }" 2>/dev/null)
   
   if [ -n "$response" ]; then

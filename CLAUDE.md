@@ -4,7 +4,7 @@
 
 Claude MUST read and follow
 [Package Boundaries](docs/architecture/PACKAGE_BOUNDARIES.md) before generating
-code that changes Prism architecture or package placement.
+code that changes Prizm architecture or package placement.
 
 In particular:
 

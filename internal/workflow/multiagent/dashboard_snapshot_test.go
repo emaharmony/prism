@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prizm/internal/event"
 )
 
 func TestBuildDashboardSnapshotComposesReferenceSnapshotWithoutDrift(t *testing.T) {

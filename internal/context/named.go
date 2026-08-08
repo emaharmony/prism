@@ -2,7 +2,7 @@ package context
 
 // NamedSources maps short context names to workspace files.
 // These are the canonical context sources that can be listed in an agent's
-// `context:` array in prism.yaml. Each name maps to a single file in the
+// `context:` array in prizm.yaml. Each name maps to a single file in the
 // workspace root.
 var NamedSources = map[string]string{
 	"soul":           "SOUL.md",

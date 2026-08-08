@@ -5,13 +5,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/cost"
+	"github.com/emaharmony/prizm/internal/cost"
 )
 
 // RunStateSchemaVersion is the current serialized multi-agent state version.
 const RunStateSchemaVersion = 1
 
-// TaskReference identifies the current Prism task without embedding persistence
+// TaskReference identifies the current Prizm task without embedding persistence
 // implementation details in the workflow contract.
 type TaskReference struct {
 	ID          string `json:"id"`

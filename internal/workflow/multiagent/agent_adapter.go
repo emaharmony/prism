@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/validation"
+	"github.com/emaharmony/prizm/internal/validation"
 )
 
-// AgentRoleRunner adapts Prism's bounded agent execution seam to RoleRunner.
+// AgentRoleRunner adapts Prizm's bounded agent execution seam to RoleRunner.
 type AgentRoleRunner struct {
 	profiles   AgentProfileResolver
 	executor   AgentExecutor
@@ -32,7 +32,7 @@ type AgentRoleRunnerOptions struct {
 	Clock      func() time.Time
 }
 
-// NewAgentRoleRunner creates the real Prism agent adapter.
+// NewAgentRoleRunner creates the real Prizm agent adapter.
 func NewAgentRoleRunner(options AgentRoleRunnerOptions) (*AgentRoleRunner, error) {
 	if options.Profiles == nil {
 		return nil, errors.New("multiagent: agent profile resolver is required")
@@ -57,7 +57,7 @@ func NewAgentRoleRunner(options AgentRoleRunnerOptions) (*AgentRoleRunner, error
 	}, nil
 }
 
-// RunRole resolves the configured Prism agent, executes bounded local work,
+// RunRole resolves the configured Prizm agent, executes bounded local work,
 // strictly decodes its role output, applies governance results, and returns a
 // typed supervisor result.
 func (r *AgentRoleRunner) RunRole(

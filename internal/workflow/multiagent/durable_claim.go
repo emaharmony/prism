@@ -8,10 +8,10 @@ import (
 	"strings"
 	"sync"
 
-	prismrun "github.com/emaharmony/prism/internal/run"
+	prizmrun "github.com/emaharmony/prizm/internal/run"
 )
 
-// FileRunClaimer reuses Prism's process-safe run lock for Phase 1 ownership.
+// FileRunClaimer reuses Prizm's process-safe run lock for Phase 1 ownership.
 // OS lock release provides safe takeover after a process crash; Phase 1 does
 // not require distributed leases.
 type FileRunClaimer struct {
@@ -31,9 +31,9 @@ func (c FileRunClaimer) Acquire(
 		strings.ContainsAny(runID, `/\`) {
 		return nil, fmt.Errorf("multiagent: unsafe run id %q", runID)
 	}
-	lock := prismrun.NewRunLock(filepath.Join(c.Root, runID))
+	lock := prizmrun.NewRunLock(filepath.Join(c.Root, runID))
 	if err := lock.Acquire(ctx); err != nil {
-		if errors.Is(err, prismrun.ErrRunLocked) {
+		if errors.Is(err, prizmrun.ErrRunLocked) {
 			return nil, fmt.Errorf("%w: %s", ErrRunClaimed, runID)
 		}
 		return nil, fmt.Errorf("multiagent: acquire run claim: %w", err)
@@ -42,7 +42,7 @@ func (c FileRunClaimer) Acquire(
 }
 
 type fileExecutionClaim struct {
-	lock *prismrun.RunLock
+	lock *prizmrun.RunLock
 	once sync.Once
 	err  error
 }

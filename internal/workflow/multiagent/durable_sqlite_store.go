@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/emaharmony/prism/internal/event"
-	prismsqlite "github.com/emaharmony/prism/internal/sqlite"
+	"github.com/emaharmony/prizm/internal/event"
+	prizmsqlite "github.com/emaharmony/prizm/internal/sqlite"
 )
 
-// SQLiteDurableRunStore persists multi-agent checkpoints in Prism's existing
-// SQLite infrastructure. The caller should pass the normal Prism database path;
+// SQLiteDurableRunStore persists multi-agent checkpoints in Prizm's existing
+// SQLite infrastructure. The caller should pass the normal Prizm database path;
 // this store creates only package-owned tables.
 type SQLiteDurableRunStore struct {
 	db *sql.DB
@@ -33,7 +33,7 @@ func NewSQLiteDurableRunStore(dbPath string) (*SQLiteDurableRunStore, error) {
 		}
 	}
 	db, err := sql.Open(
-		prismsqlite.DriverName,
+		prizmsqlite.DriverName,
 		dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)",
 	)
 	if err != nil {

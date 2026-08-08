@@ -153,13 +153,13 @@ type ProjectOverviewTool struct {
 
 func (t *ProjectOverviewTool) Name() string { return "project_overview" }
 func (t *ProjectOverviewTool) Description() string {
-	return "Provides an overview of a project: reads README, package manifest, config files, and builds a directory tree. Set deep_dive=true to also read key architecture files (Prisma schema, API modules, Program.cs, configs, etc.) and get recent git history for deeper understanding. Always use deep_dive=true when you need to understand a project's architecture and current direction."
+	return "Provides an overview of a project: reads README, package manifest, config files, and builds a directory tree. Set deep_dive=true to also read key architecture files (Prizma schema, API modules, Program.cs, configs, etc.) and get recent git history for deeper understanding. Always use deep_dive=true when you need to understand a project's architecture and current direction."
 }
 func (t *ProjectOverviewTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
 			"path":      {Type: "string", Description: "Project root path. Use an absolute path for projects outside the workspace, or a path relative to the workspace root (default: '.')", Required: false},
-			"deep_dive": {Type: "boolean", Description: "If true, also read key architecture files from subdirectories (Prisma schema, API modules, config files, etc.) for deeper understanding", Required: false},
+			"deep_dive": {Type: "boolean", Description: "If true, also read key architecture files from subdirectories (Prizma schema, API modules, config files, etc.) for deeper understanding", Required: false},
 		},
 		Output: ParamSpec{Type: "object", Description: "Project overview with key files, directory tree, and optionally architecture files"},
 	}
@@ -172,7 +172,7 @@ var keyFiles = map[string]bool{
 	"pyproject.toml": true, "requirements.txt": true, "Gemfile": true,
 	"pom.xml": true, "build.gradle": true, "CMakeLists.txt": true,
 	"Makefile": true, "Dockerfile": true, "docker-compose.yaml": true, "docker-compose.yml": true,
-	".env.example": true, "prism.yaml": true, "prism.yaml.example": true,
+	".env.example": true, "prizm.yaml": true, "prizm.yaml.example": true,
 	"tsconfig.json": true, "next.config.js": true, "next.config.mjs": true,
 	"vite.config.ts": true, "webpack.config.js": true,
 }
@@ -327,9 +327,9 @@ func buildDirectoryTree(root, workspaceRoot string, maxDepth int) []map[string]a
 // These are files that reveal the tech stack, data model, routing, service structure,
 // and key configuration — not source code implementation details.
 var architectureFilePatterns = []string{
-	// Prisma / ORM
-	"packages/db/prisma/schema.prisma",
-	"prisma/schema.prisma",
+	// Prizma / ORM
+	"packages/db/prizma/schema.prizma",
+	"prizma/schema.prizma",
 	// .NET API
 	"apps/api/Program.cs",
 	"apps/api/BassBook.Api.csproj",
@@ -385,7 +385,7 @@ func findArchitectureFiles(root string) ([]string, error) {
 
 	// Also scan for common architecture markers that might not be in the pattern list
 	architectureMarkers := []string{
-		"schema.prisma", "Program.cs", "appsettings.json",
+		"schema.prizma", "Program.cs", "appsettings.json",
 		"next.config.js", "next.config.mjs", "next.config.ts",
 	}
 

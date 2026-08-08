@@ -2,8 +2,8 @@
 
 Status: Phase 1 supported reference workflow
 
-`multi-agent-software-task` is Prism's first supported end-to-end multi-agent
-workflow. It coordinates configured Prism agents through a fixed, bounded
+`multi-agent-software-task` is Prizm's first supported end-to-end multi-agent
+workflow. It coordinates configured Prizm agents through a fixed, bounded
 software-delivery loop while keeping routing, budgets, persistence, policy,
 approval, validation, and terminal decisions under runtime control.
 
@@ -24,7 +24,7 @@ flowchart LR
 ```
 
 Agents return typed outcomes and structured handoffs. They do not select an
-arbitrary next node. Prism resolves the one declared transition, checkpoints
+arbitrary next node. Prizm resolves the one declared transition, checkpoints
 it, and applies the next budget check before entering another role.
 
 The four logical roles are independent of configured agent IDs. The default
@@ -61,11 +61,11 @@ Create a JSON input document:
 Then run:
 
 ```text
-prism workflow run multi-agent-software-task --input task.json --config prism.yaml
+prizm workflow run multi-agent-software-task --input task.json --config prizm.yaml
 ```
 
 `objective` and `workspace` are required. Unknown input fields are rejected.
-The workspace must already exist and be a directory. Prism canonicalizes its
+The workspace must already exist and be a directory. Prizm canonicalizes its
 path, derives a stable identity, persists both before execution, and rejects a
 resume if the identity changes.
 
@@ -75,13 +75,13 @@ process is interrupted after that point, use the same ID with `status` or
 
 ## Control plane
 
-All Phase 1 operations extend the existing `prism workflow` command:
+All Phase 1 operations extend the existing `prizm workflow` command:
 
 ```text
-prism workflow status <run-id> [--json] [--run-dir ./runs]
-prism workflow cancel <run-id> [--reason "operator stop"] [--run-dir ./runs]
-prism workflow resume <run-id> [--config prism.yaml] [--run-dir ./runs]
-prism workflow report <run-id> [--json] [--run-dir ./runs]
+prizm workflow status <run-id> [--json] [--run-dir ./runs]
+prizm workflow cancel <run-id> [--reason "operator stop"] [--run-dir ./runs]
+prizm workflow resume <run-id> [--config prizm.yaml] [--run-dir ./runs]
+prizm workflow report <run-id> [--json] [--run-dir ./runs]
 ```
 
 `status` is read-only. `cancel` persists an operator request without waiting
@@ -90,7 +90,7 @@ an idle run becomes terminal immediately. `resume` obtains the exclusive run
 claim and advances only from a safe checkpoint. `report` is available only
 after a run reaches a terminal state.
 
-Existing named-step workflow commands retain their prior behavior. Prism
+Existing named-step workflow commands retain their prior behavior. Prizm
 detects multi-agent runs by their persisted manifest and routes only those
 runs through the Phase 1 control plane.
 
@@ -141,7 +141,7 @@ Planner, tester, and reviewer receive read-oriented tools. Developer may also
 use dry-run and proposal tools. The selected workspace is the only read and
 write root supplied to the reference flow.
 
-Developer proposals still pass through Prism's existing tool policy and
+Developer proposals still pass through Prizm's existing tool policy and
 durable approval store. An agent's output cannot approve its own mutation.
 The tester invokes only named, allowlisted validation profiles; Phase 1 uses
 `go_test_all`. Validation commands and policy decisions remain owned by their
@@ -210,6 +210,6 @@ operator to inspect the workspace before choosing a recovery action.
 
 The workflow requires configured agent profiles whose declared capabilities
 cover their assigned roles. Provider availability, credentials, and model
-quality remain deployment concerns. A terminal report records what Prism can
+quality remain deployment concerns. A terminal report records what Prizm can
 prove from durable state and canonical events; it is not a substitute for
 human review where policy requires human authority.

@@ -62,7 +62,7 @@ ollama run qwen3.5:9b < .codex/context/context-scout-prompt.txt > .codex/context
 
 ## Package Boundary Rules
 
-Before generating or changing Prism code, read and follow
+Before generating or changing Prizm code, read and follow
 [Package Boundaries](docs/architecture/PACKAGE_BOUNDARIES.md).
 
 - Packages MUST represent bounded domains, not helper categories.

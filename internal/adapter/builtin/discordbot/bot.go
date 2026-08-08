@@ -1,11 +1,11 @@
-// Package discordbot provides the Discord bot adapter for Prism V20.
+// Package discordbot provides the Discord bot adapter for Prizm V20.
 //
 // Unlike the existing webhook-based discord adapter (which only posts
 // run summaries), this adapter implements a full Discord bot gateway:
 //   - Inbound: Receives Discord messages → publishes `<agent-id>.channel.received` events
 //   - Outbound: Subscribes to `<agent-id>.channel.sent` events → sends Discord messages
 //
-// This is the adapter that makes Prism live on Discord — you can talk to
+// This is the adapter that makes Prizm live on Discord — you can talk to
 // it and it talks back.
 //
 // Uses discordgo (bwmarrin/discordgo) for the Discord gateway connection.
@@ -30,7 +30,7 @@ const MessageLimit = 2000
 // chunks right at Discord's hard limit.
 const MessageChunkLimit = 1900
 
-// BotAdapter connects Prism to Discord as a bot for bidirectional messaging.
+// BotAdapter connects Prizm to Discord as a bot for bidirectional messaging.
 type BotAdapter struct {
 	token    string
 	session  *discordgo.Session
@@ -47,7 +47,7 @@ type BotAdapter struct {
 // Implementations typically route the message to the agent router.
 type MessageHandler func(msg *InboundMessage)
 
-// InboundMessage represents a Discord message coming into Prism.
+// InboundMessage represents a Discord message coming into Prizm.
 type InboundMessage struct {
 	ChannelID string // Discord channel ID
 	UserID    string // Discord user ID
@@ -59,7 +59,7 @@ type InboundMessage struct {
 	MessageID string // Discord message ID (for replies)
 }
 
-// OutboundMessage represents a message going from Prism to Discord.
+// OutboundMessage represents a message going from Prizm to Discord.
 type OutboundMessage struct {
 	ChannelID string          // Discord channel to send to
 	Content   string          // Message content

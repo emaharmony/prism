@@ -1,12 +1,12 @@
-// Package event provides Prism's event store and event types.
+// Package event provides Prizm's event store and event types.
 //
 // V14d adds the EventStore interface with a SQLite implementation. Events are
-// the source of truth in Prism — they need ACID guarantees that flat files
+// the source of truth in Prizm — they need ACID guarantees that flat files
 // can't provide. SQLite WAL mode gives us concurrent reads with serialized
-// writes, which is the correct tradeoff for Prism's workload.
+// writes, which is the correct tradeoff for Prizm's workload.
 //
 // JSONL remains the interchange format. SQLite is the primary store, but
-// `prism db export <run_id>` dumps SQLite to JSONL for human readability
+// `prizm db export <run_id>` dumps SQLite to JSONL for human readability
 // and debugging.
 package event
 

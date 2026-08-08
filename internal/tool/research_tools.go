@@ -15,7 +15,7 @@ import (
 // research_tools.go provides the read-only RESEARCH-phase tools: web_search and
 // memory_search. Both are PolicyApproved (no filesystem mutation). They let the
 // gated loop's PROBE/RESEARCH phases reach outside the codebase — the web and
-// Prism's Remembrance memory — instead of only grepping local files.
+// Prizm's Remembrance memory — instead of only grepping local files.
 
 // MemorySearcher is the minimal surface the memory_search tool needs. The
 // *remembrance.Client satisfies it; using an interface here avoids a
@@ -24,14 +24,14 @@ type MemorySearcher interface {
 	Search(query, mode, category, tier string, limit int) (map[string]any, error)
 }
 
-// MemorySearchTool queries Prism's Remembrance memory service mid-loop.
+// MemorySearchTool queries Prizm's Remembrance memory service mid-loop.
 type MemorySearchTool struct {
 	Searcher MemorySearcher
 }
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
 func (t *MemorySearchTool) Description() string {
-	return "Searches Prism's long-term memory (Remembrance) for relevant past context, decisions, and facts."
+	return "Searches Prizm's long-term memory (Remembrance) for relevant past context, decisions, and facts."
 }
 func (t *MemorySearchTool) Schema() ToolSchema {
 	return ToolSchema{
@@ -66,11 +66,11 @@ func (t *MemorySearchTool) Execute(_ context.Context, input map[string]any) (Too
 // query string and returns JSON works (Brave, Serper, SearXNG, etc.).
 type WebSearchConfig struct {
 	// Endpoint is the search API base URL. The query is added as the QueryParam.
-	// Read from PRISM_WEBSEARCH_URL when empty.
+	// Read from PRIZM_WEBSEARCH_URL when empty.
 	Endpoint string
 	// QueryParam is the query string parameter name (default "q").
 	QueryParam string
-	// APIKey, when set, is sent as a Bearer token. Read from PRISM_WEBSEARCH_KEY.
+	// APIKey, when set, is sent as a Bearer token. Read from PRIZM_WEBSEARCH_KEY.
 	APIKey string
 	// AuthHeader overrides the header name for the key (default "Authorization").
 	AuthHeader string
@@ -102,14 +102,14 @@ func (t *WebSearchTool) Execute(ctx context.Context, input map[string]any) (Tool
 
 	endpoint := t.Config.Endpoint
 	if endpoint == "" {
-		endpoint = os.Getenv("PRISM_WEBSEARCH_URL")
+		endpoint = os.Getenv("PRIZM_WEBSEARCH_URL")
 	}
 	if endpoint == "" {
-		return ToolResult{Success: false, Error: "web search is not configured — set PRISM_WEBSEARCH_URL (and PRISM_WEBSEARCH_KEY if required)"}, nil
+		return ToolResult{Success: false, Error: "web search is not configured — set PRIZM_WEBSEARCH_URL (and PRIZM_WEBSEARCH_KEY if required)"}, nil
 	}
 	apiKey := t.Config.APIKey
 	if apiKey == "" {
-		apiKey = os.Getenv("PRISM_WEBSEARCH_KEY")
+		apiKey = os.Getenv("PRIZM_WEBSEARCH_KEY")
 	}
 	queryParam := t.Config.QueryParam
 	if queryParam == "" {
@@ -122,7 +122,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, input map[string]any) (Tool
 
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		return ToolResult{Success: false, Error: fmt.Sprintf("invalid PRISM_WEBSEARCH_URL: %v", err)}, nil
+		return ToolResult{Success: false, Error: fmt.Sprintf("invalid PRIZM_WEBSEARCH_URL: %v", err)}, nil
 	}
 	q := u.Query()
 	q.Set(queryParam, query)

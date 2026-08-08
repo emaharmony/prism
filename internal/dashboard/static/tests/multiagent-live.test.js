@@ -23,25 +23,25 @@ function test(name, fn) {
 
 test('ALL_EVENT_TYPES lists exactly the 19 canonical multi-agent event types from internal/event/multiagent.go', () => {
   const want = [
-    'prism.workflow.multi_agent.run.created',
-    'prism.workflow.multi_agent.run.started',
-    'prism.workflow.multi_agent.role.entered',
-    'prism.workflow.multi_agent.role.iteration.started',
-    'prism.workflow.multi_agent.role.iteration.completed',
-    'prism.workflow.multi_agent.role.completed',
-    'prism.workflow.multi_agent.handoff.created',
-    'prism.workflow.multi_agent.transition.selected',
-    'prism.workflow.multi_agent.loop.traversal.recorded',
-    'prism.workflow.multi_agent.budget.warning',
-    'prism.workflow.multi_agent.budget.exhausted',
-    'prism.workflow.multi_agent.run.paused',
-    'prism.workflow.multi_agent.run.resumed',
-    'prism.workflow.multi_agent.run.completed',
-    'prism.workflow.multi_agent.run.failed',
-    'prism.workflow.multi_agent.run.cancelled',
-    'prism.workflow.multi_agent.recovery.started',
-    'prism.workflow.multi_agent.recovery.completed',
-    'prism.workflow.multi_agent.recovery.failed'
+    'prizm.workflow.multi_agent.run.created',
+    'prizm.workflow.multi_agent.run.started',
+    'prizm.workflow.multi_agent.role.entered',
+    'prizm.workflow.multi_agent.role.iteration.started',
+    'prizm.workflow.multi_agent.role.iteration.completed',
+    'prizm.workflow.multi_agent.role.completed',
+    'prizm.workflow.multi_agent.handoff.created',
+    'prizm.workflow.multi_agent.transition.selected',
+    'prizm.workflow.multi_agent.loop.traversal.recorded',
+    'prizm.workflow.multi_agent.budget.warning',
+    'prizm.workflow.multi_agent.budget.exhausted',
+    'prizm.workflow.multi_agent.run.paused',
+    'prizm.workflow.multi_agent.run.resumed',
+    'prizm.workflow.multi_agent.run.completed',
+    'prizm.workflow.multi_agent.run.failed',
+    'prizm.workflow.multi_agent.run.cancelled',
+    'prizm.workflow.multi_agent.recovery.started',
+    'prizm.workflow.multi_agent.recovery.completed',
+    'prizm.workflow.multi_agent.recovery.failed'
   ];
   assert.strictEqual(live.ALL_EVENT_TYPES.length, 19);
   assert.deepStrictEqual(live.ALL_EVENT_TYPES.slice().sort(), want.slice().sort());

@@ -5,7 +5,7 @@
  *
  * Like multiagent-graph.js and multiagent-live.js, this file has no
  * import/export syntax so it works unmodified as a plain browser <script>
- * (window.PrismMultiAgentInspector) AND as a CommonJS module for the plain-
+ * (window.PrizmMultiAgentInspector) AND as a CommonJS module for the plain-
  * node tests under internal/dashboard/static/tests/ (no npm, no build step).
  * It depends on multiagent-graph.js (humanize, COUNTER_LABELS) and
  * multiagent-live.js (the stable node/edge id builders + the canonical event
@@ -23,7 +23,7 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = factory(require('./multiagent-graph.js'), require('./multiagent-live.js'));
   } else {
-    root.PrismMultiAgentInspector = factory(root.PrismMultiAgentGraph, root.PrismMultiAgentLive);
+    root.PrizmMultiAgentInspector = factory(root.PrizmMultiAgentGraph, root.PrizmMultiAgentLive);
   }
 })(typeof window !== 'undefined' ? window : globalThis, function (gm, live) {
   'use strict';
@@ -32,7 +32,7 @@
 
   // ---- Event type -> human label -----------------------------------------
   // Reuses gm.humanize on the event type's tail (everything after
-  // "multi_agent."), e.g. 'prism.workflow.multi_agent.role.iteration.started'
+  // "multi_agent."), e.g. 'prizm.workflow.multi_agent.role.iteration.started'
   // -> 'Role iteration started'. Falls back to the raw type string if it
   // doesn't match the expected dotted-constant shape, so an unrecognized
   // future event type still renders something instead of crashing.

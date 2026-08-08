@@ -11,7 +11,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/emaharmony/prism/internal/event"
+	"github.com/emaharmony/prizm/internal/event"
 )
 
 // TestReferenceWorkflowEndToEndDashboardScenario is the Milestone 9c

@@ -4,7 +4,7 @@
  *
  * This file is intentionally framework-free and has no import/export syntax
  * so it works unmodified as a plain browser <script> (its exports become
- * `window.PrismMultiAgentGraph`) AND as a CommonJS module for the plain-node
+ * `window.PrizmMultiAgentGraph`) AND as a CommonJS module for the plain-node
  * tests under internal/dashboard/static/tests/ (no npm, no build step).
  *
  * It knows the *fixed* Phase 1 reference workflow topology (planner ->
@@ -367,6 +367,6 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   } else {
-    root.PrismMultiAgentGraph = api;
+    root.PrizmMultiAgentGraph = api;
   }
 })(typeof window !== 'undefined' ? window : globalThis);

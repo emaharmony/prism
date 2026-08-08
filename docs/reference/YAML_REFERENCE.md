@@ -1,12 +1,12 @@
-﻿# Prism YAML Reference
+﻿# Prizm YAML Reference
 
-Field-by-field reference for the YAML files Prism reads. Use it as a manual: find
+Field-by-field reference for the YAML files Prizm reads. Use it as a manual: find
 your file type in the index, copy the example, and edit fields with confidence.
 
 ## Overview
 
-Prism uses YAML for workflows, policies, adapters, and the main runtime config
-(`prism.yaml`, which contains agent, provider, channel, scheduler, and
+Prizm uses YAML for workflows, policies, adapters, and the main runtime config
+(`prizm.yaml`, which contains agent, provider, channel, scheduler, and
 remembrance sections). Each section below shows a real example and documents its
 fields. Status labels:
 
@@ -21,17 +21,17 @@ fields. Status labels:
 | Workflow YAML | `examples/workflows/demo-echo.yaml` | Ordered workflow steps | Preview/Stable |
 | Policy YAML | `policies/default.yaml` | Allow/deny/approval rules | Preview |
 | Adapter step (workflow) | `examples/workflows/demo-adapter.yaml` | Dispatch to an adapter | Preview |
-| Agent config | `prism.yaml` (`agents:`) | Agent roles/providers | Experimental |
-| Provider config | `prism.yaml` (`agents[].provider/model`) | Model providers | Experimental |
-| Scheduler config | `prism.yaml` (`prism.scheduler`) | Scheduled runs | Experimental |
-| MCP config | `prism.yaml` (`mcp_servers`) | MCP tool servers | Experimental |
-| Remembrance config | `prism.yaml` (`remembrance`) | Memory service client | Experimental |
+| Agent config | `prizm.yaml` (`agents:`) | Agent roles/providers | Experimental |
+| Provider config | `prizm.yaml` (`agents[].provider/model`) | Model providers | Experimental |
+| Scheduler config | `prizm.yaml` (`prizm.scheduler`) | Scheduled runs | Experimental |
+| MCP config | `prizm.yaml` (`mcp_servers`) | MCP tool servers | Experimental |
+| Remembrance config | `prizm.yaml` (`remembrance`) | Memory service client | Experimental |
 
 ## Workflow YAML
 
 ### Purpose
 
-Defines a named workflow that runs Prism steps in order. Workflows are loaded
+Defines a named workflow that runs Prizm steps in order. Workflows are loaded
 from `examples/workflows/`.
 
 ### Example
@@ -69,7 +69,7 @@ Natural Gates workflow configs (`version: 2`, such as `examples/workflows/gated-
 | Positive integer | Explicit run ceiling in tokens. |
 | Less than `-1` | Invalid; config loading rejects it. |
 
-Project entries in `prism.yaml` may set `projects[].token_budget` with the same `-1` / `0` / positive semantics. A project token budget overrides the workflow's `global.max_total_tokens` for that project.
+Project entries in `prizm.yaml` may set `projects[].token_budget` with the same `-1` / `0` / positive semantics. A project token budget overrides the workflow's `global.max_total_tokens` for that project.
 
 ### Step Fields
 
@@ -155,7 +155,7 @@ policies:
 ## Adapter YAML
 
 Adapter dispatch is expressed as a workflow step (`type: dispatch.run`) as shown
-above. Inspect available adapters with `prism adapter list|show|health`. The
+above. Inspect available adapters with `prizm adapter list|show|health`. The
 `echo` adapter is safe and used by the adapter demo. Domain adapters (e.g.
 trading) are gated by policy — see the `deny_live_trading_adapter` rule in
 `policies/default.yaml`.
@@ -164,7 +164,7 @@ trading) are gated by policy — see the `deny_live_trading_adapter` rule in
 
 ### Purpose
 
-Agents are defined under `agents:` in `prism.yaml`. Each agent's `id` becomes its
+Agents are defined under `agents:` in `prizm.yaml`. Each agent's `id` becomes its
 event namespace prefix.
 
 ### Example
@@ -203,7 +203,7 @@ agents:
 ## Provider YAML
 
 Providers are not a separate file; they are selected per agent via `provider:`
-and `model:` (see Agent YAML) or via `--provider`/`--model` on `prism run`.
+and `model:` (see Agent YAML) or via `--provider`/`--model` on `prizm run`.
 API-backed providers require credentials in environment variables (e.g.
 `OPENAI_API_KEY`).
 
@@ -212,13 +212,13 @@ API-backed providers require credentials in environment variables (e.g.
 ### Example
 
 ```yaml
-prism:
+prizm:
   scheduler:
     enabled: false
     jobs:
       - name: "status-report"
         schedule: "0 */2 * * *"
-        event: "prism.task.scheduled"
+        event: "prizm.task.scheduled"
         payload:
           action: "status_report"
         enabled: true
@@ -242,7 +242,7 @@ mcp_auto_approve: false
 ```
 
 MCP tools register as `mcp_<name>_<tool>` and run through the same policy engine
-as built-in tools. Probe before enabling: `prism mcp probe`.
+as built-in tools. Probe before enabling: `prizm mcp probe`.
 
 ## Remembrance YAML
 
@@ -262,7 +262,7 @@ remembrance:
 - Multi-agent: [`examples/workflows/demo-agents.yaml`](../../examples/workflows/demo-agents.yaml)
 - Gated loop: [`examples/workflows/gated-loop.yaml`](../../examples/workflows/gated-loop.yaml)
 - Policy: [`policies/default.yaml`](../../policies/default.yaml)
-- Full runtime config: [`prism.yaml.example`](../../prism.yaml.example)
+- Full runtime config: [`prizm.yaml.example`](../../prizm.yaml.example)
 
 ## Validation Rules
 
@@ -273,10 +273,10 @@ remembrance:
 - `decision` must be one of `allowed`, `denied`, `requires_approval`.
 - Secrets should not be stored in YAML — use environment variables for API keys.
 
-Validate your `prism.yaml` with:
+Validate your `prizm.yaml` with:
 
 ```bash
-go run ./cmd/prism-cli config --config prism.yaml
+go run ./cmd/prizm-cli config --config prizm.yaml
 ```
 
 ## Common Mistakes
@@ -315,5 +315,5 @@ Good — reference an environment variable instead:
 
 ```yaml
 # set OPENAI_API_KEY in your environment; do not inline the key
-auth_token_env: "PRISM_API_TOKEN"
+auth_token_env: "PRIZM_API_TOKEN"
 ```

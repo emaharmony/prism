@@ -4,7 +4,7 @@
  *
  * Like multiagent-graph.js / multiagent-live.js / multiagent-inspector.js,
  * this file has no import/export syntax so it works unmodified as a plain
- * browser <script> (window.PrismMultiAgentReplay) AND as a CommonJS module
+ * browser <script> (window.PrizmMultiAgentReplay) AND as a CommonJS module
  * for the plain-node tests under internal/dashboard/static/tests/ (no npm,
  * no build step).
  *
@@ -359,6 +359,6 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
   } else {
-    root.PrismMultiAgentReplay = api;
+    root.PrizmMultiAgentReplay = api;
   }
 })(typeof window !== 'undefined' ? window : globalThis);

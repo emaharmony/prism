@@ -1,4 +1,4 @@
-// Package tool provides Prism's built-in tools — the actions an AI agent can request
+// Package tool provides Prizm's built-in tools — the actions an AI agent can request
 // during a run. Each tool is a named function that takes JSON input and returns a result.
 //
 // Built-in tools (V1): echo, list_dir, read_file — read-only, always allowed.
@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/emaharmony/prism/internal/safety"
+	"github.com/emaharmony/prizm/internal/safety"
 )
 
 // EchoTool returns whatever text is passed in. Always approved by policy.
@@ -309,7 +309,7 @@ func (t *WriteFileDryRun) Execute(ctx context.Context, input map[string]any) (To
 // runs/<run_id>/approvals/<approval_id>.json with the proposed content.
 // A human operator must review and approve before the file is actually written.
 //
-// This is the core of V4's safety model: the model proposes, Prism validates,
+// This is the core of V4's safety model: the model proposes, Prizm validates,
 // the human decides.
 //
 // Policy: requires_approval (creates a pending approval, blocks until human decides).
@@ -400,7 +400,7 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 
 	// Emit mutation.proposed and approval.requested events
 	if t.Emit != nil {
-		t.Emit("prism.mutation.proposed", "prism-tool-executor", map[string]any{
+		t.Emit("prizm.mutation.proposed", "prizm-tool-executor", map[string]any{
 			"approval_id":     approvalID,
 			"mutation_type":   "write_file",
 			"target_path":     pathVal,
@@ -408,7 +408,7 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 			"policy_decision": "requires_approval",
 			"policy_reason":   "file writes require explicit approval",
 		})
-		t.Emit("prism.approval.requested", "prism-tool-executor", map[string]any{
+		t.Emit("prizm.approval.requested", "prizm-tool-executor", map[string]any{
 			"approval_id":     approvalID,
 			"mutation_type":   "write_file",
 			"target_path":     pathVal,
@@ -426,7 +426,7 @@ func (t *WriteFileProposal) Execute(ctx context.Context, input map[string]any) (
 			"content_length": len(content),
 			"preview":        preview,
 			"status":         "pending_approval",
-			"instruction":    "Use 'prism approval approve <approval_id> --by <name>' or 'prism approval deny <approval_id> --by <name>' to proceed.",
+			"instruction":    "Use 'prizm approval approve <approval_id> --by <name>' or 'prizm approval deny <approval_id> --by <name>' to proceed.",
 		},
 	}, nil
 }
@@ -483,7 +483,7 @@ func (t *WriteFileDirect) Execute(ctx context.Context, input map[string]any) (To
 		return ToolResult{Success: false, Error: fmt.Sprintf("failed to write file: %v", err)}, nil
 	}
 	if t.Emit != nil {
-		t.Emit("prism.mutation.applied", "prism-tool-executor", map[string]any{
+		t.Emit("prizm.mutation.applied", "prizm-tool-executor", map[string]any{
 			"mutation_type": "write_file",
 			"target_path":   absPath,
 			"content_size":  len(content),
@@ -536,14 +536,14 @@ func (t *CreateDirectoryProposal) Execute(ctx context.Context, input map[string]
 	approvalID := fmt.Sprintf("appr_%d", time.Now().UnixNano())
 	preview := fmt.Sprintf("Create directory: %s", absPath)
 	if t.Emit != nil {
-		t.Emit("prism.mutation.proposed", "prism-tool-executor", map[string]any{
+		t.Emit("prizm.mutation.proposed", "prizm-tool-executor", map[string]any{
 			"approval_id":     approvalID,
 			"mutation_type":   "create_directory",
 			"target_path":     pathVal,
 			"policy_decision": "requires_approval",
 			"policy_reason":   "directory creation requires explicit approval",
 		})
-		t.Emit("prism.approval.requested", "prism-tool-executor", map[string]any{
+		t.Emit("prizm.approval.requested", "prizm-tool-executor", map[string]any{
 			"approval_id":     approvalID,
 			"mutation_type":   "create_directory",
 			"target_path":     pathVal,
@@ -561,7 +561,7 @@ func (t *CreateDirectoryProposal) Execute(ctx context.Context, input map[string]
 			"resolved_path": absPath,
 			"preview":       preview,
 			"status":        "pending_approval",
-			"instruction":   "Use 'prism approval approve <approval_id> --by <name>' or 'prism approval deny <approval_id> --by <name>' to proceed.",
+			"instruction":   "Use 'prizm approval approve <approval_id> --by <name>' or 'prizm approval deny <approval_id> --by <name>' to proceed.",
 		},
 	}, nil
 }
@@ -623,7 +623,7 @@ func (t *CreateDirectoryDirect) Execute(ctx context.Context, input map[string]an
 		return ToolResult{Success: false, Error: fmt.Sprintf("failed to create directory: %v", err)}, nil
 	}
 	if t.Emit != nil {
-		t.Emit("prism.mutation.applied", "prism-tool-executor", map[string]any{
+		t.Emit("prizm.mutation.applied", "prizm-tool-executor", map[string]any{
 			"mutation_type": "create_directory",
 			"target_path":   absPath,
 		})
@@ -678,7 +678,7 @@ var skipDirs = map[string]bool{
 	".git": true, ".svn": true, ".hg": true,
 	"node_modules": true, "vendor": true, "__pycache__": true,
 	".next": true, ".cache": true, "dist": true, "build": true, "out": true,
-	"bin": true, ".prism": true, "runs": true,
+	"bin": true, ".prizm": true, "runs": true,
 }
 
 // skipExtensions are file extensions that indicate binary/non-code files.

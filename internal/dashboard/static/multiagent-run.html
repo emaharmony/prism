@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Prism multi-agent run execution graph">
-<title>Multi-Agent Run · Prism</title>
+<meta name="description" content="Prizm multi-agent run execution graph">
+<title>Multi-Agent Run · Prizm</title>
 <link rel="stylesheet" href="/app.css">
 <style>
   .ma-run-header { display:flex; flex-wrap:wrap; align-items:center; gap: var(--space-3); margin-bottom: var(--space-2); }
@@ -392,11 +392,11 @@
 <script src="/app.js"></script>
 <script>
 (() => {
-  const ui = window.PrismUI;
-  const gm = window.PrismMultiAgentGraph;
-  const insp = window.PrismMultiAgentInspector;
-  const replay = window.PrismMultiAgentReplay;
-  const op = window.PrismMultiAgentOperator;
+  const ui = window.PrizmUI;
+  const gm = window.PrizmMultiAgentGraph;
+  const insp = window.PrizmMultiAgentInspector;
+  const replay = window.PrizmMultiAgentReplay;
+  const op = window.PrizmMultiAgentOperator;
   const $ = selector => document.querySelector(selector);
 
   const NODE_GLYPHS = {
@@ -1135,7 +1135,7 @@
   // dashboard-wide auth is enabled this would need a shared fix across both
   // pages, not a one-off here.
 
-  const live = window.PrismMultiAgentLive;
+  const live = window.PrizmMultiAgentLive;
   let es = null;
   let streamState = null;
   let reconcileTimer = null;
