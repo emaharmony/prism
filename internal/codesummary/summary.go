@@ -23,12 +23,40 @@ const (
 
 // RequestMatches reports whether a message is asking for a broad codebase summary.
 func RequestMatches(message string) bool {
-	text := strings.ToLower(message)
-	action := containsAny(text, "summarize", "summary", "overview", "architecture", "explain", "analyze", "analyse", "read")
-	target := containsAny(text, "codebase", "repo", "repository", "source", "project")
-	prizmHint := strings.Contains(text, "prizm")
-	workflowEditorOnly := strings.Contains(text, "workflow editor") && !containsAny(text, "codebase", "repo", "repository")
-	return action && target && !workflowEditorOnly && (prizmHint || strings.Contains(text, "code"))
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+
+	// Universal veto, checked first so it also applies to strong-phrase matches.
+	if strings.Contains(lower, "workflow editor") && !containsAny(lower, "codebase", "repo", "repository") {
+		return false
+	}
+
+	// Strong phrases: unambiguous asks for a codebase-wide analysis/summary.
+	// Mirrors internal/autopatch/classify.go's RequestMatches pattern.
+	strong := []string{
+		"run an analysis", "run a full analysis", "run a codebase analysis",
+		"do an analysis", "give me an analysis", "give me a full analysis",
+		"give me a summary", "analyse this", "analyze this", "analyse it",
+		"analyze it", "can you analyze it", "can you analyse it",
+		"can you analyze this", "can you analyse this", "summarize this",
+		"summarise this", "codebase summary", "codebase overview",
+		"repo summary", "repo overview", "repository summary",
+		"repository overview", "architecture overview", "architecture summary",
+	}
+	for _, phrase := range strong {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	// Fallback: action word + target noun + prizm/code hint (existing
+	// behavior, extended with "analysis" and "summarise").
+	action := containsAny(lower, "summarize", "summarise", "summary", "overview", "architecture", "explain", "analyze", "analyse", "analysis", "read")
+	target := containsAny(lower, "codebase", "repo", "repository", "source", "project")
+	prizmHint := strings.Contains(lower, "prizm")
+	return action && target && (prizmHint || strings.Contains(lower, "code"))
 }
 
 // Config controls one summary run.
