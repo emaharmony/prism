@@ -140,7 +140,7 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			chatTools := cc.buildChatTools()
 			log.Printf("[AGENT-TOOL-CHAT] entering native tool loop with %d tools", len(chatTools))
 
-			finalResponse, toolSummaries, toolErr := cc.runToolLoopChat(
+			finalResponse, toolSummaries, modelInfo, toolErr := cc.runToolLoopChat(
 				runCtx,
 				messages,
 				chatTools,
@@ -152,6 +152,10 @@ func (cc *conversationContext) handleAgentMessage(msg *discordbot.InboundMessage
 			if toolErr != nil {
 				log.Printf("[AGENT-TOOL-CHAT] tool loop failed: %v", toolErr)
 				finalResponse = "I had trouble with that request — the AI service returned an error. Please try again in a moment."
+			}
+			if modelInfo.UsedFallback && modelInfo.Model != "" {
+				log.Printf("[AGENT-TOOL-CHAT] response answered by fallback target %s/%s (configured model was %s/%s, local_fallback=%v)",
+					modelInfo.Provider, modelInfo.Model, agentCfg.Provider, agentCfg.Model, modelInfo.LocalFallback)
 			}
 			response = finalResponse
 
