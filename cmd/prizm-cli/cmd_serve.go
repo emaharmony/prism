@@ -1449,7 +1449,7 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 
 			log.Printf("[TOOL-CHAT] entering native tool loop with %d tools", len(chatTools))
 
-			finalResponse, toolSummaries, toolErr := cc.runToolLoopChat(
+			finalResponse, toolSummaries, modelInfo, toolErr := cc.runToolLoopChat(
 				runCtx,
 				messages,
 				chatTools,
@@ -1463,6 +1463,18 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				finalRC.LLMResponse = "I had trouble processing that — the AI service returned an error. Please try again in a moment."
 			} else if finalResponse != "" {
 				finalRC.LLMResponse = finalResponse
+			}
+
+			// The failover chain can silently answer with a different model than
+			// the one this agent is configured with (e.g. a quota-exhausted cloud
+			// model dropping to a local last-resort model). Correct the run record
+			// so [RUN] logs reflect what actually generated the response instead of
+			// the nominal config.
+			if modelInfo.UsedFallback && modelInfo.Model != "" {
+				log.Printf("[TOOL-CHAT] response answered by fallback target %s/%s (configured model was %s/%s, local_fallback=%v)",
+					modelInfo.Provider, modelInfo.Model, agentCfg.Provider, agentCfg.Model, modelInfo.LocalFallback)
+				run.Provider = modelInfo.Provider
+				run.Model = modelInfo.Model
 			}
 
 			// Log tool call summaries

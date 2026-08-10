@@ -80,6 +80,14 @@ var Schemas = map[string]Schema{
 	"prizm.memory.context_built":     {Required: []string{}, Optional: []string{"memories_count", "entities_count"}},
 	"prizm.memory.context_failed":    {Required: []string{"error"}, Optional: []string{}},
 
+	// Memory write lifecycle (Phase 1)
+	"prizm.memory.gate_passed":   {Required: []string{"memory_id"}, Optional: []string{"reasoning", "model"}},
+	"prizm.memory.gate_rejected": {Required: []string{}, Optional: []string{"reasoning", "model"}},
+	"prizm.memory.extracted":     {Required: []string{"memory_id"}, Optional: []string{"category", "tier", "model"}},
+	"prizm.memory.persisted":      {Required: []string{"memory_id"}, Optional: []string{"category", "tier", "source"}},
+	"prizm.memory.synced":         {Required: []string{"memory_id"}, Optional: []string{"recall_id"}},
+	"prizm.memory.sync_failed":   {Required: []string{"memory_id"}, Optional: []string{"error"}},
+
 	// Adapter (V9)
 	"prizm.adapter.registered": {Required: []string{"adapter_id"}, Optional: []string{"capabilities"}},
 	"prizm.adapter.health":     {Required: []string{"adapter_id"}, Optional: []string{"status"}},
