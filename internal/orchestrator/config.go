@@ -80,6 +80,9 @@ type Config struct {
 	// Remembrance configures the memory service.
 	Remembrance RemembranceConfig `yaml:"remembrance"`
 
+	// Memory configures the local memory store.
+	Memory MemoryConfig `yaml:"memory"`
+
 	// ChannelRoles maps Discord channel IDs to role names that determine
 	// which state action applies. Role names must match state_actions keys.
 	ChannelRoles []ChannelRole `yaml:"channel_roles"`
@@ -895,6 +898,39 @@ type RemembranceConfig struct {
 	TimeoutSeconds int `yaml:"timeout_seconds"`
 }
 
+// MemoryConfig configures the local memory store (Phase 1: MarkdownStore).
+type MemoryConfig struct {
+	// StoreType is "markdown" (Phase 1) or "sqlite" (Phase 2, future).
+	StoreType string `yaml:"store_type"`
+
+	// StorePath is the path to the memory directory, relative to workspace root.
+	StorePath string `yaml:"store_path"`
+
+	// GateModel is the primary Ollama model for gate decisions.
+	GateModel string `yaml:"gate_model"`
+
+	// ExtractModel is the primary Ollama model for memory extraction.
+	ExtractModel string `yaml:"extract_model"`
+
+	// ModelFallbackChain is the ordered list of models to try for gate/extract.
+	ModelFallbackChain []string `yaml:"model_fallback_chain"`
+
+	// OllamaURL is the Ollama API endpoint.
+	OllamaURL string `yaml:"ollama_url"`
+
+	// AutoCapture controls whether conversation turns are automatically gated.
+	AutoCapture bool `yaml:"auto_capture"`
+
+	// MinImportance is the gate threshold (0.0-1.0).
+	MinImportance float64 `yaml:"min_importance"`
+
+	// MaxMemoriesPerTurn limits extraction from a single turn.
+	MaxMemoriesPerTurn int `yaml:"max_memories_per_turn"`
+
+	// RecallSync controls whether to push memories to Recall after local storage.
+	RecallSync string `yaml:"recall_sync"` // "async" or "off"
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -933,6 +969,18 @@ func DefaultConfig() *Config {
 			Enabled:        false,
 			URL:            "http://localhost:18790",
 			TimeoutSeconds: 60,
+		},
+		Memory: MemoryConfig{
+			StoreType:          "markdown",
+			StorePath:          "memory",
+			GateModel:          "nemotron-3-nano:4b",
+			ExtractModel:       "nemotron-3-nano:4b",
+			ModelFallbackChain: []string{"nemotron-3-nano:4b", "qwen3.5:4b"},
+			OllamaURL:          "http://localhost:11434",
+			AutoCapture:        true,
+			MinImportance:      0.5,
+			MaxMemoriesPerTurn: 3,
+			RecallSync:         "async",
 		},
 		Bridge: BridgeConfig{
 			Enabled: false,
