@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/emaharmony/prizm/internal/memory"
 )
 
 // research_tools.go provides the read-only RESEARCH-phase tools: web_search and
@@ -24,9 +26,16 @@ type MemorySearcher interface {
 	Search(query, mode, category, tier string, limit int) (map[string]any, error)
 }
 
-// MemorySearchTool queries Prizm's Remembrance memory service mid-loop.
+// LocalMemoryStore is the minimal surface for local markdown memory fallback.
+type LocalMemoryStore interface {
+	Search(ctx context.Context, query string, limit int) ([]memory.Memory, error)
+}
+
+// MemorySearchTool queries Prizm's long-term memory mid-loop.
+// It tries Recall (Remembrance) first, then falls back to local MarkdownStore.
 type MemorySearchTool struct {
-	Searcher MemorySearcher
+	Searcher    MemorySearcher   // Recall client (nil = disabled)
+	LocalStore  LocalMemoryStore  // Local fallback (nil = no fallback)
 }
 
 func (t *MemorySearchTool) Name() string { return "memory_search" }
@@ -42,23 +51,38 @@ func (t *MemorySearchTool) Schema() ToolSchema {
 		Output: ParamSpec{Type: "object", Description: "Matching memories with scores and snippets"},
 	}
 }
-func (t *MemorySearchTool) Execute(_ context.Context, input map[string]any) (ToolResult, error) {
+func (t *MemorySearchTool) Execute(ctx context.Context, input map[string]any) (ToolResult, error) {
 	query, ok := input["query"].(string)
 	if !ok || strings.TrimSpace(query) == "" {
 		return ToolResult{Success: false, Error: "required parameter 'query' must be a non-empty string"}, nil
-	}
-	if t.Searcher == nil {
-		return ToolResult{Success: false, Error: "memory search is not configured (Remembrance disabled)"}, nil
 	}
 	limit := 5
 	if l, ok := input["limit"].(float64); ok && l > 0 {
 		limit = int(l)
 	}
-	results, err := t.Searcher.Search(query, "hybrid", "", "", limit)
-	if err != nil {
-		return ToolResult{Success: false, Error: fmt.Sprintf("memory search failed: %v", err)}, nil
+
+	// Try Recall first
+	if t.Searcher != nil {
+		results, err := t.Searcher.Search(query, "hybrid", "", "", limit)
+		if err == nil && results != nil {
+			return ToolResult{Success: true, Output: results}, nil
+		}
 	}
-	return ToolResult{Success: true, Output: results}, nil
+
+	// Fallback to local store
+	if t.LocalStore != nil {
+		memories, err := t.LocalStore.Search(ctx, query, limit)
+		if err == nil && len(memories) > 0 {
+			output := map[string]any{
+				"source":  "local",
+				"results": memories,
+				"count":   len(memories),
+			}
+			return ToolResult{Success: true, Output: output}, nil
+		}
+	}
+
+	return ToolResult{Success: false, Error: "memory search is not configured (both Remembrance and local store are unavailable)"}, nil
 }
 
 // WebSearchConfig configures the web_search tool. It targets a generic JSON

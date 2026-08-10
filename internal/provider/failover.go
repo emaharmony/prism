@@ -85,8 +85,10 @@ func (p *FailoverProvider) Generate(ctx context.Context, req GenerateRequest) (G
 				break
 			}
 			if !retry.IsRetryable(err) {
+				log.Printf("provider/failover: %s/%s failed (%v) — not retryable, trying next target", target.ProviderName, target.Model, err)
 				break
 			}
+			log.Printf("provider/failover: %s/%s attempt %d failed (%v), retrying", target.ProviderName, target.Model, attempt+1, err)
 		}
 	}
 	if lastErr == nil {
@@ -124,8 +126,10 @@ func (p *FailoverProvider) ChatGenerate(ctx context.Context, req ChatGenerateReq
 				compacted = true
 			}
 			if !retry.IsRetryable(err) {
+				log.Printf("provider/failover: %s/%s failed (%v) — not retryable, trying next target", target.ProviderName, target.Model, err)
 				break
 			}
+			log.Printf("provider/failover: %s/%s attempt %d failed (%v), retrying", target.ProviderName, target.Model, attempt+1, err)
 		}
 	}
 	if lastErr == nil {
