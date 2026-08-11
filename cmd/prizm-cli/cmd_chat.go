@@ -303,7 +303,7 @@ func executeChat(args []string) {
 	registry.Register(&tool.GitAddTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}})
 	registry.Register(&tool.GitCommitTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
 	registry.Register(&tool.GitPushTool{ToolPaths: tool.ToolPaths{WorkspaceRoot: workspaceRoot, AllowedPaths: writeRoots}, ProtectedBranch: protectedBranch})
-	tool.RegisterResearchTools(registry, nil, tool.WebSearchConfig{})
+	tool.RegisterResearchTools(registry, nil, nil, tool.WebSearchConfig{})
 	tool.RegisterImageTools(registry, imageToolsConfigFromPrizmConfig(cfg, workspaceRoot, writeRoots))
 	// V32: State management tools
 	chatStateMgr := state.NewManager(workspaceRoot)

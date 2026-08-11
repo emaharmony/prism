@@ -190,8 +190,8 @@ func (t *WebSearchTool) Execute(ctx context.Context, input map[string]any) (Tool
 
 // RegisterResearchTools adds web_search and memory_search to the registry.
 // Pass a nil searcher to register memory_search in a disabled state.
-func RegisterResearchTools(registry *Registry, searcher MemorySearcher, webCfg WebSearchConfig) *Registry {
-	registry.Register(&MemorySearchTool{Searcher: searcher})
+func RegisterResearchTools(registry *Registry, searcher MemorySearcher, localStore LocalMemoryStore, webCfg WebSearchConfig) *Registry {
+	registry.Register(&MemorySearchTool{Searcher: searcher, LocalStore: localStore})
 	registry.Register(&WebSearchTool{Config: webCfg})
 	return registry
 }

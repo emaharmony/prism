@@ -158,6 +158,9 @@ type PrizmConfig struct {
 	// LogLevel sets verbosity: debug, info, warn, error.
 	LogLevel string `yaml:"log_level"`
 
+	// Memory holds local memory store configuration (MarkdownStore).
+	Memory MemoryConfig `yaml:"memory"`
+
 	// AllowedPaths is a list of additional directory roots the agent can access
 	// beyond the workspace root. Paths are absolute or relative to CWD.
 	// The workspace root is always implicitly allowed.

@@ -46,6 +46,7 @@ import (
 	"github.com/emaharmony/prizm/internal/claudecli"
 	"github.com/emaharmony/prizm/internal/claudeworker"
 	"github.com/emaharmony/prizm/internal/codesummary"
+	"github.com/emaharmony/prizm/internal/memory"
 	"github.com/emaharmony/prizm/internal/codexworker"
 	"github.com/emaharmony/prizm/internal/commitments"
 	"github.com/emaharmony/prizm/internal/tts"
@@ -492,6 +493,25 @@ func executeServe(args []string) {
 				}
 			}
 
+			// Local memory store (MarkdownStore fallback)
+			var memoryStore *memory.MarkdownStore
+			memCfg := cfg.Memory
+			if memCfg.StorePath == "" {
+				memCfg = cfg.Prizm.Memory // fallback to prizm.memory
+			}
+			if memCfg.StorePath != "" {
+				memPath := memCfg.StorePath
+				if !filepath.IsAbs(memPath) {
+					ws := cfg.Prizm.Workspace
+					if ws == "" {
+						ws = "."
+					}
+					memPath = filepath.Join(ws, memPath)
+				}
+				memoryStore = memory.NewMarkdownStore(memPath)
+				fmt.Printf("  Memory: local markdown store at %s\n", memPath)
+			}
+
 			// V22: Register agent subscriptions against the shared task store.
 			if delegEngine != nil {
 				// Register agent subscriptions
@@ -563,7 +583,12 @@ func executeServe(args []string) {
 			if remClient != nil {
 				memSearcher = remClient
 			}
-			tool.RegisterResearchTools(toolReg, memSearcher, tool.WebSearchConfig{})
+			// Wire local MarkdownStore as fallback for memory_search
+			var localStore tool.LocalMemoryStore
+			if memoryStore != nil {
+				localStore = memoryStore
+			}
+			tool.RegisterResearchTools(toolReg, memSearcher, localStore, tool.WebSearchConfig{})
 
 			// Researcher reference-image tools: fetch/generate/analyze/collect.
 			// Images save under <workspace>/references by default and may target

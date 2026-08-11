@@ -65,8 +65,10 @@ import (
 	"github.com/emaharmony/prizm/internal/delegation"
 	"github.com/emaharmony/prizm/internal/editor"
 	"github.com/emaharmony/prizm/internal/invocation"
+	"github.com/emaharmony/prizm/internal/memory"
 	"github.com/emaharmony/prizm/internal/orchestrator"
 	"github.com/emaharmony/prizm/internal/provider"
+	"github.com/emaharmony/prizm/internal/remembrance"
 	"github.com/emaharmony/prizm/internal/session"
 	"github.com/emaharmony/prizm/internal/sessionreset"
 	"github.com/emaharmony/prizm/internal/task"
@@ -108,6 +110,12 @@ type Server struct {
 	// workflowConfigPath is the gated-loop workflow definition file the
 	// dashboard workflow editor reads and writes. Empty → read-only default.
 	workflowConfigPath string
+
+	// memStore is the local MarkdownStore for the memories API.
+	memStore *memory.MarkdownStore
+
+	// remClient is the Remembrance client for the memories API.
+	remClient *remembrance.Client
 	// configPath is the prizm.yaml file the config/scheduler editors read and
 	// surgically write. Empty → config editing disabled (endpoints 400).
 	configPath string
