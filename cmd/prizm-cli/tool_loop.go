@@ -18,13 +18,19 @@ const maxToolIterations = 10
 
 // toolUsageGuidance is shared between the chat and text-based tool loops.
 // This prevents duplication — both paths must present the same guidance to the model.
-const toolUsageGuidance = "You have tools available for reading files, searching code, and inspecting projects. " +
-	"Use them ONLY when the user's CURRENT request explicitly needs information from files, code, git, or the filesystem. " +
+const toolUsageGuidance = "You have tools available for reading files, searching code, inspecting projects, and managing plans. " +
+	"Use them ONLY when the user's CURRENT request explicitly needs information from files, code, git, or the filesystem, or when executing a planned task. " +
 	"Do NOT use tools for simple conversational responses (greetings, opinions, chat, explaining concepts). " +
 	"Do NOT call tools just because a topic was discussed earlier — only call tools if THIS specific message asks you to read/search/inspect something. " +
 	"If you can answer from your own knowledge, respond directly without tools. " +
 	"After receiving tool results, give your final answer rather than calling more tools. " +
-					"If a tool returns an error, explain the error instead of retrying."
+	"If a tool returns an error, explain the error instead of retrying.\n\n" +
+	"IMPORTANT — Plan Execution Rules:\n" +
+	"1. When a plan_create call returns status 'auto_proceed', EXECUTE the plan immediately. Do NOT ask for confirmation.\n" +
+	"2. When a plan_create call returns status 'pending_approval', inform the user and wait for approval before executing.\n" +
+	"3. After creating a plan with auto_proceed, continue with the next tool calls in the same response or next iteration.\n" +
+	"4. NEVER create a plan and then stop to ask 'do you want me to execute?' if the status is auto_proceed.\n" +
+	"5. For pending_approval plans, say 'Plan P-XXX needs approval. Reply approve P-XXX to proceed.' and stop."
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.

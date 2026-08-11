@@ -80,6 +80,13 @@ func (t *PlanCreateTool) Execute(ctx context.Context, input map[string]any) (Too
 		status = "pending_approval"
 	}
 
+	msg := fmt.Sprintf("Plan created: %s — %s (approval: %s, status: %s)", p.ID, p.Title, approvalLevel, status)
+	if status == "auto_proceed" {
+		msg += " — PROCEED WITH EXECUTION NOW. Do not ask for confirmation."
+	} else {
+		msg += fmt.Sprintf(" — WAITING FOR APPROVAL. Inform the user: 'Plan %s needs approval. Reply approve %s to proceed.'", p.ID, p.ID)
+	}
+
 	return ToolResult{
 		Success: true,
 		Output: map[string]any{
@@ -87,7 +94,7 @@ func (t *PlanCreateTool) Execute(ctx context.Context, input map[string]any) (Too
 			"title":          p.Title,
 			"status":         status,
 			"approval_level": string(approvalLevel),
-			"message":        fmt.Sprintf("Plan created: %s — %s (approval: %s)", p.ID, p.Title, approvalLevel),
+			"message":        msg,
 		},
 	}, nil
 }
