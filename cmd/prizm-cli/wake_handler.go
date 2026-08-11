@@ -165,6 +165,12 @@ Be thorough, proactive, and fast. START WITH A TOOL CALL, not prose.`,
 		MaxTokens: 1024,
 		SkipLLM:   true, // Reads run summaries + PROJECT_STATE.md directly
 	},
+	"mol_status": {
+		Prompt:    `Report the MOL (Machine Orchestration Loop) self-status.`,
+		ChannelID: "1491622863118008431", // scheduled-reports destination
+		MaxTokens: 1024,
+		SkipLLM:   true, // Pure introspection — no LLM needed
+	},
 	"review_improvements": {
 		Prompt: `You are reviewing active improvement proposals.
 
@@ -900,6 +906,8 @@ func (wh *WakeHandler) handleDirectAction(action string, actionDef wakeAction, f
 		resultContent = wh.factoryStatusDigest()
 	case "status_report":
 		resultContent = wh.statusReport()
+	case "mol_status":
+		resultContent = wh.molStatusReport()
 	default:
 		log.Printf("[WAKE] WARN unknown direct action %q", action)
 		return
@@ -2728,3 +2736,7 @@ func formatWorkflowReport(state *v2.WorkflowState) string {
 
 	return report
 }
+
+// molStatusReport generates a self-status report for the Machine Orchestration Loop.
+// It reports Prizm's own health: uptime, sessions, agents, recent runs, and observations.
+// This is the simplest meaningful MOL action: schedule → execute → emit event.
