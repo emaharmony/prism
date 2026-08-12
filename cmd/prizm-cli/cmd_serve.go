@@ -587,6 +587,9 @@ func executeServe(args []string) {
 			var localStore tool.LocalMemoryStore
 			if memoryStore != nil {
 				localStore = memoryStore
+				log.Printf("[MEMORY] local MarkdownStore wired as fallback")
+			} else {
+				log.Printf("[MEMORY] WARNING: local MarkdownStore is nil, memory_search will have no fallback")
 			}
 			tool.RegisterResearchTools(toolReg, memSearcher, localStore, tool.WebSearchConfig{})
 
