@@ -178,6 +178,7 @@ func executeServe(args []string) {
 		orch        *orchestrator.Orchestrator
 		remClient   *remembrance.Client
 		codexWorker *codexworker.Worker
+		memoryStore *memory.MarkdownStore
 	)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -494,7 +495,6 @@ func executeServe(args []string) {
 			}
 
 			// Local memory store (MarkdownStore fallback)
-			var memoryStore *memory.MarkdownStore
 			memCfg := cfg.Memory
 			if memCfg.StorePath == "" {
 				memCfg = cfg.Prizm.Memory // fallback to prizm.memory
@@ -862,6 +862,8 @@ func executeServe(args []string) {
 
 		MaxRequestBytes:       cfg.API.MaxRequestBytes,
 		MaxWorkspaceFileBytes: cfg.API.MaxWorkspaceFileBytes,
+		MemStore:              memoryStore,
+		RemClient:             remClient,
 	})
 	go func() {
 		if err := apiServer.Start(); err != nil {

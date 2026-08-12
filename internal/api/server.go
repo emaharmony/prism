@@ -190,6 +190,10 @@ type Config struct {
 	MaxRequestBytes int64
 	// MaxWorkspaceFileBytes caps a single workspace file write. 0 → 4 MiB.
 	MaxWorkspaceFileBytes int64
+	// MemStore is the local MarkdownStore for the memories API. Nil → memories endpoints return empty.
+	MemStore *memory.MarkdownStore
+	// RemClient is the Remembrance client for the memories API. Nil → Remembrance source disabled.
+	RemClient *remembrance.Client
 }
 
 // AutoPatchStarter is the API surface needed from the autopatch service.
@@ -227,6 +231,8 @@ func NewServer(cfg Config) *Server {
 
 		maxRequestBytes:       cfg.MaxRequestBytes,
 		maxWorkspaceFileBytes: cfg.MaxWorkspaceFileBytes,
+		memStore:             cfg.MemStore,
+		remClient:            cfg.RemClient,
 	}
 	if s.maxRequestBytes <= 0 {
 		s.maxRequestBytes = 1 << 20 // 1 MiB
@@ -282,6 +288,12 @@ func (s *Server) routes() {
 	// Workspace markdown editor (shared context files).
 	s.mux.HandleFunc("/api/v1/workspace/files", s.handleWorkspaceFiles)
 	s.mux.HandleFunc("/api/v1/workspace/files/", s.handleWorkspaceFile)
+
+	// Memory visualizer API (local + optional Remembrance).
+	s.mux.HandleFunc("/api/v1/memories", s.handleMemories)
+	s.mux.HandleFunc("/api/v1/memories/categories", s.handleMemoriesCategories)
+	s.mux.HandleFunc("/api/v1/memories/stats", s.handleMemoriesStats)
+	s.mux.HandleFunc("/api/v1/memories/", s.handleMemoriesDetail)
 
 	// Serve the embedded dashboard UI at / when wired (folded into `prizm
 	// serve`). Specific /api/v1/... patterns above win under ServeMux
