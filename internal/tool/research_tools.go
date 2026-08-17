@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -61,18 +62,24 @@ func (t *MemorySearchTool) Execute(ctx context.Context, input map[string]any) (T
 		limit = int(l)
 	}
 
-	// Try Recall first
+	log.Printf("[MEMORY-SEARCH] query=%q limit=%d searcher=%v localStore=%v", query, limit, t.Searcher != nil, t.LocalStore != nil)
+
+	// Try Recall first. Use "keyword" mode for fast, reliable results.
+	// "balanced" and "hybrid" modes can hang due to FTS5 WAL issues.
 	if t.Searcher != nil {
-		results, err := t.Searcher.Search(query, "hybrid", "", "", limit)
+		results, err := t.Searcher.Search(query, "keyword", "", "", limit)
 		if err == nil && results != nil {
 			return ToolResult{Success: true, Output: results}, nil
 		}
+		log.Printf("[MEMORY-SEARCH] Recall search failed: err=%v, trying local fallback", err)
 	}
 
 	// Fallback to local store
 	if t.LocalStore != nil {
 		memories, err := t.LocalStore.Search(ctx, query, limit)
-		if err == nil && len(memories) > 0 {
+		if err != nil {
+			log.Printf("[MEMORY-SEARCH] local store search error: %v", err)
+		} else {
 			output := map[string]any{
 				"source":  "local",
 				"results": memories,
