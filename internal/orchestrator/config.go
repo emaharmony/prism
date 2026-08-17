@@ -1119,11 +1119,28 @@ func (c *Config) Validate() error {
 	seenIDs := make(map[string]bool)
 	autoGenCounter := 0
 
+	// Validate global context_mode and agent_loop
+	validContextModes := map[string]bool{"full": true, "open_book": true}
+	if c.Prizm.ContextMode != "" && !validContextModes[c.Prizm.ContextMode] {
+		return fmt.Errorf("config: prizm.context_mode must be \"full\" or \"open_book\", got %q", c.Prizm.ContextMode)
+	}
+	validAgentLoops := map[string]bool{"classic": true, "agentic": true}
+	if c.Prizm.AgentLoop != "" && !validAgentLoops[c.Prizm.AgentLoop] {
+		return fmt.Errorf("config: prizm.agent_loop must be \"classic\" or \"agentic\", got %q", c.Prizm.AgentLoop)
+	}
+
 	for i, a := range c.Agents {
 		id := a.ID
 		if id == "" {
 			autoGenCounter++
 			id = fmt.Sprintf("prizm%d", autoGenCounter)
+		}
+
+		if a.ContextMode != "" && !validContextModes[a.ContextMode] {
+			return fmt.Errorf("config: agent[%d] %q context_mode must be \"full\" or \"open_book\", got %q", i, id, a.ContextMode)
+		}
+		if a.AgentLoop != "" && !validAgentLoops[a.AgentLoop] {
+			return fmt.Errorf("config: agent[%d] %q agent_loop must be \"classic\" or \"agentic\", got %q", i, id, a.AgentLoop)
 		}
 
 		// Agent ID must be alphanumeric + hyphens (same rule as agent.Agent.Validate)

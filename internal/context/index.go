@@ -69,7 +69,8 @@ func (b *Builder) readFileIndex(name, filename, source string, priority int) (Co
 		summaryLines = len(lines)
 	}
 	summary := strings.Join(lines[:summaryLines], "\n")
-	if len(lines) > summaryLines {
+	truncated := len(lines) > summaryLines
+	if truncated {
 		summary += fmt.Sprintf("\n... (%d more lines, use read_file to access)", len(lines)-summaryLines)
 	}
 
@@ -84,7 +85,7 @@ func (b *Builder) readFileIndex(name, filename, source string, priority int) (Co
 		EstimatedTokens: summaryTokens,
 		Priority:        priority,
 		Source:          source,
-		Truncated:       true, // Always truncated in index mode
+		Truncated:       truncated,
 		TruncatedBy:     fullTokens - summaryTokens,
 	}, nil
 }
