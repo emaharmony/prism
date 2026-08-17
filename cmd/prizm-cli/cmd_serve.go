@@ -1262,6 +1262,12 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 			return
 		}
 		finalSent = true
+		// Only send a final report if we haven't already delivered the response.
+		// If responseText was sent to Discord, don't send a duplicate status message.
+		if status == "completed" {
+			log.Printf("[REPORT] skipping final report — response already delivered (status=%s)", status)
+			return
+		}
 		cc.sendFinalReport(msg.ChannelID, status, runID, message)
 	}
 	defer func() {

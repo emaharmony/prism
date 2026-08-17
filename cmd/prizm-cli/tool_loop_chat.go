@@ -150,7 +150,7 @@ func (cc *conversationContext) runToolLoopChat(
 			// If the model never produces a text response, we can use
 			// a synthesis of tool results to avoid sending back nothing.
 			if summary.Status == "success" || summary.Status == "approval_needed" {
-				lastContent = fmt.Sprintf("Based on the information I gathered: %s", summary.Result)
+				lastContent = summary.Result
 			}
 		}
 	}

@@ -266,6 +266,9 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	// V60: Shell tool — policy is enforced internally by ShellTool.Execute()
 	// which checks the hard blocklist and tier-based allowlist.
 	// External policy allows it through; the tool itself enforces safety.
+	case "plan_create", "plan_list", "plan_update", "plan_approve", "plan_reject":
+		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("plan management: %s is allowed", toolName)}
+
 	case "shell":
 		if agentID != "" && !cfg.CanAgentProposeWrites(agentID) {
 			return PolicyResult{Decision: PolicyDenied, Reason: fmt.Sprintf("agent %q is not allowed to use shell; route through the orchestrator", agentID)}
