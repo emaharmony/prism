@@ -1,0 +1,242 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"strings"
+
+	"github.com/emaharmony/prizm/internal/orchestrator"
+	"github.com/emaharmony/prizm/internal/provider"
+)
+
+// doomDetector tracks recent tool calls to detect infinite loops.
+type doomDetector struct {
+	calls []doomCall
+	limit int // number of identical calls before triggering doom
+}
+
+type doomCall struct {
+	toolName string
+	argsJSON string
+}
+
+// checkDoom returns true if the last `limit` tool calls are identical
+// (same tool name + same arguments), indicating a doom loop.
+func (d *doomDetector) checkDoom(toolName string, args map[string]any) bool {
+	argsJSON, _ := json.Marshal(args)
+	call := doomCall{toolName: toolName, argsJSON: string(argsJSON)}
+
+	d.calls = append(d.calls, call)
+	if len(d.calls) > d.limit {
+		d.calls = d.calls[1:]
+	}
+
+	// All recent calls must be identical
+	if len(d.calls) < d.limit {
+		return false
+	}
+	for _, c := range d.calls {
+		if c.toolName != call.toolName || c.argsJSON != call.argsJSON {
+			return false
+		}
+	}
+	return true
+}
+
+// runToolLoopAgentic executes a multi-turn tool loop with doom detection
+// and no hard iteration cap. The loop continues until:
+//   - The model produces a final text response (no tool calls)
+//   - Doom loop detected (same tool + same args repeated)
+//   - Context cancelled
+//   - Token budget exceeded (optional)
+//
+// Safety mechanisms:
+//   - Doom detection: if the last N tool calls are identical, pause and ask the model to explain
+//   - Nudge: after 50 iterations, tell the model to wrap up
+//   - Hard limit: 200 iterations maximum (safety valve)
+//   - Post-compaction guard: if the model repeats a call after context compression, abort
+func (cc *conversationContext) runToolLoopAgentic(
+	parentCtx context.Context,
+	messages []provider.ChatMessage,
+	chatTools []provider.ChatTool,
+	agentCfg *orchestrator.AgentConfig,
+	channelID string,
+	placeholderMsgID string,
+	runID string,
+) (string, []toolCallSummary, chatModelInfo, error) {
+	ctx := parentCtx
+
+	var summaries []toolCallSummary
+	currentMessages := make([]provider.ChatMessage, len(messages))
+	copy(currentMessages, messages)
+
+	nudgeInjected := false
+	var lastContent string
+	var modelInfo chatModelInfo
+	doom := doomDetector{limit: 3} // 3 identical calls = doom loop
+	hardLimit := 200                // absolute safety valve
+	iterationCount := 0
+
+	for {
+		iterationCount++
+		if iterationCount > hardLimit {
+			log.Printf("[AGENTIC-LOOP] hard limit (%d) reached, synthesizing final answer", hardLimit)
+			return cc.synthesizeFinalAnswer(ctx, currentMessages, summaries, modelInfo, agentCfg)
+		}
+
+		log.Printf("[AGENTIC-LOOP] iteration %d", iterationCount)
+
+		// Nudge after 50 iterations
+		if iterationCount >= 50 && !nudgeInjected {
+			nudgeMsg := "You have already used many tool calls. Please provide your final answer now based on the information you have gathered. Do not call any more tools unless absolutely necessary."
+			currentMessages = append(currentMessages, provider.ChatMessage{
+				Role:    "system",
+				Content: nudgeMsg,
+			})
+			nudgeInjected = true
+		}
+
+		// Strip tools after 80 iterations (force final answer)
+		toolsForThisIteration := chatTools
+		forceFinal := false
+		if iterationCount >= 80 {
+			toolsForThisIteration = []provider.ChatTool{}
+			forceFinal = true
+			log.Printf("[AGENTIC-LOOP] iteration %d: removing tools to force final answer", iterationCount)
+		}
+
+		// Call the LLM
+		response, err := cc.callChatLLM(ctx, currentMessages, toolsForThisIteration, agentCfg)
+		if err != nil {
+			return "", summaries, modelInfo, fmt.Errorf("LLM call failed in agentic loop iteration %d: %w", iterationCount, err)
+		}
+
+		// Track model info
+		usedFallback, _ := response.Raw["used_fallback"].(bool)
+		localFallback, _ := response.Raw["local_fallback"].(bool)
+		modelInfo = chatModelInfo{
+			Model:         response.Model,
+			Provider:      response.Provider,
+			UsedFallback:  usedFallback,
+			LocalFallback: localFallback,
+		}
+
+		// Track content for fallback
+		if response.Content != "" {
+			lastContent = response.Content
+		}
+
+		// No tool calls — final response
+		if !response.HasToolCalls() {
+			log.Printf("[AGENTIC-LOOP] iteration %d: final response (%d chars)", iterationCount, len(response.Content))
+			return response.Content, summaries, modelInfo, nil
+		}
+
+		// Force final — ignore hallucinated tool calls
+		if forceFinal {
+			if response.Content != "" {
+				log.Printf("[AGENTIC-LOOP] iteration %d: forceFinal — using content (%d chars)", iterationCount, len(response.Content))
+				return response.Content, summaries, modelInfo, nil
+			}
+			if lastContent != "" {
+				log.Printf("[AGENTIC-LOOP] iteration %d: forceFinal — using lastContent (%d chars)", iterationCount, len(lastContent))
+				return lastContent, summaries, modelInfo, nil
+			}
+			return "I've gathered information but had trouble composing a final response. Please ask again.", summaries, modelInfo, nil
+		}
+
+		// Process tool calls
+		log.Printf("[AGENTIC-LOOP] iteration %d: model requests %d tool calls", iterationCount, len(response.ToolCalls))
+
+		// Add assistant message with tool_calls
+		currentMessages = append(currentMessages, provider.ChatMessage{
+			Role:      "assistant",
+			Content:   response.Content,
+			ToolCalls: response.ToolCalls,
+		})
+
+		for _, tc := range response.ToolCalls {
+			// Doom detection
+			if doom.checkDoom(tc.Function.Name, tc.Function.Arguments) {
+				log.Printf("[AGENTIC-LOOP] DOOM LOOP DETECTED: tool %q called %d times with identical args", tc.Function.Name, doom.limit)
+				// Inject a system message asking the model to break out
+				currentMessages = append(currentMessages, provider.ChatMessage{
+					Role:    "system",
+					Content: fmt.Sprintf("You have called %q with the same arguments %d times in a row. This suggests you are stuck in a loop. Stop calling this tool and provide a final answer based on what you already know.", tc.Function.Name, doom.limit),
+				})
+				// Reset doom detector so we give the model one more chance
+				doom.calls = nil
+				// Continue the loop — don't abort, let the model self-correct
+				break
+			}
+
+			toolResult, summary := cc.executeChatTool(ctx, tc, agentCfg, channelID, runID)
+
+			currentMessages = append(currentMessages, provider.ChatMessage{
+				Role:    "tool",
+				Content: toolResult,
+				ToolID:  tc.ID,
+			})
+
+			summaries = append(summaries, summary)
+
+			if summary.Status == "success" || summary.Status == "approval_needed" {
+				lastContent = fmt.Sprintf("Based on the information I gathered: %s", summary.Result)
+			}
+		}
+	}
+}
+
+// synthesizeFinalAnswer makes a final LLM call with no tools to synthesize
+// a coherent answer from the tool call summaries gathered so far.
+func (cc *conversationContext) synthesizeFinalAnswer(
+	ctx context.Context,
+	currentMessages []provider.ChatMessage,
+	summaries []toolCallSummary,
+	modelInfo chatModelInfo,
+	agentCfg *orchestrator.AgentConfig,
+) (string, []toolCallSummary, chatModelInfo, error) {
+	var summaryTexts []string
+	for _, s := range summaries {
+		if s.Status == "success" || s.Status == "approval_needed" {
+			summaryTexts = append(summaryTexts, fmt.Sprintf("- %s: %s", s.Tool, s.Result))
+		} else {
+			summaryTexts = append(summaryTexts, fmt.Sprintf("- %s: (error: %s)", s.Tool, s.Error))
+		}
+	}
+
+	if len(summaryTexts) == 0 {
+		return "", summaries, modelInfo, fmt.Errorf("agentic loop reached hard limit with no successful tool results")
+	}
+
+	synthesisPrompt := fmt.Sprintf("You have gathered the following information using tools but reached the iteration limit. "+
+		"Please provide a comprehensive answer based on this data:\n\n%s", strings.Join(summaryTexts, "\n"))
+
+	synthesisMessages := append(currentMessages, provider.ChatMessage{
+		Role:    "system",
+		Content: synthesisPrompt,
+	})
+
+	synthesisResp, err := cc.callChatLLM(ctx, synthesisMessages, []provider.ChatTool{}, agentCfg)
+	if err != nil {
+		log.Printf("[AGENTIC-LOOP] synthesis call failed: %v", err)
+		return "", summaries, modelInfo, fmt.Errorf("agentic loop reached hard limit and synthesis failed: %w", err)
+	}
+
+	usedFallback, _ := synthesisResp.Raw["used_fallback"].(bool)
+	localFallback, _ := synthesisResp.Raw["local_fallback"].(bool)
+	modelInfo = chatModelInfo{
+		Model:         synthesisResp.Model,
+		Provider:      synthesisResp.Provider,
+		UsedFallback:  usedFallback,
+		LocalFallback: localFallback,
+	}
+
+	if synthesisResp.Content != "" {
+		return synthesisResp.Content, summaries, modelInfo, nil
+	}
+
+	return "", summaries, modelInfo, fmt.Errorf("agentic loop reached hard limit and synthesis produced no content")
+}

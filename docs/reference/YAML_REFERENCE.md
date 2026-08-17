@@ -317,3 +317,38 @@ Good — reference an environment variable instead:
 # set OPENAI_API_KEY in your environment; do not inline the key
 auth_token_env: "PRIZM_API_TOKEN"
 ```
+
+## Agent Loop Config
+
+### V71: Dual-Mode Agent Loop
+
+The agent loop controls how Prizm executes multi-turn tool calls. Two modes are available:
+
+- **`classic`** (default): Capped iteration loop with nudge at 50, tool stripping at 80, hard cap at 100.
+- **`agentic`**: While-true loop with doom detection (pauses on 3 identical calls), nudge at 50, tool strip at 80, hard limit at 200.
+
+```yaml
+prizm:
+  # Global agent loop mode (classic or agentic)
+  agent_loop: "classic"
+
+agents:
+  - id: lumi
+    # Per-agent override (empty = use global setting)
+    agent_loop: "agentic"
+```
+
+### Doom Detection (agentic mode only)
+
+When the agentic loop detects 3 consecutive identical tool calls (same tool + same arguments), it:
+1. Injects a system message telling the model to break out
+2. Resets the doom detector
+3. Gives the model one more chance to self-correct
+
+This prevents infinite loops without hard-stopping the agent mid-task.
+
+### When to Use Agentic Mode
+
+- Use **classic** for simple conversations and bounded tasks
+- Use **agentic** for complex multi-step work (research, coding, plan execution)
+- Agentic mode allows the model to continue executing after plan creation instead of stopping

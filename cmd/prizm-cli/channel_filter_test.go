@@ -23,6 +23,8 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		{Function: provider.FunctionDef{Name: "generate_image"}},
 		{Function: provider.FunctionDef{Name: "analyze_image"}},
 		{Function: provider.FunctionDef{Name: "collect_reference_images"}},
+		{Function: provider.FunctionDef{Name: "plan_list"}},
+		{Function: provider.FunctionDef{Name: "plan_update"}},
 	}
 
 	tests := []struct {
@@ -34,17 +36,17 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		{
 			name:        "nil role returns all tools",
 			role:        nil,
-			expectCount: 13,
+			expectCount: 15,
 		},
 		{
 			name:        "all tools returns all",
 			role:        &orchestrator.ChannelRole{Role: "manager-room", Tools: "all"},
-			expectCount: 13,
+			expectCount: 15,
 		},
 		{
 			name:        "empty tools returns all",
 			role:        &orchestrator.ChannelRole{Role: "manager-room", Tools: ""},
-			expectCount: 13,
+			expectCount: 15,
 		},
 		{
 			name:        "none returns no tools",
@@ -54,8 +56,8 @@ func TestFilterChatToolsByChannelRole(t *testing.T) {
 		{
 			name:        "read-only returns only read tools",
 			role:        &orchestrator.ChannelRole{Role: "casual", Tools: "read-only"},
-			expectCount: 10,
-			expectNames: []string{"read_project", "search_files", "git_status", "state_get", "web_search", "memory_search", "fetch_image", "generate_image", "analyze_image", "collect_reference_images"},
+			expectCount: 13,
+			expectNames: []string{"read_project", "search_files", "git_status", "state_get", "web_search", "memory_search", "fetch_image", "generate_image", "analyze_image", "collect_reference_images", "plan_create", "plan_list", "plan_update"},
 		},
 	}
 

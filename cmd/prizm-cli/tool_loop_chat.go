@@ -15,7 +15,7 @@ import (
 	"github.com/emaharmony/prizm/internal/tool"
 )
 
-const maxChatToolIterations = 10
+const maxChatToolIterations = 100 // V70: raised from 10 to allow full research+execution cycles
 const chatToolLoopTimeout = 2 * time.Minute
 
 // chatModelInfo reports which (provider, model) actually produced a tool-chat
@@ -55,11 +55,11 @@ func (cc *conversationContext) runToolLoopChat(
 	for i := 0; i < maxChatToolIterations; i++ {
 		log.Printf("[TOOL-CHAT] iteration %d/%d", i+1, maxChatToolIterations)
 
-		// After 3 iterations, inject a nudge message telling the model to wrap up.
+		// After 50 iterations, inject a nudge message telling the model to wrap up.
 		// This prevents infinite tool-calling loops where the model keeps requesting
 		// tools without ever producing a final content response.
 		// Only inject ONCE to avoid token waste and model confusion.
-		if i >= 3 && !nudgeInjected {
+		if i >= 50 && !nudgeInjected {
 			nudgeMsg := "You have already used several tools. Please provide your final answer now based on the information you have gathered. Do not call any more tools."
 			currentMessages = append(currentMessages, provider.ChatMessage{
 				Role:    "system",
@@ -68,11 +68,11 @@ func (cc *conversationContext) runToolLoopChat(
 			nudgeInjected = true
 		}
 
-		// After 6 iterations, remove tools from the request entirely.
+		// After 80 iterations, remove tools from the request entirely.
 		// The model MUST give a final answer now.
 		toolsForThisIteration := chatTools
 		forceFinal := false
-		if i >= 6 {
+		if i >= 80 {
 			toolsForThisIteration = []provider.ChatTool{} // explicit empty slice: no tools allowed
 			forceFinal = true
 			log.Printf("[TOOL-CHAT] iteration %d: removing tools from request to force final answer", i+1)
