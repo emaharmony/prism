@@ -1505,17 +1505,35 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				log.Printf("[TOOL-GATE] subset: %d tools after filtering", len(chatTools))
 			}
 
-			log.Printf("[TOOL-CHAT] entering native tool loop with %d tools", len(chatTools))
+			loopMode := resolveAgentLoop(cc.cfg, agentCfg)
+			log.Printf("[TOOL-CHAT] entering native tool loop with %d tools (mode=%s)", len(chatTools), loopMode)
 
-			finalResponse, toolSummaries, modelInfo, toolErr := cc.runToolLoopChat(
-				runCtx,
-				messages,
-				chatTools,
-				agentCfg,
-				msg.ChannelID,
-				placeholderMsgID,
-				run.ID,
-			)
+			// V71: Route to agentic or classic loop
+			var finalResponse string
+			var toolSummaries []toolCallSummary
+			var modelInfo chatModelInfo
+			var toolErr error
+			if loopMode == "agentic" {
+				finalResponse, toolSummaries, modelInfo, toolErr = cc.runToolLoopAgentic(
+					runCtx,
+					messages,
+					chatTools,
+					agentCfg,
+					msg.ChannelID,
+					placeholderMsgID,
+					run.ID,
+				)
+			} else {
+				finalResponse, toolSummaries, modelInfo, toolErr = cc.runToolLoopChat(
+					runCtx,
+					messages,
+					chatTools,
+					agentCfg,
+					msg.ChannelID,
+					placeholderMsgID,
+					run.ID,
+				)
+			}
 			if toolErr != nil {
 				log.Printf("[TOOL-CHAT] tool loop failed: %v", toolErr)
 				finalRC.LLMResponse = "I had trouble processing that — the AI service returned an error. Please try again in a moment."

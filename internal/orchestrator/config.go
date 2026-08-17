@@ -183,6 +183,10 @@ type PrizmConfig struct {
 	// When set and loadable, it overrides the built-in 7-phase DefaultConfig.
 	// See examples/workflows/gated-loop.yaml.
 	WorkflowConfig string `yaml:"workflow_config"`
+
+	// AgentLoop controls which tool loop strategy agents use.
+	// "classic" = capped iteration loop (default), "agentic" = while-true with doom detection.
+	AgentLoop string `yaml:"agent_loop"`
 }
 
 // APIServerConfig configures HTTP API authentication and CORS.
@@ -464,6 +468,10 @@ type AgentConfig struct {
 
 	// Capabilities lists what this agent can do.
 	Capabilities []string `yaml:"capabilities"`
+
+	// AgentLoop overrides the global agent_loop setting for this agent.
+	// Values: "classic" (default), "agentic". Empty means use global setting.
+	AgentLoop string `yaml:"agent_loop"`
 
 	// Subscriptions lists NATS subjects this agent subscribes to
 	// for receiving delegated tasks and results.
