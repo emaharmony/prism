@@ -78,8 +78,8 @@ type MessageButton struct {
 }
 
 // ButtonHandler is called when a user clicks an interactive button, with the
-// button's custom ID and the clicking user's id/name.
-type ButtonHandler func(customID, userID, userName string)
+// button's custom ID, the clicking user's id/name, and the channel ID.
+type ButtonHandler func(customID, userID, userName, channelID string)
 
 // NewBotAdapter creates a new Discord bot adapter with the given bot token.
 func NewBotAdapter(token string) *BotAdapter {
@@ -191,7 +191,7 @@ func (b *BotAdapter) onInteractionCreate(s *discordgo.Session, ic *discordgo.Int
 	b.mu.RUnlock()
 	log.Printf("[DISCORD] dispatching to %d button handlers", len(hs))
 	for _, h := range hs {
-		h(customID, userID, userName)
+		h(customID, userID, userName, ic.ChannelID)
 	}
 }
 

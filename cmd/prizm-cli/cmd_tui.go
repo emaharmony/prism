@@ -61,8 +61,7 @@ func initialModel(mgr *plan.Manager) (planModel, error) {
 		return planModel{}, fmt.Errorf("failed to load plans: %w", err)
 	}
 	if len(plans) == 0 {
-		fmt.Println("No plans found.")
-		os.Exit(0)
+		return planModel{}, fmt.Errorf("no plans found")
 	}
 	expanded := make(map[string]bool)
 	return planModel{
@@ -196,7 +195,7 @@ func executeTUI(args []string) {
 		workspaceRoot = filepath.Join(home, ".prizm")
 	}
 
-	planDir := filepath.Join(workspaceRoot, "plans")
+	planDir := workspaceRoot
 	mgr := plan.NewManager(planDir)
 	if err := mgr.EnsureDir(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating plans directory: %v\n", err)

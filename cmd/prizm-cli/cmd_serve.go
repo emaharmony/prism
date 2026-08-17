@@ -755,7 +755,7 @@ func executeServe(args []string) {
 					MaxOutputBytes: cfg.Shell.Defaults.MaxOutputBytes,
 				})
 				buttonMutExec.SetRegistry(toolReg)
-				bot.OnButton(func(customID, userID, userName string) {
+				bot.OnButton(func(customID, userID, userName, channelID string) {
 					log.Printf("[BUTTON] clicked: customID=%q user=%q(%s)", customID, userName, userID)
 
 					// File approval buttons (prizmapprove: prefix)
@@ -785,7 +785,13 @@ func executeServe(args []string) {
 
 				// Plan approval buttons (plan: prefix)
 					if planID, action, ok := decodePlanButtonID(customID); ok {
-						log.Printf("[BUTTON] plan approval: planID=%s action=%s user=%s", planID, action, userName)
+						log.Printf("[BUTTON] plan approval: planID=%s action=%s user=%s channel=%s", planID, action, userName, channelID)
+						// Authorization: only manager-room can approve/reject plans
+						channelRole := cfg.ResolveChannelRole(channelID)
+						if channelRole != "manager-room" {
+							log.Printf("[BUTTON] plan approval DENIED: channel %q has role %q, need manager-room", channelID, channelRole)
+							return
+						}
 						approvedBy := firstNonEmptyCommandArg(userName, userID, "discord")
 						if planMgr != nil {
 							if action == "approve" {
@@ -1628,15 +1634,18 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
-	// V70: Send plan approval buttons for any pending_approval plans
+	// V70: Send plan approval buttons for pending_approval plans created in this run
 	if cc.planMgr != nil && cc.bot != nil {
 		if plans, err := cc.planMgr.LoadPlans(); err == nil {
 			for i := range plans {
-				if plans[i].Status == plan.StatusPendingApproval {
+				if plans[i].Status == plan.StatusPendingApproval && !plans[i].Notified {
 					planMsg := formatPlanMessage(&plans[i])
 					planMsg.ChannelID = msg.ChannelID
 					if sendErr := cc.bot.Send(&planMsg); sendErr != nil {
 						log.Printf("[PLAN] failed to send approval buttons for %s: %v", plans[i].ID, sendErr)
+					} else {
+						plans[i].Notified = true
+						_ = cc.planMgr.UpdatePlan(plans[i].ID, map[string]any{"notified": true})
 					}
 				}
 			}

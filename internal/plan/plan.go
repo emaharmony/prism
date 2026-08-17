@@ -103,6 +103,7 @@ type Plan struct {
 	CompletedAt   *time.Time    `json:"completed_at"` // When completed
 	Branch        string        `json:"branch"`       // Git branch
 	PR            string        `json:"pr"`           // PR number
+	Notified      bool          `json:"notified"`     // Whether approval buttons were sent to Discord
 }
 
 // HasPlan checks if an active (non-completed, non-abandoned) plan exists.
@@ -406,6 +407,9 @@ func (m *Manager) UpdatePlan(id string, updates map[string]any) error {
 			}
 			if pr, ok := updates["pr"].(string); ok {
 				plans[i].PR = pr
+			}
+			if notified, ok := updates["notified"].(bool); ok {
+				plans[i].Notified = notified
 			}
 			plans[i].UpdatedAt = time.Now()
 			return m.savePlansLocked(plans)
