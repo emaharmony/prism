@@ -79,6 +79,13 @@ func (cc *conversationContext) runToolLoopAgentic(
 	hardLimit := 200                // absolute safety valve
 	iterationCount := 0
 
+	// V72: Context budget management
+	contextTokens := 202752 // glm-5.1:cloud default
+	if agentCtxTokens, ok := getModelContextTokens(agentCfg.Model); ok {
+		contextTokens = agentCtxTokens
+	}
+	ctxBudget := defaultContextBudget(contextTokens)
+
 	for {
 		iterationCount++
 		if iterationCount > hardLimit {
@@ -186,6 +193,9 @@ func (cc *conversationContext) runToolLoopAgentic(
 				lastContent = fmt.Sprintf("Based on the information I gathered: %s", summary.Result)
 			}
 		}
+
+		// V72: Check context budget and compress if needed
+		ctxBudget.checkAndCompress(currentMessages, iterationCount)
 	}
 }
 
