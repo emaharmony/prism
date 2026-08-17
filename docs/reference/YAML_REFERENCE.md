@@ -352,3 +352,34 @@ This prevents infinite loops without hard-stopping the agent mid-task.
 - Use **classic** for simple conversations and bounded tasks
 - Use **agentic** for complex multi-step work (research, coding, plan execution)
 - Agentic mode allows the model to continue executing after plan creation instead of stopping
+
+## Context Mode Config (V72)
+
+### Open Book Context Strategy
+
+Controls how workspace context (SOUL.md, AGENTS.md, MEMORY.md, etc.) is injected into the system prompt.
+
+- **`full`** (default): All context files are loaded into the system prompt. ~150K tokens.
+- **`open_book`**: Only file summaries (first 20 lines) and a structured index are injected. ~2K tokens. The model uses `read_file` to load specific files on demand.
+
+```yaml
+prizm:
+  # Global context mode (full or open_book)
+  context_mode: "open_book"
+
+agents:
+  - id: lumi
+    # Per-agent override (empty = use global setting)
+    context_mode: "full"  # Override: this agent gets full context
+```
+
+### Why Open Book?
+
+In agentic mode, the model makes many tool calls. Each tool result adds to the conversation context. Starting with 150K tokens of workspace context means the model hits its context window after just 2-3 tool calls, causing failover or empty responses.
+
+Open book mode reduces the initial prompt to ~2K tokens, leaving room for 50+ tool calls before hitting context limits.
+
+### When to Use Which?
+
+- **`full`**: Simple conversations, few tool calls, or when the model needs all context upfront
+- **`open_book`**: Complex tasks, many tool calls, agentic mode, or when using models with smaller context windows

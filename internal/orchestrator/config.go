@@ -187,6 +187,11 @@ type PrizmConfig struct {
 	// AgentLoop controls which tool loop strategy agents use.
 	// "classic" = capped iteration loop (default), "agentic" = while-true with doom detection.
 	AgentLoop string `yaml:"agent_loop"`
+
+	// ContextMode controls how workspace context is injected into prompts.
+	// "full" (default) = all context files loaded into system prompt.
+	// "open_book" = only file summaries/index loaded; model uses read_file on demand.
+	ContextMode string `yaml:"context_mode"`
 }
 
 // APIServerConfig configures HTTP API authentication and CORS.
@@ -472,6 +477,10 @@ type AgentConfig struct {
 	// AgentLoop overrides the global agent_loop setting for this agent.
 	// Values: "classic" (default), "agentic". Empty means use global setting.
 	AgentLoop string `yaml:"agent_loop"`
+
+	// ContextMode overrides the global context_mode setting for this agent.
+	// Values: "full" (default), "open_book". Empty means use global setting.
+	ContextMode string `yaml:"context_mode"`
 
 	// Subscriptions lists NATS subjects this agent subscribes to
 	// for receiving delegated tasks and results.

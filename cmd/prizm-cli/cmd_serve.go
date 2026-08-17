@@ -1881,32 +1881,10 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	sb.WriteString(identityContent + "\n\n")
 
 	// --- Layer 2: WORKSPACE CONTEXT ---
-	// Full context files (AGENTS.md, USER.md, MEMORY.md, etc.)
-	// Excluding soul and identity which are already in Layer 1
-	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
-		budget := cc.cfg.Prizm.ContextTokenBudget
-		if budget <= 0 {
-			budget = 128000
-		}
-
-		// Build context without soul/identity (already in Layer 1)
-		otherContexts := make([]string, 0, len(agentCfg.Context))
-		for _, c := range agentCfg.Context {
-			if c != "soul" && c != "identity" {
-				otherContexts = append(otherContexts, c)
-			}
-		}
-
-		if len(otherContexts) > 0 {
-			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-				WithNamedContexts(otherContexts).
-				WithTokenBudget(budget)
-			injected, err := builder.BuildCached()
-			if err == nil && injected.FormattedString != "" {
-				sb.WriteString("## Context\n")
-				sb.WriteString(injected.FormattedString + "\n")
-			}
-		}
+	// V72: Open book mode injects only file summaries; full mode loads everything.
+	if contextStr := buildContextString(cc.ctxBuilder, cc.cfg, agentCfg); contextStr != "" {
+		sb.WriteString("## Context\n")
+		sb.WriteString(contextStr + "\n")
 	}
 
 	// Layer 3 (Behavior/"How You Respond") and Layer 4 (Tools) are NOT
@@ -1928,29 +1906,10 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	sbChat.WriteString("## Who You Are\n")
 	sbChat.WriteString(identityContent + "\n\n")
 
-	if len(agentCfg.Context) > 0 && cc.ctxBuilder != nil {
-		budget := cc.cfg.Prizm.ContextTokenBudget
-		if budget <= 0 {
-			budget = 128000
-		}
-
-		otherContexts := make([]string, 0, len(agentCfg.Context))
-		for _, c := range agentCfg.Context {
-			if c != "soul" && c != "identity" {
-				otherContexts = append(otherContexts, c)
-			}
-		}
-
-		if len(otherContexts) > 0 {
-			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).
-				WithNamedContexts(otherContexts).
-				WithTokenBudget(budget)
-			injected, err := builder.BuildCached()
-			if err == nil && injected.FormattedString != "" {
-				sbChat.WriteString("## Context\n")
-				sbChat.WriteString(injected.FormattedString + "\n")
-			}
-		}
+	// V72: Open book mode for chat path
+	if contextStr := buildContextString(cc.ctxBuilder, cc.cfg, agentCfg); contextStr != "" {
+		sbChat.WriteString("## Context\n")
+		sbChat.WriteString(contextStr + "\n")
 	}
 
 	postfix := resolveConversationPostfix(agentCfg, nil, cc.hasSoulContent)
