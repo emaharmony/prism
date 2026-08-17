@@ -783,6 +783,28 @@ func executeServe(args []string) {
 						return
 					}
 
+				// Plan approval buttons (plan: prefix)
+					if planID, action, ok := decodePlanButtonID(customID); ok {
+						log.Printf("[BUTTON] plan approval: planID=%s action=%s user=%s", planID, action, userName)
+						approvedBy := firstNonEmptyCommandArg(userName, userID, "discord")
+						if planMgr != nil {
+							if action == "approve" {
+								if err := planMgr.ApprovePlan(planID, approvedBy); err != nil {
+									log.Printf("[BUTTON] plan approve failed: %v", err)
+									return
+								}
+								log.Printf("[BUTTON] plan %s APPROVED by %s", planID, approvedBy)
+							} else if action == "reject" {
+								if err := planMgr.AbandonPlan(planID); err != nil {
+									log.Printf("[BUTTON] plan reject failed: %v", err)
+									return
+								}
+								log.Printf("[BUTTON] plan %s REJECTED by %s", planID, approvedBy)
+							}
+						}
+						return
+					}
+
 					// Workflow feedback buttons (prizmfb: prefix)
 					payload, ok := feedbackButtonPayload(customID, firstNonEmptyCommandArg(userName, userID, "discord"))
 					if !ok {
@@ -1606,6 +1628,21 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+	// V70: Send plan approval buttons for any pending_approval plans
+	if cc.planMgr != nil && cc.bot != nil {
+		if plans, err := cc.planMgr.LoadPlans(); err == nil {
+			for i := range plans {
+				if plans[i].Status == plan.StatusPendingApproval {
+					planMsg := formatPlanMessage(&plans[i])
+					planMsg.ChannelID = msg.ChannelID
+					if sendErr := cc.bot.Send(&planMsg); sendErr != nil {
+						log.Printf("[PLAN] failed to send approval buttons for %s: %v", plans[i].ID, sendErr)
+					}
+				}
+			}
+		}
+	}
+
 	// V61: TTS — generate voice from response if enabled
 	if finalSent && responseText != "" && cc.ttsClient != nil {
 		ttsChannelRole := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)
@@ -2423,6 +2460,12 @@ var readOnlyTools = map[string]bool{
 	"analyze_image":            true,
 	"collect_reference_images": true,
 	"plan_list":                true,
+	"plan_create":              true,
+	"plan_update":              true,
+	"plan_approve":             true,
+	"plan_complete":             true,
+	"plan_abandon":             true,
+	"plan_reopen":               true,
 	"state_get":                true,
 }
 

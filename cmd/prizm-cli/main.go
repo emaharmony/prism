@@ -644,6 +644,8 @@ func main() {
 		}
 	case "search":
 		searchCmd(os.Args[2:])
+	case "tui":
+		executeTUI(os.Args[2:])
 	case "chat":
 		executeChat(os.Args[2:])
 	case "serve":
