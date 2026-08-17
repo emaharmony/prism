@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/emaharmony/prizm/internal/orchestrator"
+	"github.com/emaharmony/prizm/internal/plan"
 	"github.com/emaharmony/prizm/internal/provider"
 )
 
@@ -191,6 +192,28 @@ func (cc *conversationContext) runToolLoopAgentic(
 
 			if summary.Status == "success" || summary.Status == "approval_needed" {
 				lastContent = fmt.Sprintf("Based on the information I gathered: %s", summary.Result)
+			}
+		}
+
+		// V73: Re-inject plan state after plan-changing tool calls
+		planChanged := false
+		for _, tc := range response.ToolCalls {
+			switch tc.Function.Name {
+			case "plan_create", "plan_update", "plan_reopen", "plan_abandon":
+				planChanged = true
+			}
+		}
+		if planChanged && cc.planMgr != nil {
+			if plans, err := cc.planMgr.LoadPlans(); err == nil {
+				activePlan := plan.ActivePlan(plans)
+				if activePlan != nil {
+					planMsg := plan.FormatPlanForPrompt(activePlan)
+					currentMessages = append(currentMessages, provider.ChatMessage{
+						Role:    "system",
+						Content: "Plan state updated:\n" + planMsg,
+					})
+					log.Printf("[AGENTIC-LOOP] iteration %d: re-injected plan %s after tool call", iterationCount, activePlan.ID)
+				}
 			}
 		}
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/emaharmony/prizm/internal/guard"
 	"github.com/emaharmony/prizm/internal/orchestrator"
+	"github.com/emaharmony/prizm/internal/plan"
 	"github.com/emaharmony/prizm/internal/provider"
 	"github.com/emaharmony/prizm/internal/session"
 	"github.com/emaharmony/prizm/internal/tool"
@@ -147,10 +148,29 @@ func (cc *conversationContext) runToolLoopChat(
 			summaries = append(summaries, summary)
 
 			// Track successful tool results as potential fallback content.
-			// If the model never produces a text response, we can use
-			// a synthesis of tool results to avoid sending back nothing.
 			if summary.Status == "success" || summary.Status == "approval_needed" {
 				lastContent = summary.Result
+			}
+		}
+
+		// V73: Re-inject plan state after plan-changing tool calls
+		for _, tc := range response.ToolCalls {
+			switch tc.Function.Name {
+			case "plan_create", "plan_update", "plan_reopen", "plan_abandon":
+				if cc.planMgr != nil {
+					if plans, err := cc.planMgr.LoadPlans(); err == nil {
+						activePlan := plan.ActivePlan(plans)
+						if activePlan != nil {
+							planMsg := plan.FormatPlanForPrompt(activePlan)
+							currentMessages = append(currentMessages, provider.ChatMessage{
+								Role:    "system",
+								Content: "Plan state updated:\n" + planMsg,
+							})
+							log.Printf("[TOOL-CHAT] iteration %d: re-injected plan %s after %s", i+1, activePlan.ID, tc.Function.Name)
+						}
+					}
+				}
+				break // only inject once per iteration
 			}
 		}
 	}
@@ -375,6 +395,33 @@ func (cc *conversationContext) buildMessages(sess *session.Session, agentCfg *or
 	sessionAge := time.Since(sess.StartedAt).Round(time.Second)
 	sessionMsgCount := len(sess.Messages)
 	systemContent += fmt.Sprintf("\n[Session: %d messages, started %v ago]\n", sessionMsgCount, sessionAge)
+
+	// --- Working state injection ---
+	if cc.stateMgr != nil {
+		statePrompt := cc.stateMgr.FormatStateForPrompt()
+		if statePrompt != "" {
+			systemContent += "\n" + statePrompt + "\n"
+		}
+	}
+
+	// --- Active plan injection ---
+	if cc.planMgr != nil {
+		if plans, err := cc.planMgr.LoadPlans(); err == nil {
+			activePlan := plan.ActivePlan(plans)
+			if activePlan != nil {
+				systemContent += "\n" + plan.FormatPlanForPrompt(activePlan) + "\n"
+				// V73: Add explicit plan execution instructions
+				completed, total := plan.StepProgress(activePlan)
+				if completed < total {
+					systemContent += "\nYou have an active plan with " + fmt.Sprintf("%d/%d", completed, total) + " steps completed. " +
+						"Execute the next pending step now using plan_update to mark it in_progress, " +
+						"then use the appropriate tools to complete it. " +
+						"After completing a step, mark it completed and proceed to the next. " +
+						"Do not ask for confirmation — proceed autonomously.\n"
+				}
+			}
+		}
+	}
 
 	messages = append(messages, provider.ChatMessage{
 		Role:    "system",
