@@ -86,8 +86,8 @@ func (cc *conversationContext) runToolLoopAgentic(
 		contextTokens = agentCtxTokens
 	}
 	ctxBudget := defaultContextBudget(contextTokens)
-	ctxBudget.compressThreshold = 0.75 // Compress at 75% to leave more room for LLM response
-	ctxBudget.warnThreshold = 0.60      // Warn at 60%
+	ctxBudget.compressThreshold = 0.50 // Compress at 50% to leave room for LLM response + tool results
+	ctxBudget.warnThreshold = 0.40      // Warn at 40%
 
 	for {
 		iterationCount++

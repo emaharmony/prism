@@ -8,19 +8,20 @@ import (
 )
 
 // estimateTokenCount provides a rough estimate of the token count for a slice
-// of chat messages. Uses the 4-chars-per-token heuristic.
+// of chat messages. Uses a 3.2 chars-per-token heuristic which is conservative
+// for mixed code/JSON/markdown content (GLM models tokenize densely).
 func estimateTokenCount(messages []provider.ChatMessage) int {
 	total := 0
 	for _, msg := range messages {
-		total += len(msg.Content) / 4
+		total += len(msg.Content) * 10 / 32 // ~3.2 chars per token
 		for _, tc := range msg.ToolCalls {
-			total += len(tc.Function.Name) / 4
+			total += len(tc.Function.Name) * 10 / 32
 			for _, v := range tc.Function.Arguments {
-				total += len(fmt.Sprintf("%v", v)) / 4
+				total += len(fmt.Sprintf("%v", v)) * 10 / 32
 			}
 		}
 		if msg.Role == "system" {
-			total += len(msg.Content) / 4
+			total += len(msg.Content) * 10 / 32
 		}
 	}
 	return total
@@ -78,8 +79,8 @@ type contextBudget struct {
 func defaultContextBudget(modelContextTokens int) contextBudget {
 	return contextBudget{
 		modelContextTokens: modelContextTokens,
-		warnThreshold:      0.60,
-		compressThreshold:  0.75,
+		warnThreshold:      0.40,
+		compressThreshold:  0.50,
 		keepRecent:         6,
 		maxResultChars:     300,
 	}
