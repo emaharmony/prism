@@ -78,10 +78,10 @@ type contextBudget struct {
 func defaultContextBudget(modelContextTokens int) contextBudget {
 	return contextBudget{
 		modelContextTokens: modelContextTokens,
-		warnThreshold:      0.8,
-		compressThreshold:  0.9,
-		keepRecent:         4, // Keep last 4 tool results uncompressed
-		maxResultChars:     500, // Compress older results to 500 chars
+		warnThreshold:      0.60,
+		compressThreshold:  0.75,
+		keepRecent:         6,
+		maxResultChars:     300,
 	}
 }
 

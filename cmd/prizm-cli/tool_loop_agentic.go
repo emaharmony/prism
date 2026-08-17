@@ -86,6 +86,8 @@ func (cc *conversationContext) runToolLoopAgentic(
 		contextTokens = agentCtxTokens
 	}
 	ctxBudget := defaultContextBudget(contextTokens)
+	ctxBudget.compressThreshold = 0.75 // Compress at 75% to leave more room for LLM response
+	ctxBudget.warnThreshold = 0.60      // Warn at 60%
 
 	for {
 		iterationCount++
@@ -95,6 +97,9 @@ func (cc *conversationContext) runToolLoopAgentic(
 		}
 
 		log.Printf("[AGENTIC-LOOP] iteration %d", iterationCount)
+
+		// V73: Compress context before LLM call to prevent overflow
+		ctxBudget.checkAndCompress(currentMessages, iterationCount)
 
 		// Nudge after 50 iterations
 		if iterationCount >= 50 && !nudgeInjected {
