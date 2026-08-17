@@ -217,6 +217,7 @@ func formatIndex(files []ContextFile, workspaceRoot string) string {
 
 	sb.WriteString("---\n\n")
 	sb.WriteString("**Remember:** Load files with `read_file` only when you need their content. ")
+	sb.WriteString("Use `max_lines` to load just the section you need (e.g., `read_file(\"path\", max_lines=50)`). ")
 	sb.WriteString("This keeps your context window clear for tool calls and conversation.\n")
 
 	return sb.String()
