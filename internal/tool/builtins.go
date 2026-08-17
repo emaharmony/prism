@@ -161,7 +161,8 @@ func (t *ReadFileTool) Description() string {
 func (t *ReadFileTool) Schema() ToolSchema {
 	return ToolSchema{
 		Input: map[string]ParamSpec{
-			"path": {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
+			"path":      {Type: "string", Description: "Path to the file. Use an absolute path for projects outside the workspace, or a path relative to the workspace root", Required: true},
+			"max_lines": {Type: "integer", Description: "Maximum number of lines to return. Useful for previewing large files without loading the entire content into context. 0 or omitted means no limit.", Required: false},
 		},
 		Output: ParamSpec{Type: "string", Description: "The file contents"},
 	}
@@ -226,11 +227,26 @@ func (t *ReadFileTool) Execute(ctx context.Context, input map[string]any) (ToolR
 		}, nil
 	}
 
+	content := string(data)
+
+	// Apply max_lines truncation if specified
+	if maxLinesVal, ok := input["max_lines"]; ok {
+		if maxLines, ok := maxLinesVal.(float64); ok && maxLines > 0 {
+			lines := strings.Split(content, "\n")
+			totalLines := len(lines)
+			maxLinesInt := int(maxLines)
+			if totalLines > maxLinesInt {
+				content = strings.Join(lines[:maxLinesInt], "\n")
+				content += fmt.Sprintf("\n\n... (%d more lines, use read_file with a larger max_lines or without max_lines to see the rest)", totalLines-maxLinesInt)
+			}
+		}
+	}
+
 	return ToolResult{
 		Success: true,
 		Output: map[string]any{
 			"path":    pathVal,
-			"content": string(data),
+			"content": content,
 			"size":    len(data),
 		},
 	}, nil
