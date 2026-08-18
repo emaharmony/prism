@@ -167,6 +167,15 @@ func (cc *conversationContext) runToolLoopAgentic(
 
 		// No tool calls — final response
 		if !response.HasToolCalls() {
+			// Empty response — model choked, nudge and retry
+			if len(response.Content) == 0 && iterationCount < 80 {
+				log.Printf("[AGENTIC-LOOP] iteration %d: empty response, nudging model to continue", iterationCount)
+				currentMessages = append(currentMessages, provider.ChatMessage{
+					Role:    "system",
+					Content: "You returned an empty response. This is not acceptable. Either use a tool to continue your task, or provide a substantive text response summarizing what you've done and what you recommend next.",
+				})
+				continue
+			}
 			log.Printf("[AGENTIC-LOOP] iteration %d: final response (%d chars)", iterationCount, len(response.Content))
 			return response.Content, summaries, modelInfo, nil
 		}
