@@ -178,6 +178,10 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "use_skill":
 		return PolicyResult{Decision: PolicyApproved, Reason: "use_skill returns skill instructions, read-only"}
 
+	// State management tools — track working state, not code mutation.
+	case "set_active_task", "clear_active_task", "state_get":
+		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is state management, always approved", toolName)}
+
 	case "write_file_dry_run":
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 

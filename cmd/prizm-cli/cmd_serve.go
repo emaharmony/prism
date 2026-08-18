@@ -2475,6 +2475,8 @@ var readOnlyTools = map[string]bool{
 	"plan_abandon":             true,
 	"plan_reopen":               true,
 	"state_get":                true,
+	"set_active_task":         true,
+	"clear_active_task":       true,
 }
 
 var mutationProposalTools = map[string]bool{
