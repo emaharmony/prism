@@ -203,7 +203,7 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 			continue // file doesn't exist, skip
 		}
 		content := string(data)
-		if len(content) > 5000 { // cap key file reads at 5KB
+		if len(content) > 2000 { // cap key file reads at 2KB for context efficiency
 			content = content[:5000] + "\n... (truncated)"
 		}
 		keyFileContents = append(keyFileContents, map[string]any{
@@ -243,7 +243,7 @@ func (t *ProjectOverviewTool) Execute(ctx context.Context, input map[string]any)
 					continue
 				}
 				content := string(data)
-				if len(content) > 8000 { // cap architecture files at 8KB
+				if len(content) > 3000 { // cap architecture files at 3KB for context efficiency
 					content = content[:8000] + "\n... (truncated)"
 				}
 				archContents = append(archContents, map[string]any{

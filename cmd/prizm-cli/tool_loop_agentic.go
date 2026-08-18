@@ -211,6 +211,14 @@ func (cc *conversationContext) runToolLoopAgentic(
 
 			toolResult, summary := cc.executeChatTool(ctx, tc, agentCfg, channelID, runID)
 
+			// V73: Cap tool result size to prevent context bloat
+			maxToolResultSize := 15000 // 15KB hard cap per tool result
+			if len(toolResult) > maxToolResultSize {
+				originalSize := len(toolResult)
+				toolResult = toolResult[:maxToolResultSize] + fmt.Sprintf("\n\n[... %d more bytes omitted. Use read_file with max_lines to get specific sections.]", originalSize-maxToolResultSize)
+				log.Printf("[AGENTIC-LOOP] iteration %d: truncated tool result from %d to %d bytes", iterationCount, originalSize, maxToolResultSize)
+			}
+
 			currentMessages = append(currentMessages, provider.ChatMessage{
 				Role:    "tool",
 				Content: toolResult,
