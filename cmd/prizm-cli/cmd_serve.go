@@ -1659,10 +1659,15 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	}
 
 	// V70: Send plan approval buttons for pending_approval plans created in this run
+// V73: Also notify auto_proceed plans so the user can see what was created
 	if cc.planMgr != nil && cc.bot != nil {
 		if plans, err := cc.planMgr.LoadPlans(); err == nil {
 			for i := range plans {
-				if plans[i].Status == plan.StatusPendingApproval && !plans[i].Notified {
+				if plans[i].Notified {
+					continue
+				}
+				if plans[i].Status == plan.StatusPendingApproval {
+					// Send with approval buttons
 					planMsg := formatPlanMessage(&plans[i])
 					planMsg.ChannelID = msg.ChannelID
 					if sendErr := cc.bot.Send(&planMsg); sendErr != nil {
@@ -1670,6 +1675,17 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 					} else {
 						plans[i].Notified = true
 						_ = cc.planMgr.UpdatePlan(plans[i].ID, map[string]any{"notified": true})
+					}
+				} else if plans[i].Status == plan.StatusAutoProceed {
+					// Send plan summary without buttons
+					summary := formatPlanMessage(&plans[i])
+					summary.ChannelID = msg.ChannelID
+					if sendErr := cc.bot.Send(&summary); sendErr != nil {
+						log.Printf("[PLAN] failed to send plan notification for %s: %v", plans[i].ID, sendErr)
+					} else {
+						plans[i].Notified = true
+						_ = cc.planMgr.UpdatePlan(plans[i].ID, map[string]any{"notified": true})
+						log.Printf("[PLAN] sent auto_proceed plan %s notification to Discord", plans[i].ID)
 					}
 				}
 			}

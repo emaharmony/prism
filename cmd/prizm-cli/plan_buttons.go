@@ -31,6 +31,36 @@ func decodePlanButtonID(customID string) (planID, action string, ok bool) {
 func formatPlanMessage(p *plan.Plan) discordbot.OutboundMessage {
 	completed, total := plan.StepProgress(p)
 
+	isAuto := p.Status == plan.StatusAutoProceed
+
+	if isAuto {
+		content := fmt.Sprintf("📋 **Plan %s created (auto-proceed)** — %s\n", p.ID, p.Title)
+		content += fmt.Sprintf("Status: %s | Progress: %d/%d steps\n", p.Status, completed, total)
+		if p.Reasoning != "" {
+			content += fmt.Sprintf("Why: %s\n", p.Reasoning)
+		}
+		if p.Scope != "" {
+			content += fmt.Sprintf("Out of scope: %s\n", p.Scope)
+		}
+		if len(p.Steps) > 0 {
+			content += "\n**Steps:**\n"
+			for _, s := range p.Steps {
+				check := "⬜"
+				if s.Status == plan.StepCompleted {
+					check = "✅"
+				} else if s.Status == plan.StepInProgress {
+					check = "🔄"
+				} else if s.Status == plan.StepBlocked {
+					check = "🚫"
+				} else if s.Status == plan.StepSkipped {
+					check = "⏭️"
+				}
+				content += fmt.Sprintf("%s %s: %s\n", check, s.ID, s.Title)
+			}
+		}
+		return discordbot.OutboundMessage{Content: content}
+	}
+
 	content := fmt.Sprintf("📝 **Plan %s needs approval** — %s\n", p.ID, p.Title)
 	content += fmt.Sprintf("Approval: %s | Status: %s | Progress: %d/%d steps\n", p.ApprovalLevel, p.Status, completed, total)
 	if p.Reasoning != "" {
