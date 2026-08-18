@@ -1692,6 +1692,26 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		}
 	}
 
+	// V73: Check for plan completion and notify Discord
+	if cc.planMgr != nil && cc.bot != nil {
+		if plans, err := cc.planMgr.LoadPlans(); err == nil {
+			for _, p := range plans {
+				if p.Status == plan.StatusAutoProceed {
+					completed, total := plan.StepProgress(&p)
+					if total > 0 && completed == total && !p.Notified {
+						// All steps completed — mark plan as completed and notify
+						_ = cc.planMgr.UpdatePlan(p.ID, map[string]any{"status": "completed", "notified": true})
+						completionMsg := fmt.Sprintf("✅ **Plan %s completed** — %s\nAll %d steps done!", p.ID, p.Title, total)
+						discordMsg := discordbot.OutboundMessage{Content: completionMsg, ChannelID: msg.ChannelID}
+						if sendErr := cc.bot.Send(&discordMsg); sendErr != nil {
+							log.Printf("[PLAN] failed to send completion notification for %s: %v", p.ID, sendErr)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// V61: TTS — generate voice from response if enabled
 	if finalSent && responseText != "" && cc.ttsClient != nil {
 		ttsChannelRole := cc.cfg.ResolveChannelRoleConfig(msg.ChannelID)

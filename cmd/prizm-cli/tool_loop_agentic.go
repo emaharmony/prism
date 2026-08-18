@@ -80,7 +80,7 @@ func (cc *conversationContext) runToolLoopAgentic(
 	hardLimit := 200                // absolute safety valve
 	iterationCount := 0
 
-	// V72: Context budget management
+	// V73: Context budget management
 	contextTokens := 202752 // glm-5.1:cloud default
 	if agentCtxTokens, ok := getModelContextTokens(agentCfg.Model); ok {
 		contextTokens = agentCtxTokens
@@ -88,6 +88,10 @@ func (cc *conversationContext) runToolLoopAgentic(
 	ctxBudget := defaultContextBudget(contextTokens)
 	ctxBudget.compressThreshold = 0.50 // Compress at 50% to leave room for LLM response + tool results
 	ctxBudget.warnThreshold = 0.40      // Warn at 40%
+
+	// V73: Plan step nudge tracking
+	lastPlanUpdateIteration := 0
+	planNudged := false
 
 	for {
 		iterationCount++
@@ -100,6 +104,26 @@ func (cc *conversationContext) runToolLoopAgentic(
 
 		// V73: Compress context before LLM call to prevent overflow
 		ctxBudget.checkAndCompress(currentMessages, iterationCount)
+
+		// V73: Plan step nudge — if we have an active plan but haven't updated
+		// any steps in 5+ iterations, remind the model to execute
+		if cc.planMgr != nil && !planNudged && iterationCount-lastPlanUpdateIteration >= 5 && iterationCount > 3 {
+			if plans, err := cc.planMgr.LoadPlans(); err == nil {
+				activePlan := plan.ActivePlan(plans)
+				if activePlan != nil {
+					completed, total := plan.StepProgress(activePlan)
+					if completed < total {
+						nudge := fmt.Sprintf("Reminder: You have an active plan (%s) with %d/%d steps completed. Use plan_update to mark the current step, then execute it.", activePlan.ID, completed, total)
+						currentMessages = append(currentMessages, provider.ChatMessage{
+							Role:    "system",
+							Content: nudge,
+						})
+						planNudged = true
+						log.Printf("[AGENTIC-LOOP] iteration %d: plan step nudge for %s (%d/%d)", iterationCount, activePlan.ID, completed, total)
+					}
+				}
+			}
+		}
 
 		// Nudge after 50 iterations
 		if iterationCount >= 50 && !nudgeInjected {
@@ -206,6 +230,8 @@ func (cc *conversationContext) runToolLoopAgentic(
 			switch tc.Function.Name {
 			case "plan_create", "plan_update", "plan_reopen", "plan_abandon":
 				planChanged = true
+				lastPlanUpdateIteration = iterationCount
+				planNudged = false // Reset nudge so it can fire again if needed
 			}
 		}
 		if planChanged && cc.planMgr != nil {
@@ -218,6 +244,16 @@ func (cc *conversationContext) runToolLoopAgentic(
 						Content: "Plan state updated:\n" + planMsg,
 					})
 					log.Printf("[AGENTIC-LOOP] iteration %d: re-injected plan %s after tool call", iterationCount, activePlan.ID)
+
+					// V73: Plan completion detection
+					completed, total := plan.StepProgress(activePlan)
+					if completed > 0 && completed == total {
+						currentMessages = append(currentMessages, provider.ChatMessage{
+							Role:    "system",
+							Content: fmt.Sprintf("All %d steps of plan %s are completed. Provide your final summary of what was accomplished.", total, activePlan.ID),
+						})
+						log.Printf("[AGENTIC-LOOP] iteration %d: plan %s completed (%d/%d steps)", iterationCount, activePlan.ID, completed, total)
+					}
 				}
 			}
 		}
