@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/emaharmony/prizm/internal/provider"
 )
@@ -27,15 +28,16 @@ func estimateTokenCount(messages []provider.ChatMessage) int {
 	return total
 }
 
-// compressToolResults replaces older tool results with compressed summaries
-// to keep the conversation within the token budget. Tool results older than
-// keepRecent are summarized to just the tool name and first 200 chars.
+// compressToolResults progressively compresses older tool results to keep the
+// conversation within the token budget. Uses a two-tier strategy:
+// - Tier 1 (keepRecent results): preserved in full
+// - Tier 2 (older results): compressed to a brief digest with tool name,
+//   success/failure, and a one-line summary
 // Returns the number of messages compressed.
-func compressToolResults(messages []provider.ChatMessage, keepRecent int, maxResultChars int) int {
+func compressToolResults(messages []provider.ChatMessage, keepRecent int) int {
 	compressed := 0
 
-	// Walk messages in order, compressing tool results that are not in the
-	// last keepRecent tool-result messages.
+	// Collect indices of tool result messages
 	toolResultIndices := []int{}
 	for i, msg := range messages {
 		if msg.Role == "tool" {
@@ -43,20 +45,27 @@ func compressToolResults(messages []provider.ChatMessage, keepRecent int, maxRes
 		}
 	}
 
-	// Indices to compress: all tool results except the last keepRecent
-	compressFrom := len(toolResultIndices) - keepRecent
-	if compressFrom < 0 {
-		compressFrom = 0
+	// Don't compress if we have fewer results than keepRecent
+	if len(toolResultIndices) <= keepRecent {
+		return 0
 	}
+
+	// Compress all tool results except the last keepRecent
+	compressFrom := len(toolResultIndices) - keepRecent
 
 	for i := 0; i < compressFrom && i < len(toolResultIndices); i++ {
 		idx := toolResultIndices[i]
 		msg := messages[idx]
-		if len(msg.Content) > maxResultChars {
-			// Compress: keep first maxResultChars chars + truncation notice
-			truncated := msg.Content[:maxResultChars]
-			truncated += fmt.Sprintf("\n\n[... %d more characters omitted ...]", len(msg.Content)-maxResultChars)
-			messages[idx].Content = truncated
+
+		// Already compressed (short digest format) — skip
+		if strings.HasPrefix(msg.Content, "[SUMMARY]") {
+			continue
+		}
+
+		// Compress to a brief digest
+		digest := compressToolDigest(msg.Content, msg.ToolID)
+		if digest != msg.Content {
+			messages[idx].Content = digest
 			compressed++
 		}
 	}
@@ -64,15 +73,117 @@ func compressToolResults(messages []provider.ChatMessage, keepRecent int, maxRes
 	return compressed
 }
 
+// compressToolDigest compresses a tool result into a brief digest format.
+// Preserves the key information while discarding verbose output.
+func compressToolDigest(content string, toolID string) string {
+	// Determine success/failure from content patterns
+	isError := strings.Contains(content, `"error"`) ||
+		strings.Contains(content, `"Error"`) ||
+		strings.Contains(content, "failed") ||
+		strings.Contains(content, "error:") ||
+		strings.Contains(content, "denied")
+
+	// Extract key info from common tool result patterns
+	// JSON results: try to extract a summary line
+	lines := strings.Split(content, "\n")
+
+	// For very short results, just truncate to first line
+	if len(lines) <= 2 && len(content) <= 150 {
+		if len(content) <= 150 {
+			return content // Already short enough
+		}
+	}
+
+	// For JSON results, extract key fields
+	if strings.HasPrefix(content, "{") {
+		summary := extractJSONSummary(content, isError)
+		return summary
+	}
+
+	// For multi-line results, take first meaningful line + line count
+	firstLine := ""
+	lineCount := len(lines)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			firstLine = trimmed
+			break
+		}
+	}
+
+	if firstLine == "" {
+		firstLine = lines[0]
+	}
+
+	// Truncate first line if too long
+	if len(firstLine) > 120 {
+		firstLine = firstLine[:117] + "..."
+	}
+
+	status := "✓"
+	if isError {
+		status = "✗"
+	}
+
+	return fmt.Sprintf("[SUMMARY] %s %s (%d lines) %s", status, toolID, lineCount, firstLine)
+}
+
+// extractJSONSummary pulls key fields from JSON tool results for a compact digest.
+func extractJSONSummary(content string, isError bool) string {
+	// Common patterns in our tool results:
+	// - plan_list: "- P-001: Title [status]"
+	// - plan_update: "Step S1 of plan P-001 updated to in_progress"
+	// - search_files: {"match_count": N, ...}
+	// - git_status: branch info
+	// - memory_search: {"count": N, ...}
+	// - read_file: file content
+	// - list_dir: directory listing
+
+	status := "✓"
+	if isError {
+		status = "✗"
+	}
+
+	// Try to extract match_count (search results)
+	if idx := strings.Index(content, `"match_count"`); idx != -1 {
+		// Extract the number
+		rest := content[idx:]
+		if end := strings.IndexByte(rest, ','); end != -1 {
+			if end > 30 {
+				end = 30
+			}
+			return fmt.Sprintf("[SUMMARY] %s search: %s", status, rest[:end])
+		}
+	}
+
+	// Try to extract count (memory search)
+	if idx := strings.Index(content, `"count"`); idx != -1 {
+		rest := content[idx:]
+		if end := strings.IndexByte(rest, ','); end != -1 {
+			if end > 30 {
+				end = 30
+			}
+			return fmt.Sprintf("[SUMMARY] %s memory: %s", status, rest[:end])
+		}
+	}
+
+	// For other JSON, take first 150 chars
+	truncated := content
+	if len(truncated) > 150 {
+		truncated = truncated[:147] + "..."
+	}
+
+	return fmt.Sprintf("[SUMMARY] %s %s", status, truncated)
+}
+
 // contextBudget manages context window estimation and compression in the
 // agentic loop. It monitors the estimated token count and compresses older
 // tool results when the conversation exceeds the budget.
 type contextBudget struct {
-	modelContextTokens int   // Maximum context tokens for the model
-	warnThreshold      float64 // Warn when tokens exceed this fraction (0.8 = 80%)
-	compressThreshold  float64 // Compress when tokens exceed this fraction (0.9 = 90%)
+	modelContextTokens int     // Maximum context tokens for the model
+	warnThreshold      float64 // Warn when tokens exceed this fraction (0.4 = 40%)
+	compressThreshold  float64 // Compress when tokens exceed this fraction (0.5 = 50%)
 	keepRecent         int     // Number of recent tool results to keep uncompressed
-	maxResultChars     int     // Max chars for compressed tool results
 }
 
 // defaultContextBudget returns a budget configured for the given model's context size.
@@ -82,7 +193,6 @@ func defaultContextBudget(modelContextTokens int) contextBudget {
 		warnThreshold:      0.40,
 		compressThreshold:  0.50,
 		keepRecent:         6,
-		maxResultChars:     300,
 	}
 }
 
@@ -99,9 +209,9 @@ func (cb *contextBudget) checkAndCompress(messages []provider.ChatMessage, itera
 	ratio := float64(estimated) / float64(budget)
 
 	if ratio >= cb.compressThreshold {
-		compressed := compressToolResults(messages, cb.keepRecent, cb.maxResultChars)
+		compressed := compressToolResults(messages, cb.keepRecent)
 		if compressed > 0 {
-			log.Printf("[CONTEXT-BUDGET] iteration %d: %.0f%% of context budget (%d/%d tokens), compressed %d older tool results", iteration, ratio*100, estimated, budget, compressed)
+			log.Printf("[CONTEXT-BUDGET] iteration %d: %.0f%% of context budget (%d/%d tokens), compressed %d older tool results to digests", iteration, ratio*100, estimated, budget, compressed)
 		}
 		// Re-estimate after compression
 		estimated = estimateTokenCount(messages)
@@ -114,18 +224,18 @@ func (cb *contextBudget) checkAndCompress(messages []provider.ChatMessage, itera
 
 	return estimated
 }
+
 // modelContextTokens maps known model names to their maximum context window size.
-// This is used to estimate when compression is needed.
 func getModelContextTokens(model string) (int, bool) {
 	known := map[string]int{
-		"glm-5.1:cloud":       202752,
-		"glm-5.2:cloud":       202752,
-		"glm-4:cloud":         131072,
+		"glm-5.1:cloud":         202752,
+		"glm-5.2:cloud":        202752,
+		"glm-4:cloud":           131072,
 		"deepseek-v4-pro:cloud": 131072,
 		"deepseek-v4-flash:cloud": 131072,
-		"qwen3.5:4b":         32768,
-		"qwen3.5:9b":         65536,
-		"qwen3.5:cloud":      131072,
+		"qwen3.5:4b":            32768,
+		"qwen3.5:9b":            65536,
+		"qwen3.5:cloud":         131072,
 		"qwen3-coder:480b-cloud": 131072,
 	}
 	tokens, ok := known[model]

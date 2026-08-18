@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/emaharmony/prizm/internal/orchestrator"
@@ -108,36 +109,60 @@ func TestEstimateTokenCount(t *testing.T) {
 	if count <= 0 {
 		t.Errorf("estimateTokenCount() = %d, want > 0", count)
 	}
-	// Rough check: ~3.2 chars/token, total ~50 chars => ~15 tokens
+	// Rough check: ~3.2 chars/token, total ~50 chars => ~16 tokens
 	if count > 150 {
 		t.Errorf("estimateTokenCount() = %d, seems too high for ~50 chars", count)
 	}
 }
 
-func TestCompressToolResults(t *testing.T) {
-	longResult := make([]byte, 2000)
-	for i := range longResult {
-		longResult[i] = 'x'
-	}
+func TestCompressToolResultsDigest(t *testing.T) {
+	longResult := strings.Repeat("x", 2000)
+	shortResult := "OK"
 
 	messages := []provider.ChatMessage{
 		{Role: "user", Content: "Hello"},
-		{Role: "tool", Content: string(longResult), ToolID: "1"},
-		{Role: "tool", Content: string(longResult), ToolID: "2"},
-		{Role: "tool", Content: "short result", ToolID: "3"},
-		{Role: "tool", Content: "plan data", ToolID: "4"},
+		{Role: "tool", Content: longResult, ToolID: "1"},  // index 1, old
+		{Role: "tool", Content: longResult, ToolID: "2"},  // index 2, old
+		{Role: "tool", Content: shortResult, ToolID: "3"},  // index 3, recent
+		{Role: "tool", Content: "plan data", ToolID: "4"},   // index 4, most recent
 	}
 
-	compressed := compressToolResults(messages, 2, 200)
+	compressed := compressToolResults(messages, 2)
 	if compressed != 2 {
 		t.Errorf("compressToolResults() compressed %d messages, want 2", compressed)
 	}
-	// First tool result should be truncated
-	if len(messages[1].Content) > 300 {
-		t.Errorf("first tool result not compressed: %d chars", len(messages[1].Content))
+	// Compressed messages should have [SUMMARY] prefix
+	if !strings.HasPrefix(messages[1].Content, "[SUMMARY]") {
+		t.Errorf("first tool result not compressed to digest: %s", messages[1].Content[:50])
+	}
+	if !strings.HasPrefix(messages[2].Content, "[SUMMARY]") {
+		t.Errorf("second tool result not compressed to digest: %s", messages[2].Content[:50])
 	}
 	// Recent results should be unchanged
-	if messages[3].Content != "short result" {
+	if messages[3].Content != shortResult {
 		t.Errorf("recent tool result was modified: %s", messages[3].Content)
+	}
+}
+
+func TestCompressToolDigest(t *testing.T) {
+	// Short result should be kept as-is
+	short := "OK"
+	result := compressToolDigest(short, "1")
+	if result != short {
+		t.Errorf("short result should be kept, got: %s", result)
+	}
+
+	// Long error result should get ✗ marker
+	longErr := strings.Repeat("error detail ", 30) + `{"error": "file not found", "success": false}`
+	result = compressToolDigest(longErr, "2")
+	if !strings.Contains(result, "✗") {
+		t.Errorf("long error result should have ✗ marker, got: %s", result)
+	}
+
+	// Long multi-line result should be compressed to digest
+	longResult := "line1\nline2\nline3\nline4\nline5\n"
+	result = compressToolDigest(longResult, "3")
+	if !strings.HasPrefix(result, "[SUMMARY]") {
+		t.Errorf("long result should be compressed to digest, got: %s", result[:50])
 	}
 }
