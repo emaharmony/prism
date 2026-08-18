@@ -34,7 +34,11 @@ const toolUsageGuidance = "You have tools available for reading files, searching
 	"IMPORTANT — Output Rules:\n" +
 	"6. NEVER output raw JSON, stdout, or tool results directly. Always synthesize into natural language.\n" +
 	"7. If you ran git status, tell the user what changed in plain English, not the raw diff.\n" +
-	"8. If you searched files, summarize what you found, don't paste file paths as a list."
+	"8. If you searched files, summarize what you found, don't paste file paths as a list.\n\n" +
+	"IMPORTANT — Context Efficiency Rules:\n" +
+	"9. Tool results are capped at 15KB. Large results get truncated. Use read_file with max_lines to get specific sections.\n" +
+	"10. Prefer focused tools (read_file, search_files) over broad ones (project_overview with deep_dive).\n" +
+	"11. If a result is truncated, use read_file to get just the section you need instead of re-requesting the whole file."
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.
