@@ -18,6 +18,7 @@ import (
 
 const maxChatToolIterations = 100 // V70: raised from 10 to allow full research+execution cycles
 const chatToolLoopTimeout = 2 * time.Minute
+const approvalWaitTimeout = 60 * time.Second // V74: how long to block for interactive tool approval
 
 // chatModelInfo reports which (provider, model) actually produced a tool-chat
 // response. FailoverProvider can silently fail over to a different target
@@ -296,6 +297,9 @@ func (cc *conversationContext) executeChatTool(
 	if runID != "" {
 		input["_run_id"] = runID
 	}
+	if channelID != "" {
+		input["_channel_id"] = channelID
+	}
 
 	result, execErr := cc.toolExec.ExecuteWithPolicy(ctx, tc.Function.Name, agentCfg.ID, "prizm", runID, input)
 
@@ -310,6 +314,39 @@ func (cc *conversationContext) executeChatTool(
 		// Go's random map iteration picking "path" or "size" before "content".
 		if result.Success {
 			if decision, _ := result.Output["policy_decision"].(string); decision == string(tool.PolicyRequiresApproval) {
+				// V74: Interactive tool approval — block for human response
+				approvalID, ok := result.Output["approval_id"].(string)
+				if ok && approvalID != "" {
+					// Register a waiter for the Discord button handler to signal
+					ch := cc.registerApprovalWaiter(runID, approvalID)
+
+					// Block with 60s timeout
+					select {
+					case outcome := <-ch:
+						if outcome.Approved {
+							return outcome.Message, toolCallSummary{
+								Tool:   tc.Function.Name,
+								Input:  tc.Function.Arguments,
+								Status: "success",
+								Result: truncateStr(outcome.Message, 200),
+							}
+						}
+						return outcome.Message, toolCallSummary{
+							Tool:   tc.Function.Name,
+							Input:  tc.Function.Arguments,
+							Status: "error",
+							Result: truncateStr(outcome.Message, 200),
+						}
+					case <-time.After(approvalWaitTimeout):
+						return "approval timed out (60s) — tool not executed", toolCallSummary{
+							Tool:   tc.Function.Name,
+							Input:  tc.Function.Arguments,
+							Status: "error",
+							Result: "approval timed out (60s)",
+						}
+					}
+				}
+				// Fallback: no approval store or empty ID (CLI mode, no Discord bot)
 				status = "approval_needed"
 				resultStr = formatApprovalOutput(result.Output)
 			}

@@ -182,6 +182,15 @@ func EvaluatePolicyForAgent(cfg PolicyConfig, toolName, agentID string, input ma
 	case "set_active_task", "clear_active_task", "state_get":
 		return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("%s is state management, always approved", toolName)}
 
+	// State mutation tools — persist working state, not code. Approval-gated
+	// because they mutate the agent's durable working state; a human should
+	// confirm before recording a decision, blocking an item, or rewriting context.
+	case "update_context", "record_decision", "add_blocked", "unblock":
+		if cfg.AutoApproveMutations {
+			return PolicyResult{Decision: PolicyApproved, Reason: fmt.Sprintf("auto-approve: %s approved for autonomous wake action", toolName)}
+		}
+		return PolicyResult{Decision: PolicyRequiresApproval, Reason: fmt.Sprintf("%s mutates working state, requires approval", toolName)}
+
 	case "write_file_dry_run":
 		return PolicyResult{Decision: PolicyApproved, Reason: "write_file_dry_run is a read-only preview, no mutation"}
 

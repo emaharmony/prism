@@ -116,6 +116,13 @@ type discordBotClient interface {
 // Discord message through the full pipeline. It's closed over by the
 // OnMessage handler so each message has access to routing, sessions,
 // LLM providers, and the Discord bot for responses.
+// approvalOutcome is the result delivered to a blocked tool loop after a
+// human resolves a pending approval via Discord buttons.
+type approvalOutcome struct {
+	Approved bool
+	Message  string // tool output on approve (MutationResult.Message), or denial reason on deny
+}
+
 type conversationContext struct {
 	router        *router.Router
 	sessMgr       *session.Manager
@@ -151,6 +158,10 @@ type conversationContext struct {
 	ttsConfig     tts.Config                // V61: TTS configuration
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
+
+	// V74: Interactive tool approval — blocking wait for Discord button responses
+	approvalWaitMu sync.Mutex
+	approvalWait   map[string]chan approvalOutcome
 
 	// Cached static system content — built once, reused every message.
 	staticSystemText string // For text-based provider path
@@ -725,6 +736,7 @@ func executeServe(args []string) {
 				improveMgr:  improveMgr, // V32: improvement manager
 				guardian:    guardian,   // V32: guard rail
 				pendingWork: make(map[string]pendingWorkStart),
+				approvalWait: make(map[string]chan approvalOutcome),
 			}
 
 			// Pre-build static system content for all agents
@@ -773,12 +785,16 @@ func executeServe(args []string) {
 								return
 							}
 							log.Printf("[BUTTON] file approval: APPROVED and applied to %s by %s: %s", result.TargetPath, approvedBy, result.Message)
+						// V74: Signal the tool loop that this approval was resolved
+						convCtx.signalApproval(runID, approvalID, approvalOutcome{Approved: true, Message: result.Message})
 						} else if action == "deny" {
 							if err := buttonMutExec.DenyApproval(runID, approvalID, approvedBy, "denied via Discord button"); err != nil {
 								log.Printf("[BUTTON] file approval: deny failed: %v", err)
 								return
 							}
 							log.Printf("[BUTTON] file approval: DENIED by %s", approvedBy)
+						// V74: Signal the tool loop that this approval was denied
+						convCtx.signalApproval(runID, approvalID, approvalOutcome{Approved: false, Message: "tool was denied by user"})
 						}
 						return
 					}

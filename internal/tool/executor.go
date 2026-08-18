@@ -403,6 +403,28 @@ func describeToolCall(toolName string, input map[string]any) (target, preview st
 		return v
 	}
 	switch toolName {
+	case "update_context":
+		var parts []string
+		for _, k := range []string{"branch", "last_action", "pr", "notes"} {
+			if v := str(k); v != "" {
+				parts = append(parts, fmt.Sprintf("%s=%q", k, v))
+			}
+		}
+		label := strings.Join(parts, ", ")
+		if label == "" {
+			label = "update_context"
+		}
+		return label, label
+	case "record_decision":
+		decision := str("decision")
+		return decision, fmt.Sprintf("record decision: %q", decision)
+	case "add_blocked":
+		item := str("item")
+		waitingOn := str("waiting_on")
+		return item, fmt.Sprintf("blocked: %q (waiting on %s)", item, waitingOn)
+	case "unblock":
+		id := str("id")
+		return id, fmt.Sprintf("unblock %s", id)
 	case "shell":
 		cmd := str("command")
 		return cmd, cmd
