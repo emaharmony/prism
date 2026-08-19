@@ -39,6 +39,17 @@ const toolUsageGuidance = "You have tools available for reading files, searching
 	"9. Tool results are capped at 15KB. Large results get truncated. Use read_file with max_lines to get specific sections.\n" +
 	"10. Prefer focused tools (read_file, search_files) over broad ones (project_overview with deep_dive).\n" +
 	"11. If a result is truncated, use read_file to get just the section you need instead of re-requesting the whole file."
+
+// executionDirectives provides act-first behavioral guidance for the agent loop.
+// Derived from analysis of OpenClaw's buildExecutionBiasSection and Hermes' TASK_COMPLETION_GUIDANCE +
+// TOOL_USE_ENFORCEMENT_GUIDANCE patterns. Instance-agnostic — works for any agent, any model.
+const executionDirectives = "\n\nIMPORTANT — Execution Directives:\n" +
+	"12. When a task asks you to write, create, or build something, your deliverable is a working artifact on disk — not a description, plan, or summary. Keep working until the artifact exists and is verified.\n" +
+	"13. Every response to an execution-type task must either (a) make progress with tool calls, or (b) deliver the final result. For conversational responses, answer directly without tools. Do not end a turn with a promise of future action — execute it now.\n" +
+	"14. If you have called 8+ read-only tools without producing output, you likely have enough context — produce the deliverable now. Reading more is not progress.\n" +
+	"15. If a tool call fails, report the failure honestly and try an alternative. Never substitute fabricated output for results you couldn't actually produce.\n" +
+	"16. Mutable facts (file contents, git state, time, versions) — live-check with tools, do not guess from memory.\n" +
+	"17. A final claim needs evidence: cite the tool output or file path that confirms it, or name the blocker that stopped you."
 const toolLoopTimeout = 2 * time.Minute // separate timeout for the tool loop
 
 // runToolLoop executes a multi-turn tool execution loop.
@@ -70,10 +81,12 @@ func (cc *conversationContext) runToolLoop(
 	for i := 0; i < maxToolIterations; i++ {
 		log.Printf("[TOOL] iteration %d/%d", i+1, maxToolIterations)
 
-		// After 3 iterations, inject a nudge telling the model to wrap up.
-		// This prevents infinite tool-calling loops.
-		if i >= 3 && !nudgeInjected {
-			currentPrompt += "\n\nYou have already used several tools. Please provide your final answer now based on the information you have gathered. Do not request any more tools."
+		// V75: After 6 iterations, inject a nudge telling the model to wrap up.
+		// Previous threshold (3) was too aggressive for execution tasks that need 5-8 reads.
+		// The nudge now distinguishes between research and execution: produce the deliverable,
+		// don't just summarize.
+		if i >= 6 && !nudgeInjected {
+			currentPrompt += "\n\nYou have used several tools. If you have enough information to produce the deliverable, produce it now. If you genuinely need more information, continue — but do not produce a summary when a deliverable was requested."
 			nudgeInjected = true
 		}
 

@@ -1968,6 +1968,7 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	sbChat.WriteString("\n## How You Respond\n")
 	sbChat.WriteString(postfix + "\n")
 	sbChat.WriteString("\n## Tool Usage\n" + toolUsageGuidance + "\n")
+	sbChat.WriteString(executionDirectives + "\n")
 
 	cc.staticSystemChat = sbChat.String()
 }
@@ -2000,6 +2001,9 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 
 	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
+
+	// V75: Execution directives — separate from tool usage guidance for model salience
+	sb.WriteString("## Execution Bias\n" + executionDirectives + "\n\n")
 
 	// --- Layer 5: Working state injection ---
 	if cc.stateMgr != nil {

@@ -93,6 +93,10 @@ func (cc *conversationContext) runToolLoopAgentic(
 	lastPlanUpdateIteration := 0
 	planNudged := false
 
+	// V75: No-write detector — tracks whether the agent has produced any write
+	// output in recent iterations. If stuck in a read-loop, inject a nudge.
+	noWriteNudgeInjected := false
+
 	for {
 		iterationCount++
 		if iterationCount > hardLimit {
@@ -122,6 +126,31 @@ func (cc *conversationContext) runToolLoopAgentic(
 						log.Printf("[AGENTIC-LOOP] iteration %d: plan step nudge for %s (%d/%d)", iterationCount, activePlan.ID, completed, total)
 					}
 				}
+			}
+		}
+
+		// V75: No-write detector — if the agent has made 10+ iterations without
+		// any write/mutation tool call, inject a nudge to produce output.
+		// This catches models that read extensively but never write.
+		if iterationCount >= 10 && !noWriteNudgeInjected {
+			hasWrittenRecently := false
+			lookbackStart := iterationCount - 10
+			if lookbackStart < 0 {
+				lookbackStart = 0
+			}
+			for idx := lookbackStart; idx < len(summaries); idx++ {
+				if isWriteTool(summaries[idx].Tool) {
+					hasWrittenRecently = true
+					break
+				}
+			}
+			if !hasWrittenRecently {
+				currentMessages = append(currentMessages, provider.ChatMessage{
+					Role:    "system",
+					Content: "You have been researching for " + fmt.Sprintf("%d", iterationCount) + " iterations without producing output. Your task requires a deliverable. Stop researching and write the file or produce the result now.",
+				})
+				noWriteNudgeInjected = true
+				log.Printf("[AGENTIC-LOOP] iteration %d: no-write nudge injected (no write tools in last %d iterations)", iterationCount, iterationCount-lookbackStart)
 			}
 		}
 
@@ -278,6 +307,25 @@ func (cc *conversationContext) runToolLoopAgentic(
 		// V72: Check context budget and compress if needed
 		ctxBudget.checkAndCompress(currentMessages, iterationCount)
 	}
+}
+
+// isWriteTool returns true if the tool name is a write/mutation tool that produces output.
+// Used by the no-write detector to distinguish read-only loops from productive ones.
+func isWriteTool(name string) bool {
+	writeTools := map[string]bool{
+		"write_file":                true,
+		"write_file_proposal":       true,
+		"write_file_dry_run":        true,
+		"create_directory":         true,
+		"create_directory_proposal": true,
+		"plan_create":               true,
+		"plan_update":               true,
+		"plan_reopen":               true,
+		"record_decision":           true,
+		"update_context":            true,
+		"add_blocked":               true,
+	}
+	return writeTools[name]
 }
 
 // synthesizeFinalAnswer makes a final LLM call with no tools to synthesize
