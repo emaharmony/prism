@@ -61,6 +61,7 @@ import (
 	"github.com/emaharmony/prizm/internal/governance"
 	"github.com/emaharmony/prizm/internal/guard"
 	"github.com/emaharmony/prizm/internal/improve"
+	"github.com/emaharmony/prizm/internal/memory"
 	"github.com/emaharmony/prizm/internal/orchestrator"
 	"github.com/emaharmony/prizm/internal/plan"
 	"github.com/emaharmony/prizm/internal/provider"
@@ -148,6 +149,7 @@ type conversationContext struct {
 	commitStore   *commitments.Store       // V61: Commitments store for promise tracking
 	ttsClient     *tts.Client               // V61: Voicebox TTS client
 	ttsConfig     tts.Config                // V61: TTS configuration
+	autoExtractor *memory.AutoExtractor      // V76: Auto-extract memory after conversation turns
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
@@ -659,6 +661,19 @@ func executeServe(args []string) {
 				}
 			})
 
+			// V76: Auto-extractor for memory auto-capture
+			var autoExtractor *memory.AutoExtractor
+			if cfg.Memory.AutoCapture {
+				gateModels := cfg.Memory.ModelFallbackChain
+				if len(gateModels) == 0 {
+					gateModels = []string{cfg.Memory.GateModel, cfg.Memory.ExtractModel}
+				}
+				gateExtractor := memory.NewGateExtractor(gateModels, cfg.Memory.OllamaURL, "")
+				memStore := memory.NewMarkdownStore(workspaceRoot)
+				autoExtractor = memory.NewAutoExtractor(gateExtractor, memStore, nil) // events wired later if needed
+				log.Printf("[MEMORY] auto-capture enabled (models: %s)", strings.Join(gateModels, " → "))
+			}
+
 			convCtx := &conversationContext{
 				router:      rtr,
 				sessMgr:     sessMgr,
@@ -692,6 +707,7 @@ func executeServe(args []string) {
 				commitStore: commitStore,
 			ttsClient: ttsClient,
 			ttsConfig: ttsConfig,
+			autoExtractor: autoExtractor, // V76: auto-extract memory after conversation turns
 				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,    // V32: plan manager
 				improveMgr:  improveMgr, // V32: improvement manager
@@ -1644,6 +1660,22 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 	// Step 11: Update local summary and optionally send curated candidates to Remembrance.
 	if responseText != "" {
 		enqueueLocalMemoryUpdate(cc.sessMgr, cc.cfg, cc.remClient, cc.remSem, cc.remCache, ownerID, msg.UserID, finalRC.Agent, sess.ID, run.ID)
+	}
+
+	// V76: Auto-extract memory from this conversation turn (fire-and-forget).
+	// Runs gate → extract → store pipeline in a goroutine. All errors non-fatal.
+	if cc.autoExtractor != nil && cc.cfg.Memory.AutoCapture {
+		turn := memory.ConversationTurn{
+			UserMessage:   msg.Content,
+			AgentResponse: responseText,
+			AgentID:        finalRC.Agent,
+			SessionID:      sess.ID,
+		}
+		go func() {
+			if err := cc.autoExtractor.AutoExtract(ctxcontext.Background(), turn); err != nil {
+				log.Printf("[MEMORY-AUTO] extraction failed: %v", err)
+			}
+		}()
 	}
 
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
