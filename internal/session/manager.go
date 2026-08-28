@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -586,12 +587,34 @@ func (m *Manager) compact(s *Session) error {
 	for _, msg := range removed {
 		removeIDs[msg.ID] = true
 	}
+
+	// V76: For "summarize" strategy, build a SessionMemory from the removed messages
+	// and inject it as the first message in the kept set. This gives the agent a
+	// structured continuity anchor after compaction.
+	var continuityMsg *Message
+	if m.compactionStrategy == "summarize" && len(removed) > 0 {
+		mem := BuildSessionMemoryFromMessages(removed)
+		continuityMsg = &Message{
+			ID:        "continuity-" + s.ID + "-" + s.CompactedAt.Format("20060102-150405"),
+			SessionID: s.ID,
+			Role:      "system",
+			Content:   mem.Format(),
+			Timestamp: time.Now().UTC(),
+		}
+	}
+
 	kept := s.Messages[:0]
 	for _, msg := range s.Messages {
 		if !removeIDs[msg.ID] {
 			kept = append(kept, msg)
 		}
 	}
+
+	// Prepend the continuity summary if we built one
+	if continuityMsg != nil {
+		kept = append([]Message{*continuityMsg}, kept...)
+	}
+
 	s.Messages = kept
 	s.CompactedAt = time.Now().UTC()
 
@@ -604,6 +627,16 @@ func (m *Manager) compact(s *Session) error {
 			if _, err := m.db.Exec("DELETE FROM messages WHERE id = ?", msg.ID); err != nil {
 				return fmt.Errorf("session: delete message %s: %w", msg.ID, err)
 			}
+		}
+	}
+
+	// Store the continuity message in the DB if we built one
+	if continuityMsg != nil {
+		if _, err := m.db.Exec(
+			"INSERT INTO messages (id, session_id, role, content, agent_id, timestamp, archived) VALUES (?, ?, ?, ?, ?, ?, 0)",
+			continuityMsg.ID, s.ID, continuityMsg.Role, continuityMsg.Content, "", continuityMsg.Timestamp,
+		); err != nil {
+			log.Printf("[SESSION] failed to store continuity message: %v (non-fatal)", err)
 		}
 	}
 
