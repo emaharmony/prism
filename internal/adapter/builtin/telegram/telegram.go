@@ -262,6 +262,15 @@ func (b *BotAdapter) pollLoop() {
 				// Handle button callback (approval buttons)
 				cb := update.CallbackQuery
 				if cb.From != nil && cb.Message != nil && cb.Message.Chat != nil {
+					// V76 fix: Apply allowed-users check to callback queries too
+					cbUserID := fmt.Sprintf("%d", cb.From.ID)
+					if len(b.allowedIDs) > 0 && !b.allowedIDs[cbUserID] {
+						log.Printf("[TELEGRAM] ignoring callback from unauthorized user %s", cbUserID)
+						b.apiCall(b.ctx, "answerCallbackQuery", map[string]any{
+							"callback_query_id": cb.ID,
+						})
+						continue
+					}
 					// Acknowledge the callback
 					b.apiCall(b.ctx, "answerCallbackQuery", map[string]any{
 						"callback_query_id": cb.ID,
@@ -269,7 +278,7 @@ func (b *BotAdapter) pollLoop() {
 					// Dispatch as a message with the callback data as content
 					msg := &InboundMessage{
 						ChatID:    fmt.Sprintf("%d", cb.Message.Chat.ID),
-						UserID:    fmt.Sprintf("%d", cb.From.ID),
+						UserID:    cbUserID,
 						UserName:  cb.From.UserName,
 						Content:   cb.Data,
 						MessageID: fmt.Sprintf("%d", cb.Message.MessageID),

@@ -186,13 +186,16 @@ func (m *Manager) migrate(_ context.Context) error {
 		return err
 	}
 	// V76: FTS5 full-text search on message content for session search.
-	// Uses external content table pattern — the FTS index references the messages table
-	// so we don't duplicate content. Falls back gracefully if FTS5 is unavailable.
+	// Using a contentless FTS5 table (no external-content pattern) to avoid
+	// the need for sync triggers. Content is duplicated in the FTS index
+	// but auto-maintained by SQLite. Falls back gracefully if FTS5 unavailable.
 	if _, err := m.db.Exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+			session_id UNINDEXED,
+			message_id UNINDEXED,
+			role UNINDEXED,
 			content,
-			content='messages',
-			content_rowid='rowid'
+			timestamp UNINDEXED
 		);
 	`); err != nil {
 		log.Printf("[SESSION] FTS5 not available, session search disabled: %v", err)
@@ -545,6 +548,11 @@ func (m *Manager) AddMessage(sessionID, role, content, agentID string) (*Message
 		return nil, fmt.Errorf("session: insert message: %w", err)
 	}
 
+	// V76: Also insert into FTS5 index for session search
+	m.db.Exec("INSERT INTO messages_fts (session_id, message_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+		sessionID, msg.ID, msg.Role, msg.Content, msg.Timestamp) // non-fatal if FTS unavailable
+
+
 	// Update last_active
 	_, err = m.db.Exec(
 		"UPDATE sessions SET last_active = ? WHERE id = ?",
@@ -607,12 +615,20 @@ func (m *Manager) compact(s *Session) error {
 	var continuityMsg *Message
 	if m.compactionStrategy == "summarize" && len(removed) > 0 {
 		mem := BuildSessionMemoryFromMessages(removed)
+		// Use the oldest removed message's timestamp so the continuity message
+		// stays first when messages are ordered by timestamp ASC on reload.
+		oldestTs := removed[0].Timestamp
+		for _, r := range removed[1:] {
+			if r.Timestamp.Before(oldestTs) {
+				oldestTs = r.Timestamp
+			}
+		}
 		continuityMsg = &Message{
-			ID:        "continuity-" + s.ID + "-" + s.CompactedAt.Format("20060102-150405"),
+			ID:        "continuity-" + s.ID + "-" + oldestTs.Format("20060102-150405") + "-" + fmt.Sprintf("%d", time.Now().UnixNano()%1000000),
 			SessionID: s.ID,
 			Role:      "system",
 			Content:   mem.Format(),
-			Timestamp: time.Now().UTC(),
+			Timestamp: oldestTs,
 		}
 	}
 
@@ -1054,9 +1070,8 @@ func (m *Manager) SearchSessions(query string, limit int) ([]SearchResult, error
 		limit = 10
 	}
 	rows, err := m.db.Query(`
-		SELECT m.session_id, m.id, m.role, m.content, m.timestamp, rank
-		FROM messages_fts f
-		JOIN messages m ON m.rowid = f.rowid
+		SELECT session_id, message_id, role, content, timestamp, rank
+		FROM messages_fts
 		WHERE messages_fts MATCH ?
 		ORDER BY rank
 		LIMIT ?
