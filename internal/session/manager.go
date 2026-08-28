@@ -185,6 +185,19 @@ func (m *Manager) migrate(_ context.Context) error {
 	if _, err := m.db.Exec("CREATE INDEX IF NOT EXISTS idx_messages_session_archived ON messages(session_id, archived, timestamp)"); err != nil {
 		return err
 	}
+	// V76: FTS5 full-text search on message content for session search.
+	// Uses external content table pattern — the FTS index references the messages table
+	// so we don't duplicate content. Falls back gracefully if FTS5 is unavailable.
+	if _, err := m.db.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+			content,
+			content='messages',
+			content_rowid='rowid'
+		);
+	`); err != nil {
+		log.Printf("[SESSION] FTS5 not available, session search disabled: %v", err)
+		// Non-fatal — FTS5 may not be compiled into all SQLite builds
+	}
 	return nil
 }
 
@@ -1021,4 +1034,45 @@ func generateSessionID() string {
 // generateMessageID creates a unique message ID.
 func generateMessageID() string {
 	return fmt.Sprintf("msg_%d_%d", time.Now().UnixNano(), idCounter.Add(1))
+}
+
+// SearchResult is a single message match from SearchSessions.
+type SearchResult struct {
+	SessionID  string    `json:"session_id"`
+	MessageID  string    `json:"message_id"`
+	Role       string    `json:"role"`
+	Content    string    `json:"content"`
+	Timestamp  time.Time `json:"timestamp"`
+	Rank       float64   `json:"rank"`
+}
+
+// SearchSessions performs full-text search across all session messages using FTS5.
+// Returns matching messages ranked by relevance. Returns an error if FTS5 is
+// not available.
+func (m *Manager) SearchSessions(query string, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := m.db.Query(`
+		SELECT m.session_id, m.id, m.role, m.content, m.timestamp, rank
+		FROM messages_fts f
+		JOIN messages m ON m.rowid = f.rowid
+		WHERE messages_fts MATCH ?
+		ORDER BY rank
+		LIMIT ?
+	`, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("session: FTS5 search failed: %w", err)
+	}
+	defer rows.Close()
+
+	var results []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.SessionID, &r.MessageID, &r.Role, &r.Content, &r.Timestamp, &r.Rank); err != nil {
+			return nil, fmt.Errorf("session: scan search result: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, nil
 }
