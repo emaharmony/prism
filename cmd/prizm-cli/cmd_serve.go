@@ -1922,6 +1922,9 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
 
+	// --- Layer 4b: SCOPE & SAFETY (V76) ---
+	sb.WriteString(scopeSafetyDirectives + "\n\n")
+
 	// --- Layer 5: Working state injection ---
 	if cc.stateMgr != nil {
 		if statePrompt := cc.stateMgr.FormatStateForPrompt(); statePrompt != "" {
