@@ -43,7 +43,8 @@ func NewAutoExtractor(gate *GateExtractor, store MemoryStore, events *EventEmitt
 //  4. Store — persist to the MemoryStore
 //  5. Emit events for observability
 //
-// Returns nil if the gate rejects the turn or if any step fails (errors are logged).
+// Returns nil if the gate rejects the turn. Returns an error only if the
+// store step fails (gate and extract errors are logged and non-fatal).
 // The caller should run this in a goroutine — it must never block the conversation.
 func (a *AutoExtractor) AutoExtract(ctx context.Context, turn ConversationTurn) error {
 	if a == nil || a.Gate == nil || a.Store == nil {
@@ -146,8 +147,14 @@ func buildTurnText(turn ConversationTurn) string {
 
 // truncateText returns the first n characters of s, with "..." if truncated.
 func truncateText(s string, n int) string {
+	s = strings.TrimSpace(s)
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	// Truncate at rune boundary to avoid splitting multi-byte UTF-8
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
 }

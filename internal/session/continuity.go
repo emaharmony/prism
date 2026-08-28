@@ -138,26 +138,42 @@ func truncateMsg(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	// Truncate at rune boundary to avoid splitting multi-byte UTF-8
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "..."
 }
 
 // extractFiles looks for file path patterns in text and adds them to the files list.
+// Matches tokens that start with / or ./ and look like file paths (have extension,
+// reasonable length). Avoids false positives from URLs, version strings, ratios.
 func extractFiles(text string, files *[]string) {
-	// Look for common file path patterns
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		// Match paths like /Users/.../file.go or src/path/file.go
-		if idx := strings.Index(line, "/"); idx >= 0 {
-			// Extract potential file path
-			rest := line[idx:]
-			// Take up to first space or end of line
-			end := strings.IndexAny(rest, " \t,;()")
+		// Scan for path-like tokens within the line
+		for i := 0; i < len(line); i++ {
+			if line[i] != '/' {
+				continue
+			}
+			// Must be at start of line OR preceded by a space (standalone token)
+			if i > 0 && line[i-1] != ' ' && line[i-1] != '\t' {
+				continue
+			}
+			// Extract the path token (up to space or end of line)
+			rest := line[i:]
+			end := strings.IndexAny(rest, " \t,;()'")
 			if end < 0 {
 				end = len(rest)
 			}
 			path := rest[:end]
-			// Must look like a file (has a dot and extension, or is in a known dir)
+			// Must have a dot (extension), be > 3 chars, < 200 chars
+			// Reject URLs (must not contain ://)
+			if strings.Contains(path, "://") {
+				continue
+			}
 			if strings.Contains(path, ".") && len(path) > 3 && len(path) < 200 {
 				if !contains(*files, path) {
 					*files = append(*files, path)

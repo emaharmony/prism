@@ -61,7 +61,7 @@ func (t *SkillWriteTool) Execute(ctx context.Context, input map[string]any) (Too
 		return ToolResult{Success: false, Error: "skill_create requires a 'description'"}, nil
 	}
 	if len(description) > 60 {
-		description = description[:60]
+		description = string([]rune(description)[:60]) // rune-safe truncation
 	}
 
 	body, _ := input["body"].(string)

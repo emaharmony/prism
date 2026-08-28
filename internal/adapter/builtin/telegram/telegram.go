@@ -346,23 +346,26 @@ func (b *BotAdapter) apiCall(ctx context.Context, method string, params map[stri
 }
 
 // SplitMessage splits content into chunks that fit Telegram's 4096 char limit.
+// Uses rune-aware truncation to avoid splitting multi-byte UTF-8.
 func SplitMessage(content string) []string {
 	const limit = 4000 // leave room for markdown
-	if len(content) <= limit {
+	runes := []rune(content)
+	if len(runes) <= limit {
 		return []string{content}
 	}
 	var chunks []string
-	for len(content) > 0 {
+	src := runes
+	for len(src) > 0 {
 		end := limit
-		if end > len(content) {
-			end = len(content)
+		if end > len(src) {
+			end = len(src)
 		}
 		// Try to split at last newline before limit
-		if idx := strings.LastIndex(content[:end], "\n"); idx > 0 {
+		if idx := strings.LastIndex(string(src[:end]), "\n"); idx > 0 {
 			end = idx
 		}
-		chunks = append(chunks, content[:end])
-		content = strings.TrimPrefix(content[end:], "\n")
+		chunks = append(chunks, string(src[:end]))
+		src = []rune(strings.TrimPrefix(string(src[end:]), "\n"))
 	}
 	return chunks
 }
