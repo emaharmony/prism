@@ -71,13 +71,13 @@ func (t *SkillWriteTool) Execute(ctx context.Context, input map[string]any) (Too
 
 	category, _ := input["category"].(string)
 
-	// Build the SKILL.md content
+	// Build the SKILL.md content with properly escaped YAML frontmatter
 	var sb strings.Builder
 	sb.WriteString("---\n")
-	sb.WriteString(fmt.Sprintf("name: %s\n", name))
-	sb.WriteString(fmt.Sprintf("description: %s\n", description))
+	sb.WriteString(fmt.Sprintf("name: %q\n", name))
+	sb.WriteString(fmt.Sprintf("description: %q\n", description))
 	if category != "" {
-		sb.WriteString(fmt.Sprintf("metadata:\n  hermes:\n    category: %s\n", category))
+		sb.WriteString(fmt.Sprintf("metadata:\n  hermes:\n    category: %q\n", category))
 	}
 	sb.WriteString("---\n\n")
 	sb.WriteString(body)

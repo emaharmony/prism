@@ -13,7 +13,8 @@ import (
 // The result is a task ID that the agent can reference. The actual result
 // from the delegated agent comes back asynchronously via NATS.
 type DelegateTool struct {
-	Delegator Delegator
+	Delegator   Delegator
+	CallingAgent string // ID of the agent that owns this tool instance
 }
 
 // Delegator is the minimal interface needed from the delegation engine.
@@ -22,8 +23,9 @@ type Delegator interface {
 }
 
 // NewDelegateTool creates a delegate tool backed by the given delegator.
-func NewDelegateTool(d Delegator) *DelegateTool {
-	return &DelegateTool{Delegator: d}
+// callingAgent is the ID of the agent that will be delegating (e.g., "lumi").
+func NewDelegateTool(d Delegator, callingAgent string) *DelegateTool {
+	return &DelegateTool{Delegator: d, CallingAgent: callingAgent}
 }
 
 func (t *DelegateTool) Name() string { return "delegate" }
@@ -74,9 +76,12 @@ func (t *DelegateTool) Execute(ctx context.Context, input map[string]any) (ToolR
 		contextData["notes"] = ctxStr
 	}
 
-	// Delegate — the delegatedBy will be filled by the caller's agent ID
-	// For now, use "lumi" as the default. The tool executor can override this.
-	taskID, err := t.Delegator.Delegate(ctx, "lumi", agent, taskType, description, contextData)
+	// Use the configured calling agent ID
+	caller := t.CallingAgent
+	if caller == "" {
+		caller = "lumi" // fallback
+	}
+	taskID, err := t.Delegator.Delegate(ctx, caller, agent, taskType, description, contextData)
 	if err != nil {
 		return ToolResult{Success: false, Error: fmt.Sprintf("delegation failed: %v", err)}, nil
 	}

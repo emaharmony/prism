@@ -124,7 +124,9 @@ func (b *BotAdapter) Stop() error {
 
 // OnMessage registers a handler for incoming messages.
 func (b *BotAdapter) OnMessage(handler MessageHandler) {
+	b.mu.Lock()
 	b.handlers = append(b.handlers, handler)
+	b.mu.Unlock()
 }
 
 // Send sends a message to a Telegram chat.

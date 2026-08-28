@@ -69,7 +69,7 @@ func (g *GateExtractor) Gate(ctx context.Context, conversationTurn string) (*Gat
 
 // ExtractResult is the structured output of memory extraction.
 type ExtractResult struct {
-	Category  string   // decision, preference, fact, observation
+	Category  string   // user, feedback, project, reference, emotional
 	Tier      string   // ephemeral, active, persist
 	Summary   string   // one-line summary
 	KeyTopics []string // comma-separated topics
@@ -146,7 +146,7 @@ func (g *GateExtractor) callOllama(ctx context.Context, model, prompt string) (s
 // parseExtractResponse parses the structured extraction output.
 func parseExtractResponse(raw string) *ExtractResult {
 	result := &ExtractResult{
-		Category: "fact",
+		Category: "reference",
 		Tier:     "active",
 	}
 
@@ -187,7 +187,7 @@ func afterPrefix(line, prefix string) (string, bool) {
 
 func normalizeCategory(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	// V76: New 4-type taxonomy
+	// V76: 5-type taxonomy (user/feedback/project/reference/emotional)
 	// Order matters: check "prefer" before "reference" (preference contains "reference")
 	switch {
 	case strings.Contains(s, "user"):

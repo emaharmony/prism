@@ -19,7 +19,7 @@ func (m *mockDelegator) Delegate(ctx context.Context, delegatedBy, delegatedTo s
 }
 
 func TestDelegateTool_NilDelegator(t *testing.T) {
-	tool := NewDelegateTool(nil)
+	tool := NewDelegateTool(nil, "lumi")
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"agent":       "mango",
 		"task_type":   "review",
@@ -34,7 +34,7 @@ func TestDelegateTool_NilDelegator(t *testing.T) {
 }
 
 func TestDelegateTool_Success(t *testing.T) {
-	tool := NewDelegateTool(&mockDelegator{taskID: "task_123"})
+	tool := NewDelegateTool(&mockDelegator{taskID: "task_123"}, "lumi")
 	result, err := tool.Execute(context.Background(), map[string]any{
 		"agent":       "mango",
 		"task_type":   "review",
@@ -55,7 +55,7 @@ func TestDelegateTool_Success(t *testing.T) {
 }
 
 func TestDelegateTool_MissingAgent(t *testing.T) {
-	tool := NewDelegateTool(&mockDelegator{})
+	tool := NewDelegateTool(&mockDelegator{}, "lumi")
 	result, _ := tool.Execute(context.Background(), map[string]any{
 		"task_type":   "review",
 		"description": "review this",
@@ -66,7 +66,7 @@ func TestDelegateTool_MissingAgent(t *testing.T) {
 }
 
 func TestDelegateTool_MissingDescription(t *testing.T) {
-	tool := NewDelegateTool(&mockDelegator{})
+	tool := NewDelegateTool(&mockDelegator{}, "lumi")
 	result, _ := tool.Execute(context.Background(), map[string]any{
 		"agent":     "mango",
 		"task_type": "review",

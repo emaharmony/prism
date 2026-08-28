@@ -29,8 +29,8 @@ func TestSkillWriteTool_CreateSkill(t *testing.T) {
 		t.Fatalf("skill file not written: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "name: debug-nats") {
-		t.Error("expected frontmatter with name")
+	if !strings.Contains(content, `name: "debug-nats"`) {
+		t.Error("expected frontmatter with quoted name")
 	}
 	if !strings.Contains(content, "Debug NATS connection issues") {
 		t.Error("expected description in frontmatter")
