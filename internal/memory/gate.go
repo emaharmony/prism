@@ -196,6 +196,8 @@ func normalizeCategory(s string) string {
 		return "feedback"
 	case strings.Contains(s, "project"):
 		return "project"
+	case strings.Contains(s, "emotional"):
+		return "emotional"
 	case strings.Contains(s, "prefer"):
 		return "user"
 	case strings.Contains(s, "decision"):
@@ -265,6 +267,7 @@ Category types:
 - feedback: corrections, lessons learned, things to avoid, improvements noted
 - project: project state, architecture decisions, task progress, blockers
 - reference: facts, techniques, environment info, tool quirks, workarounds
+- emotional: qualitative state, enjoyment level, what felt good/off, identity reflections
 
 Do NOT save:
 - Trivial/obvious info ("user asked about Python")
