@@ -1084,8 +1084,17 @@ func (m *Manager) SearchSessions(query string, limit int) ([]SearchResult, error
 	var results []SearchResult
 	for rows.Next() {
 		var r SearchResult
-		if err := rows.Scan(&r.SessionID, &r.MessageID, &r.Role, &r.Content, &r.Timestamp, &r.Rank); err != nil {
+		var tsStr string
+		if err := rows.Scan(&r.SessionID, &r.MessageID, &r.Role, &r.Content, &tsStr, &r.Rank); err != nil {
 			return nil, fmt.Errorf("session: scan search result: %w", err)
+		}
+		// FTS5 columns are untyped TEXT — parse timestamp string into time.Time
+		if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
+			r.Timestamp = t
+		} else if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
+			r.Timestamp = t
+		} else if t, err := time.Parse("2006-01-02 15:04:05", tsStr); err == nil {
+			r.Timestamp = t
 		}
 		results = append(results, r)
 	}
