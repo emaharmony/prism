@@ -195,6 +195,22 @@ Work fast and decisively. Don't overthink — implement, review, push. If you ge
 		ChannelID: "1491622863118008431", // scheduled-reports destination (fallback; project.channel preferred)
 		MaxTokens: 4096,
 	},
+	"lumi_work_update": {
+		Prompt: `You are Lumi, reporting your work progress to Ema in #manager-room.
+
+Read the control room checklist at docs/lumi-control-room-checklist.md to see current task status.
+Check git log on the feat/auto-extraction branch for recent commits.
+
+Post a concise progress update to #manager-room including:
+- Which tasks are complete vs in progress vs not started
+- What you committed since the last update
+- Any blockers or decisions needed
+- What you're working on next
+
+Keep it brief — bullet points, not paragraphs. No fluff.`,
+		ChannelID: "1491622581348864162", // #manager-room
+		MaxTokens: 1024,
+	},
 }
 
 // schedulerActionList exposes the known wake actions as cron-job presets for
