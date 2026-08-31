@@ -156,7 +156,7 @@ type conversationContext struct {
 	commitStore   *commitments.Store       // V61: Commitments store for promise tracking
 	ttsClient     *tts.Client               // V61: Voicebox TTS client
 	ttsConfig     tts.Config                // V61: TTS configuration
-	autoExtractor *memory.AutoExtractor      // V76: Auto-extract memory after conversation turns
+	contextAgent  *agent.ContextAgent        // V76: Compress workspace identity into short context block
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
@@ -524,18 +524,6 @@ func executeServe(args []string) {
 				fmt.Printf("  Memory: local markdown store at %s\n", memPath)
 			}
 
-			// V76: Auto-extractor for memory auto-capture
-			var autoExtractor *memory.AutoExtractor
-			if cfg.Prizm.Memory.AutoCapture {
-				gateModels := cfg.Prizm.Memory.ModelFallbackChain
-				if len(gateModels) == 0 {
-					gateModels = []string{cfg.Prizm.Memory.GateModel, cfg.Prizm.Memory.ExtractModel}
-				}
-				gateExtractor := memory.NewGateExtractor(gateModels, cfg.Prizm.Memory.OllamaURL, "")
-				autoExtractor = memory.NewAutoExtractor(gateExtractor, memoryStore, nil) // events wired later if needed
-				log.Printf("[MEMORY] auto-capture enabled (models: %s)", strings.Join(gateModels, " → "))
-			}
-
 			// V22: Register agent subscriptions against the shared task store.
 			if delegEngine != nil {
 				// Register agent subscriptions
@@ -563,6 +551,17 @@ func executeServe(args []string) {
 			workspaceRoot := cfg.Prizm.Workspace
 			if workspaceRoot == "" {
 				workspaceRoot = "."
+			}
+
+			// V76: Context agent for compressed identity injection
+			var contextAgent *agent.ContextAgent
+			compCfg := agent.DefaultCompressionConfig()
+			if cfg.Prizm.ContextCompression != nil {
+				compCfg = *cfg.Prizm.ContextCompression
+			}
+			if compCfg.Enabled {
+				contextAgent = agent.NewContextAgent(workspaceRoot, compCfg)
+				log.Printf("[CONTEXT] compression enabled (model: %s, ttl: %s)", compCfg.Model, compCfg.CacheTTL)
 			}
 
 			readRoots := configuredReadRoots(cfg)
@@ -744,8 +743,8 @@ func executeServe(args []string) {
 				commitStore: commitStore,
 			ttsClient: ttsClient,
 			ttsConfig: ttsConfig,
-			autoExtractor: autoExtractor, // V76: auto-extract memory after conversation turns
-			stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
+			contextAgent:  contextAgent,  // V76: compressed context block
+				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,    // V32: plan manager
 				improveMgr:  improveMgr, // V32: improvement manager
 				guardian:    guardian,   // V32: guard rail
@@ -1812,21 +1811,6 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		enqueueLocalMemoryUpdate(cc.sessMgr, cc.cfg, cc.remClient, cc.remSem, cc.remCache, ownerID, msg.UserID, finalRC.Agent, sess.ID, run.ID)
 	}
 
-	// V76: Auto-extract memory from this conversation turn (fire-and-forget).
-	if cc.autoExtractor != nil && cc.cfg.Prizm.Memory.AutoCapture {
-		turn := memory.ConversationTurn{
-			UserMessage:    msg.Content,
-			AgentResponse:   responseText,
-			AgentID:         finalRC.Agent,
-			SessionID:       sess.ID,
-		}
-		go func() {
-			if err := cc.autoExtractor.AutoExtract(ctxcontext.Background(), turn); err != nil {
-				log.Printf("[MEMORY-AUTO] extraction failed: %v", err)
-			}
-		}()
-	}
-
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 } // sendError sends a user-friendly error message to a Discord channel.
 //lint:ignore U1000 retained for channel error reporting integration
@@ -1932,30 +1916,40 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	var sb strings.Builder
 
 	// --- Layer 1: IDENTITY ---
-	// V33: Derive identity from workspace files (SOUL.md, IDENTITY.md) instead of
-	// generic "You are {id}, a {role} assistant". If workspace files have identity
-	// content, use it. Fall back to config id/role only if no identity files exist.
+	// V76: Use context agent compression if available, otherwise fall back to
+	// full SOUL.md dump. Context agent compresses ~15KB of identity into ~300 tokens
+	// that are task-relevant instead of identity wallpaper.
 	identityContent := ""
-	contextIdentity := ""
-	if cc.ctxBuilder != nil {
-		builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).WithNamedContexts([]string{"soul", "identity"})
-		injected, err := builder.Build()
-		if err == nil {
-			for _, f := range injected.Files {
-				if f.Name == "soul" && f.Content != "" {
-					contextIdentity = f.Content
-				}
-			}
+	if cc.contextAgent != nil {
+		// Compressed path: context agent reads all workspace files and distills
+		compressed := cc.contextAgent.Compress("") // empty task desc for static cache
+		if compressed != "" {
+			identityContent = compressed
+			cc.hasSoulContent = true
 		}
 	}
 
-	if contextIdentity != "" {
-		// Use workspace identity content — it's the real source of truth
-		identityContent = contextIdentity
-		cc.hasSoulContent = true
-	} else {
-		// Fall back to config id/role — better than nothing
-		identityContent = fmt.Sprintf("You are %s, a %s assistant.", agentCfg.ID, agentCfg.Role)
+	if identityContent == "" {
+		// Fallback: load full SOUL.md/IDENTITY.md (original V33 behavior)
+		contextIdentity := ""
+		if cc.ctxBuilder != nil {
+			builder := context.NewBuilder(cc.ctxBuilder.WorkspaceRoot).WithNamedContexts([]string{"soul", "identity"})
+			injected, err := builder.Build()
+			if err == nil {
+				for _, f := range injected.Files {
+					if f.Name == "soul" && f.Content != "" {
+						contextIdentity = f.Content
+					}
+				}
+			}
+		}
+
+		if contextIdentity != "" {
+			identityContent = contextIdentity
+			cc.hasSoulContent = true
+		} else {
+			identityContent = fmt.Sprintf("You are %s, a %s assistant.", agentCfg.ID, agentCfg.Role)
+		}
 	}
 
 	sb.WriteString("## Who You Are\n")
@@ -1985,7 +1979,11 @@ func (cc *conversationContext) rebuildStaticSystemContent(agentCfg *orchestrator
 	// buildPrompt already has), not done here.
 	var sbChat strings.Builder
 	sbChat.WriteString("## Who You Are\n")
-	sbChat.WriteString(identityContent + "\n\n")
+	if cc.contextAgent != nil {
+		sbChat.WriteString(cc.contextAgent.Compress("") + "\n\n")
+	} else {
+		sbChat.WriteString(identityContent + "\n\n")
+	}
 
 	// V72: Open book mode for chat path
 	if contextStr := buildContextString(cc.ctxBuilder, cc.cfg, agentCfg); contextStr != "" {
@@ -2030,9 +2028,6 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 
 	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
-
-	// V76: Scope & safety directives
-	sb.WriteString(scopeSafetyDirectives + "\n\n")
 
 	// V75: Execution directives — separate from tool usage guidance for model salience
 	sb.WriteString("## Execution Bias\n" + executionDirectives + "\n\n")
