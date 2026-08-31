@@ -85,8 +85,8 @@ func TestGateExtractor_Extract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
-	if result.Category != "decision" {
-		t.Errorf("Category = %q, want decision", result.Category)
+	if result.Category != "project" {
+		t.Errorf("Category = %q, want project (was decision, now mapped)", result.Category)
 	}
 	if result.Tier != "active" {
 		t.Errorf("Tier = %q, want active", result.Tier)
@@ -153,8 +153,8 @@ func TestParseExtractResponse(t *testing.T) {
 	raw := "CATEGORY: preference\nTIER: persist\nSUMMARY: Prefers dark mode\nTOPICS: ui, theme\nCONTENT: User stated they prefer dark mode for all interfaces."
 	result := parseExtractResponse(raw)
 
-	if result.Category != "preference" {
-		t.Errorf("Category = %q, want preference", result.Category)
+	if result.Category != "user" {
+		t.Errorf("Category = %q, want user (was preference, now mapped)", result.Category)
 	}
 	if result.Tier != "persist" {
 		t.Errorf("Tier = %q, want persist", result.Tier)

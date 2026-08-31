@@ -69,7 +69,7 @@ func (g *GateExtractor) Gate(ctx context.Context, conversationTurn string) (*Gat
 
 // ExtractResult is the structured output of memory extraction.
 type ExtractResult struct {
-	Category  string   // decision, preference, fact, observation
+	Category  string   // user, feedback, project, reference, emotional
 	Tier      string   // ephemeral, active, persist
 	Summary   string   // one-line summary
 	KeyTopics []string // comma-separated topics
@@ -146,7 +146,7 @@ func (g *GateExtractor) callOllama(ctx context.Context, model, prompt string) (s
 // parseExtractResponse parses the structured extraction output.
 func parseExtractResponse(raw string) *ExtractResult {
 	result := &ExtractResult{
-		Category: "fact",
+		Category: "reference",
 		Tier:     "active",
 	}
 
@@ -187,15 +187,29 @@ func afterPrefix(line, prefix string) (string, bool) {
 
 func normalizeCategory(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
+	// V76: 5-type taxonomy (user/feedback/project/reference/emotional)
+	// Order matters: check "prefer" before "reference" (preference contains "reference")
 	switch {
-	case strings.Contains(s, "decision"):
-		return "decision"
+	case strings.Contains(s, "user"):
+		return "user"
+	case strings.Contains(s, "feedback"):
+		return "feedback"
+	case strings.Contains(s, "project"):
+		return "project"
+	case strings.Contains(s, "emotional"):
+		return "emotional"
 	case strings.Contains(s, "prefer"):
-		return "preference"
+		return "user"
+	case strings.Contains(s, "decision"):
+		return "project"
 	case strings.Contains(s, "observ"):
-		return "observation"
+		return "feedback"
+	case strings.Contains(s, "reference"):
+		return "reference"
+	case strings.Contains(s, "fact"):
+		return "reference"
 	default:
-		return "fact"
+		return "reference"
 	}
 }
 
@@ -240,13 +254,28 @@ Reply YES or NO on the first line, then explain why on the second line.
 Conversation turn:
 %s`
 
-const extractPrompt = `Extract key facts from this conversation as a structured memory. Reply in this exact format:
+const extractPrompt = `Extract key information from this conversation as a structured memory. Reply in this exact format:
 
-CATEGORY: <decision/preference/fact/observation>
+CATEGORY: <user/feedback/project/reference>
 TIER: <ephemeral/active/persist>
 SUMMARY: <one line summary>
 TOPICS: <comma separated topics>
 CONTENT: <detailed content>
+
+Category types:
+- user: user preferences, traits, communication style, habits, skill level
+- feedback: corrections, lessons learned, things to avoid, improvements noted
+- project: project state, architecture decisions, task progress, blockers
+- reference: facts, techniques, environment info, tool quirks, workarounds
+- emotional: qualitative state, enjoyment level, what felt good/off, identity reflections
+
+Do NOT save:
+- Trivial/obvious info ("user asked about Python")
+- Easily re-discovered facts ("Python 3.12 supports f-string nesting")
+- Raw data dumps (large code blocks, log files, data tables)
+- Session-specific ephemera (temporary file paths, one-off debugging context)
+
+Note: memory may drift over time — prefer concrete, actionable entries over vague observations.
 
 Conversation turn:
 %s`
