@@ -156,6 +156,7 @@ type conversationContext struct {
 	commitStore   *commitments.Store       // V61: Commitments store for promise tracking
 	ttsClient     *tts.Client               // V61: Voicebox TTS client
 	ttsConfig     tts.Config                // V61: TTS configuration
+	autoExtractor *memory.AutoExtractor      // V76: Auto-extract memory after conversation turns
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 
@@ -523,6 +524,18 @@ func executeServe(args []string) {
 				fmt.Printf("  Memory: local markdown store at %s\n", memPath)
 			}
 
+			// V76: Auto-extractor for memory auto-capture
+			var autoExtractor *memory.AutoExtractor
+			if cfg.Prizm.Memory.AutoCapture {
+				gateModels := cfg.Prizm.Memory.ModelFallbackChain
+				if len(gateModels) == 0 {
+					gateModels = []string{cfg.Prizm.Memory.GateModel, cfg.Prizm.Memory.ExtractModel}
+				}
+				gateExtractor := memory.NewGateExtractor(gateModels, cfg.Prizm.Memory.OllamaURL, "")
+				autoExtractor = memory.NewAutoExtractor(gateExtractor, memoryStore, nil) // events wired later if needed
+				log.Printf("[MEMORY] auto-capture enabled (models: %s)", strings.Join(gateModels, " → "))
+			}
+
 			// V22: Register agent subscriptions against the shared task store.
 			if delegEngine != nil {
 				// Register agent subscriptions
@@ -731,7 +744,8 @@ func executeServe(args []string) {
 				commitStore: commitStore,
 			ttsClient: ttsClient,
 			ttsConfig: ttsConfig,
-				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
+			autoExtractor: autoExtractor, // V76: auto-extract memory after conversation turns
+			stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,    // V32: plan manager
 				improveMgr:  improveMgr, // V32: improvement manager
 				guardian:    guardian,   // V32: guard rail
@@ -1798,6 +1812,21 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		enqueueLocalMemoryUpdate(cc.sessMgr, cc.cfg, cc.remClient, cc.remSem, cc.remCache, ownerID, msg.UserID, finalRC.Agent, sess.ID, run.ID)
 	}
 
+	// V76: Auto-extract memory from this conversation turn (fire-and-forget).
+	if cc.autoExtractor != nil && cc.cfg.Prizm.Memory.AutoCapture {
+		turn := memory.ConversationTurn{
+			UserMessage:    msg.Content,
+			AgentResponse:   responseText,
+			AgentID:         finalRC.Agent,
+			SessionID:       sess.ID,
+		}
+		go func() {
+			if err := cc.autoExtractor.AutoExtract(ctxcontext.Background(), turn); err != nil {
+				log.Printf("[MEMORY-AUTO] extraction failed: %v", err)
+			}
+		}()
+	}
+
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 } // sendError sends a user-friendly error message to a Discord channel.
 //lint:ignore U1000 retained for channel error reporting integration
@@ -2001,6 +2030,9 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 
 	// --- Layer 4: TOOLS (text-based path) ---
 	sb.WriteString("## Tool Usage\n" + toolUsageGuidance + "\n\n")
+
+	// V76: Scope & safety directives
+	sb.WriteString(scopeSafetyDirectives + "\n\n")
 
 	// V75: Execution directives — separate from tool usage guidance for model salience
 	sb.WriteString("## Execution Bias\n" + executionDirectives + "\n\n")

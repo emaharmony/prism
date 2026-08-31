@@ -29,6 +29,17 @@ func (p *Provider) GenerateStream(ctx context.Context, req provider.GenerateRequ
 		Stream:      true,
 	}
 
+	// V76: Use system blocks with cache_control for prompt caching (same as sync path)
+	if req.System != "" {
+		anthReq.System = []systemBlock{
+			{
+				Type:         "text",
+				Text:         req.System,
+				CacheControl: &cacheControl{Type: "ephemeral"},
+			},
+		}
+	}
+
 	body, err := json.Marshal(anthReq)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: marshal request: %w", err)

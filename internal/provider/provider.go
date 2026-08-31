@@ -40,6 +40,7 @@ type GenerateRequest struct {
 	Project       string  `json:"project"`
 	Task          string  `json:"task"`
 	Prompt        string  `json:"prompt"`
+	System        string  `json:"system,omitempty"` // V76: System prompt for cache_control support
 	Model         string  `json:"model"`
 	Temperature   float64 `json:"temperature"`
 	MaxTokens     int     `json:"max_tokens"`
