@@ -562,6 +562,36 @@ func executeServe(args []string) {
 			if compCfg.Enabled {
 				contextAgent = agent.NewContextAgent(workspaceRoot, compCfg)
 				log.Printf("[CONTEXT] compression enabled (model: %s, ttl: %s)", compCfg.Model, compCfg.CacheTTL)
+
+				// V76: Subscribe context agent to NATS context.requested events.
+				// When prizm.context.requested is published, the context agent
+				// compresses identity and publishes prizm.context.built.
+				if natsConn != nil {
+					ctxAgent := contextAgent // capture for closure
+					sub, err := natsConn.Subscribe("prizm.context.requested", func(msg *nats.Msg) {
+						var payload map[string]any
+						if err := json.Unmarshal(msg.Data, &payload); err != nil {
+							log.Printf("[CONTEXT-AGENT] invalid context.requested event: %v", err)
+							return
+						}
+						taskDesc, _ := payload["task_description"].(string)
+						compressed := ctxAgent.Compress(taskDesc)
+						log.Printf("[CONTEXT-AGENT] compressed context (%d chars) for task: %.50s", len(compressed), taskDesc)
+						// Publish prizm.context.built event
+						eventPayload, _ := json.Marshal(map[string]any{
+							"compressed_text": compressed,
+							"agent_id":       "context",
+							"v":              1,
+						})
+						natsConn.Publish("prizm.context.built", eventPayload)
+					})
+					if err != nil {
+						log.Printf("[CONTEXT-AGENT] failed to subscribe to prizm.context.requested: %v", err)
+					} else {
+						log.Printf("[CONTEXT-AGENT] subscribed to prizm.context.requested")
+					}
+					_ = sub
+				}
 			}
 
 			readRoots := configuredReadRoots(cfg)
@@ -1811,6 +1841,17 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 		enqueueLocalMemoryUpdate(cc.sessMgr, cc.cfg, cc.remClient, cc.remSem, cc.remCache, ownerID, msg.UserID, finalRC.Agent, sess.ID, run.ID)
 	}
 
+	// V76: Publish memory extraction event (event-driven, replaces fire-and-forget goroutine).
+	// The context agent or memory extractor subscribes to this event on NATS.
+	if responseText != "" {
+		cc.publishEvent(agent.EventMemoryExtractRequested, map[string]any{
+			"session_id":     sess.ID,
+			"agent_id":       finalRC.Agent,
+			"user_message":    msg.Content,
+			"agent_response":  responseText,
+		})
+	}
+
 	log.Printf("[RUN] %s completed in %s", run, run.Elapsed().Round(time.Millisecond))
 } // sendError sends a user-friendly error message to a Discord channel.
 //lint:ignore U1000 retained for channel error reporting integration
@@ -1872,6 +1913,7 @@ func (cc *conversationContext) buildAgentConfigMap() map[string]*orchestrator.Ag
 
 // If NATS is not connected, the event is logged but not published.
 // All events include a schema version field for forward compatibility.
+// publishEvent publishes a NATS event with schema version.
 func (cc *conversationContext) publishEvent(subject string, payload map[string]any) {
 	// Add schema version to all events (don't mutate caller's map)
 	eventPayload := make(map[string]any, len(payload)+1)
@@ -1896,6 +1938,30 @@ func (cc *conversationContext) publishEvent(subject string, payload map[string]a
 	}
 
 	log.Printf("[EVENT] → %s", subject)
+}
+
+// publishReviewEvent fires a prizm.review.requested event when a file-mutating tool
+// succeeds. This enables automatic code review (feedback loop 3) via NATS.
+func (cc *conversationContext) publishReviewEvent(toolName string, input map[string]any, agentID string) {
+	// Only fire for file-mutating tools
+	switch toolName {
+	case "write_file", "write_file_proposal", "write_file_direct",
+		"edit_file", "edit_file_proposal",
+		"git_commit", "git_push":
+		// Extract file path if available
+		filePath, _ := input["path"].(string)
+		if filePath == "" {
+			filePath, _ = input["file_path"].(string)
+		}
+		if filePath == "" {
+			filePath = "unknown"
+		}
+		cc.publishEvent(agent.EventReviewRequested, map[string]any{
+			"agent_id":        agentID,
+			"files_changed":   []string{filePath},
+			"task_description": fmt.Sprintf("Auto-review after %s", toolName),
+		})
+	}
 }
 
 // findAgentConfig looks up the AgentConfig for a given agent ID.

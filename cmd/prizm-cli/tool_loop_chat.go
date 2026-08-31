@@ -148,6 +148,11 @@ func (cc *conversationContext) runToolLoopChat(
 
 			summaries = append(summaries, summary)
 
+			// V76: Fire review event for file-mutating tools.
+			if summary.Status == "success" {
+				cc.publishReviewEvent(tc.Function.Name, tc.Function.Arguments, agentCfg.ID)
+			}
+
 			// Track successful tool results as potential fallback content.
 			if summary.Status == "success" || summary.Status == "approval_needed" {
 				lastContent = summary.Result
