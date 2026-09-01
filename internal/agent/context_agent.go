@@ -283,7 +283,7 @@ Produce ONLY the compressed context block, no preamble or explanation.`, taskDes
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Post(ca.ollamaURL+"/api/generate", "application/json", bytes.NewReader(jsonBody))
 	if err != nil {
 		return "", fmt.Errorf("ollama request: %w", err)
@@ -296,12 +296,17 @@ Produce ONLY the compressed context block, no preamble or explanation.`, taskDes
 
 	var result struct {
 		Response string `json:"response"`
+		Thinking string `json:"thinking"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 
+	// Some models (nemotron) put output in "thinking" when response is empty
 	compressed := strings.TrimSpace(result.Response)
+	if compressed == "" {
+		compressed = strings.TrimSpace(result.Thinking)
+	}
 	if compressed == "" {
 		return "", fmt.Errorf("empty ollama response")
 	}
