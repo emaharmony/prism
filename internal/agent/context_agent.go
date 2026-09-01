@@ -72,7 +72,7 @@ func NewContextAgent(workspaceRoot string, cfg CompressionConfig) *ContextAgent 
 		cacheTTL = parsed
 	}
 
-	builder := context.NewBuilder(workspaceRoot).WithNamedContexts([]string{"soul", "agents", "user", "identity", "heartbeat", "memory"})
+	builder := context.NewBuilder(workspaceRoot).WithNamedContexts([]string{"soul", "agents", "user", "identity", "heartbeat"}).WithTokenBudget(8000)
 
 	return &ContextAgent{
 		workspaceRoot: workspaceRoot,
@@ -122,8 +122,16 @@ func (ca *ContextAgent) Compress(taskDescription string) string {
 		return ca.fallback()
 	}
 
+	// Cap raw context to 20KB to avoid overwhelming local model
+	const maxRawContext = 20 * 1024
+	rawStr := rawContext.String()
+	if len(rawStr) > maxRawContext {
+		rawStr = rawStr[:maxRawContext] + "\n[...truncated...]"
+		log.Printf("[CONTEXT-AGENT] raw context truncated from %d to %d bytes", rawContext.Len(), maxRawContext)
+	}
+
 	// Call local model to compress
-	compressed, err := ca.callOllama(rawContext.String(), taskDescription)
+	compressed, err := ca.callOllama(rawStr, taskDescription)
 	if err != nil {
 		log.Printf("[CONTEXT-AGENT] ollama failed: %v, using fallback", err)
 		return ca.fallback()
