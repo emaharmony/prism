@@ -91,7 +91,9 @@ func (ca *ContextAgent) Compress(taskDescription string) string {
 	if ca.isCacheValid() {
 		ca.mu.RLock()
 		text := ca.cached.text
+		age := time.Since(ca.cached.builtAt).Truncate(time.Second)
 		ca.mu.RUnlock()
+		log.Printf("[CONTEXT-AGENT] cache hit (age=%s, len=%d)", age, len(text))
 		return text
 	}
 
@@ -126,6 +128,10 @@ func (ca *ContextAgent) Compress(taskDescription string) string {
 		log.Printf("[CONTEXT-AGENT] ollama failed: %v, using fallback", err)
 		return ca.fallback()
 	}
+
+	// Log the compression result for observability
+	log.Printf("[CONTEXT-AGENT] compressed %d bytes → %d bytes (%d%% reduction), %d tokens estimated",
+		rawContext.Len(), len(compressed), 100-(len(compressed)*100/rawContext.Len()), len(compressed)/4)
 
 	// Cache the result
 	ca.mu.Lock()
