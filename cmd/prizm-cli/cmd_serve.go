@@ -1130,6 +1130,13 @@ func executeServe(args []string) {
 		}
 	}
 
+	// V77: Mango review subscriber — delegates prizm.review.requested to mango agent.
+	if natsConn != nil && delegEngine != nil {
+		if err := startMangoReviewer(natsConn, delegEngine, cfg); err != nil {
+			log.Printf("[MANGO-REVIEW] WARN failed to start: %v", err)
+		}
+	}
+
 	// 12. Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
