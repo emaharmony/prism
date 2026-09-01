@@ -161,6 +161,11 @@ type PrizmConfig struct {
 	// Memory holds local memory store configuration (MarkdownStore).
 	Memory MemoryConfig `yaml:"memory"`
 
+	// ContextCompression configures identity context compression.
+	// When enabled, the context agent compresses SOUL.md/AGENTS.md/etc. into
+	// a ~300-token task-relevant block instead of dumping ~15KB raw.
+	ContextCompression *agent.CompressionConfig `yaml:"context_compression"`
+
 	// AllowedPaths is a list of additional directory roots the agent can access
 	// beyond the workspace root. Paths are absolute or relative to CWD.
 	// The workspace root is always implicitly allowed.

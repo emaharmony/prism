@@ -166,6 +166,9 @@ func (cc *conversationContext) runToolLoop(
 
 			log.Printf("[TOOL] tool %q succeeded (%d chars result)", parsed.ToolName, len(resultStr))
 
+			// V76: Fire review event for file-mutating tools (automatic feedback loop).
+			cc.publishReviewEvent(parsed.ToolName, parsed.ToolInput, agentCfg.ID)
+
 			// Feed the tool result back to the LLM
 			currentPrompt = formatToolResultPrompt(parsed.ToolName, resultStr)
 			continue

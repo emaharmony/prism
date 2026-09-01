@@ -1,0 +1,322 @@
+// Package agent provides Prizm's agent model, registry, and context compression.
+//
+// ContextAgent reads workspace identity files (SOUL.md, AGENTS.md, etc.)
+// and compresses them into a short (~200-400 token) context block using a
+// local Ollama model. This replaces dumping 15KB of raw identity text into
+// every LLM prompt — the model gets task-relevant identity instead of wallpaper.
+//
+// Fallback chain: compressed output → truncated SOUL.md (500 chars) → config id/role.
+// Never blocks the conversation loop on failure.
+package agent
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/emaharmony/prizm/internal/context"
+)
+
+// ContextAgent compresses workspace identity files into a short context block.
+type ContextAgent struct {
+	workspaceRoot string
+	model         string
+	ollamaURL     string
+	builder       *context.Builder
+
+	mu       sync.RWMutex
+	cached   *compressedContext
+	fileInfo map[string]fs.FileInfo // for cache invalidation
+	cacheTTL time.Duration
+}
+
+type compressedContext struct {
+	text      string
+	builtAt   time.Time
+	ttl       time.Duration
+}
+
+// CompressionConfig controls context compression behavior.
+type CompressionConfig struct {
+	Enabled    bool   `yaml:"enabled"`     // default: true
+	Model      string `yaml:"model"`       // default: nemotron-3-nano:4b
+	OllamaURL  string `yaml:"ollama_url"`  // default: http://localhost:11434
+	CacheTTL   string `yaml:"cache_ttl"`   // default: 5m
+	MaxContext int    `yaml:"max_context"`  // default: 400 tokens (~1600 chars)
+}
+
+// DefaultCompressionConfig returns sensible defaults.
+func DefaultCompressionConfig() CompressionConfig {
+	return CompressionConfig{
+		Enabled:    true,
+		Model:      "nemotron-3-nano:4b",
+		OllamaURL:  "http://localhost:11434",
+		CacheTTL:   "5m",
+		MaxContext: 400,
+	}
+}
+
+// NewContextAgent creates a context compression agent.
+func NewContextAgent(workspaceRoot string, cfg CompressionConfig) *ContextAgent {
+	cacheTTL := 5 * time.Minute
+	if parsed, err := time.ParseDuration(cfg.CacheTTL); err == nil {
+		cacheTTL = parsed
+	}
+
+	builder := context.NewBuilder(workspaceRoot).WithNamedContexts([]string{"soul", "agents", "user", "identity", "heartbeat", "memory"})
+
+	return &ContextAgent{
+		workspaceRoot: workspaceRoot,
+		model:         cfg.Model,
+		ollamaURL:      cfg.OllamaURL,
+		builder:        builder,
+		fileInfo:       make(map[string]fs.FileInfo),
+		cacheTTL:       cacheTTL,
+	}
+}
+
+// Compress returns a compressed context block for the given task description.
+// Uses cached result if still valid. Falls back gracefully on any failure.
+func (ca *ContextAgent) Compress(taskDescription string) string {
+	// Check cache
+	if ca.isCacheValid() {
+		ca.mu.RLock()
+		text := ca.cached.text
+		ca.mu.RUnlock()
+		return text
+	}
+
+	// Read workspace files
+	injected, err := ca.builder.Build()
+	if err != nil {
+		log.Printf("[CONTEXT-AGENT] builder failed: %v, using fallback", err)
+		return ca.fallback()
+	}
+
+	// Assemble raw context for the compression prompt
+	var rawContext strings.Builder
+	for _, f := range injected.Files {
+		rawContext.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", f.Name, f.Content))
+	}
+
+	// Read recent memory files (last 5)
+	memDir := filepath.Join(ca.workspaceRoot, "memory")
+	memContent := ca.readRecentMemoryFiles(memDir, 5)
+	if memContent != "" {
+		rawContext.WriteString(fmt.Sprintf("=== recent-memory ===\n%s\n", memContent))
+	}
+
+	if rawContext.Len() == 0 {
+		log.Printf("[CONTEXT-AGENT] no workspace content, using fallback")
+		return ca.fallback()
+	}
+
+	// Call local model to compress
+	compressed, err := ca.callOllama(rawContext.String(), taskDescription)
+	if err != nil {
+		log.Printf("[CONTEXT-AGENT] ollama failed: %v, using fallback", err)
+		return ca.fallback()
+	}
+
+	// Cache the result
+	ca.mu.Lock()
+	ca.cached = &compressedContext{
+		text:    compressed,
+		builtAt: time.Now(),
+		ttl:     ca.cacheTTL,
+	}
+	ca.updateFileInfo(injected.Files)
+	ca.mu.Unlock()
+
+	return compressed
+}
+
+// isCacheValid checks if the cached compressed context is still valid.
+// Invalidates on TTL expiry or file changes.
+func (ca *ContextAgent) isCacheValid() bool {
+	ca.mu.RLock()
+	defer ca.mu.RUnlock()
+
+	if ca.cached == nil {
+		return false
+	}
+
+	// Check TTL
+	if time.Since(ca.cached.builtAt) > ca.cached.ttl {
+		return false
+	}
+
+	// Check file changes
+	for path, info := range ca.fileInfo {
+		current, err := os.Stat(path)
+		if err != nil {
+			return false // file deleted or unreadable
+		}
+		if current.ModTime() != info.ModTime() || current.Size() != info.Size() {
+			return false
+		}
+	}
+
+	return true
+}
+
+// updateFileInfo records current file mtimes/sizes for cache invalidation.
+func (ca *ContextAgent) updateFileInfo(files []context.ContextFile) {
+	newInfo := make(map[string]fs.FileInfo)
+	for _, f := range files {
+		path := filepath.Join(ca.workspaceRoot, context.NamedSources[f.Name])
+		if info, err := os.Stat(path); err == nil {
+			newInfo[path] = info
+		}
+	}
+	ca.fileInfo = newInfo
+}
+
+// fallback returns truncated SOUL.md or config-level identity.
+func (ca *ContextAgent) fallback() string {
+	soulPath := filepath.Join(ca.workspaceRoot, "SOUL.md")
+	data, err := os.ReadFile(soulPath)
+	if err != nil || len(data) == 0 {
+		return "You are a Prizm AI assistant."
+	}
+
+	// Truncate to ~500 chars, respecting rune boundaries
+	runes := []rune(string(data))
+	if len(runes) > 500 {
+		return string(runes[:500]) + "\n[... identity truncated for context efficiency ...]"
+	}
+	return string(runes)
+}
+
+// readRecentMemoryFiles reads the most recent N memory files from the given directory.
+func (ca *ContextAgent) readRecentMemoryFiles(dir string, n int) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "" // no memory dir is fine
+	}
+
+	// Sort by modification time (newest first)
+	type fileEntry struct {
+		name string
+		info fs.FileInfo
+	}
+	var files []fileEntry
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, fileEntry{name: e.Name(), info: info})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].info.ModTime().After(files[j].info.ModTime())
+	})
+
+	// Read up to N most recent
+	var sb strings.Builder
+	count := 0
+	for _, f := range files {
+		if count >= n {
+			break
+		}
+		data, err := os.ReadFile(filepath.Join(dir, f.name))
+		if err != nil {
+			continue
+		}
+		// Truncate each file to 1000 chars to keep prompt manageable
+		content := string(data)
+		runes := []rune(content)
+		if len(runes) > 1000 {
+			content = string(runes[:1000]) + "\n[...truncated...]"
+		}
+		sb.WriteString(fmt.Sprintf("--- %s ---\n%s\n\n", f.name, content))
+		count++
+	}
+
+	return sb.String()
+}
+
+// callOllama sends the raw context to a local model for compression.
+func (ca *ContextAgent) callOllama(rawContext, taskDescription string) (string, error) {
+	prompt := fmt.Sprintf(`You are a context compression agent. Read the following workspace files and produce a COMPRESSED identity block (~200-400 tokens) that captures:
+
+1. **Who the agent is** — name, key personality traits (1-2 sentences)
+2. **Current project** — what project, current status, recent progress
+3. **Key decisions and standing rules** — important constraints and commitments
+4. **User preferences** — how the user wants to work
+5. **Recent context** — what happened recently (from memory files)
+
+Be concise. Every token counts. Omit anything not relevant to the current task.
+If a task description is provided, prioritize information relevant to that task.
+
+Current task: %s
+
+=== WORKSPACE FILES ===
+%s
+
+Produce ONLY the compressed context block, no preamble or explanation.`, taskDescription, rawContext)
+
+	reqBody := map[string]any{
+		"model":  ca.model,
+		"prompt": prompt,
+		"stream": false,
+		"options": map[string]any{
+			"num_predict": 512,
+			"temperature": 0.3,
+		},
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Post(ca.ollamaURL+"/api/generate", "application/json", bytes.NewReader(jsonBody))
+	if err != nil {
+		return "", fmt.Errorf("ollama request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ollama returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Response string `json:"response"`
+		Thinking string `json:"thinking"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	// Some models (nemotron) put output in "thinking" when response is empty
+	compressed := strings.TrimSpace(result.Response)
+	if compressed == "" {
+		compressed = strings.TrimSpace(result.Thinking)
+	}
+	if compressed == "" {
+		return "", fmt.Errorf("empty ollama response")
+	}
+
+	return compressed, nil
+}
+
+// InvalidateCache forces the next Compress() call to rebuild.
+func (ca *ContextAgent) InvalidateCache() {
+	ca.mu.Lock()
+	ca.cached = nil
+	ca.mu.Unlock()
+}
