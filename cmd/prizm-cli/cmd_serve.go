@@ -594,6 +594,59 @@ func executeServe(args []string) {
 				}
 			}
 
+			// V77: Memory extraction subscriber — consumes prizm.memory.extract.requested events
+			// and runs the gate → extract → store pipeline to persist memories.
+			if natsConn != nil && memoryStore != nil {
+				gateModels := []string{"nemotron-3-nano:4b"} // default fallback
+				if len(cfg.Prizm.Memory.ModelFallbackChain) > 0 {
+					gateModels = cfg.Prizm.Memory.ModelFallbackChain
+				} else if cfg.Prizm.Memory.GateModel != "" {
+					gateModels = []string{cfg.Prizm.Memory.GateModel}
+				}
+				ollamaURL := "http://localhost:11434"
+				if cfg.Prizm.Memory.OllamaURL != "" {
+					ollamaURL = cfg.Prizm.Memory.OllamaURL
+				} else if cfg.Prizm.ContextCompression != nil && cfg.Prizm.ContextCompression.OllamaURL != "" {
+					ollamaURL = cfg.Prizm.ContextCompression.OllamaURL
+				}
+				gateExtractor := memory.NewGateExtractor(gateModels, ollamaURL, "")
+				autoExtractor := memory.NewAutoExtractor(gateExtractor, memoryStore, nil) // no event emitter for now
+
+				memSub, err := natsConn.Subscribe("prizm.memory.extract.requested", func(msg *nats.Msg) {
+					var payload map[string]any
+					if err := json.Unmarshal(msg.Data, &payload); err != nil {
+						log.Printf("[MEMORY-EXTRACT] invalid extract.requested event: %v", err)
+						return
+					}
+
+					sessionID, _ := payload["session_id"].(string)
+					agentID, _ := payload["agent_id"].(string)
+					userMsg, _ := payload["user_message"].(string)
+					agentResp, _ := payload["agent_response"].(string)
+
+					log.Printf("[MEMORY-EXTRACT] processing extract request (session=%s, agent=%s, user_msg_len=%d)", sessionID, agentID, len(userMsg))
+
+					turn := memory.ConversationTurn{
+						UserMessage:   userMsg,
+						AgentResponse: agentResp,
+						AgentID:       agentID,
+						SessionID:     sessionID,
+					}
+
+					if err := autoExtractor.AutoExtract(ctxcontext.Background(), turn); err != nil {
+						log.Printf("[MEMORY-EXTRACT] auto-extract failed: %v", err)
+					} else {
+						log.Printf("[MEMORY-EXTRACT] completed for session=%s", sessionID)
+					}
+				})
+				if err != nil {
+					log.Printf("[MEMORY-EXTRACT] failed to subscribe to prizm.memory.extract.requested: %v", err)
+				} else {
+					log.Printf("[MEMORY-EXTRACT] subscribed to prizm.memory.extract.requested")
+				}
+				_ = memSub
+			}
+
 			readRoots := configuredReadRoots(cfg)
 			writeRoots := configuredWriteRoots(cfg)
 
