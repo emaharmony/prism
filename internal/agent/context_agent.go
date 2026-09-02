@@ -48,7 +48,7 @@ type compressedContext struct {
 // CompressionConfig controls context compression behavior.
 type CompressionConfig struct {
 	Enabled    bool   `yaml:"enabled"`     // default: true
-	Model      string `yaml:"model"`       // default: nemotron-3-nano:4b
+	Model      string `yaml:"model"`       // default: qwen3.5:4b
 	OllamaURL  string `yaml:"ollama_url"`  // default: http://localhost:11434
 	CacheTTL   string `yaml:"cache_ttl"`   // default: 5m
 	MaxContext int    `yaml:"max_context"`  // default: 400 tokens (~1600 chars)
@@ -58,7 +58,7 @@ type CompressionConfig struct {
 func DefaultCompressionConfig() CompressionConfig {
 	return CompressionConfig{
 		Enabled:    true,
-		Model:      "nemotron-3-nano:4b",
+		Model:      "qwen3.5:4b",
 		OllamaURL:  "http://localhost:11434",
 		CacheTTL:   "5m",
 		MaxContext: 400,

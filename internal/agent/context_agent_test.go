@@ -18,8 +18,8 @@ func TestNewContextAgent(t *testing.T) {
 	if ca.workspaceRoot != tmpDir {
 		t.Errorf("expected workspaceRoot %s, got %s", tmpDir, ca.workspaceRoot)
 	}
-	if ca.model != "nemotron-3-nano:4b" {
-		t.Errorf("expected model nemotron-3-nano:4b, got %s", ca.model)
+	if ca.model != "qwen3.5:4b" {
+		t.Errorf("expected model qwen3.5:4b, got %s", ca.model)
 	}
 	if ca.ollamaURL != "http://localhost:11434" {
 		t.Errorf("expected ollama URL http://localhost:11434, got %s", ca.ollamaURL)
@@ -214,8 +214,8 @@ func TestCompressionConfig_Defaults(t *testing.T) {
 	if !cfg.Enabled {
 		t.Error("expected compression enabled by default")
 	}
-	if cfg.Model != "nemotron-3-nano:4b" {
-		t.Errorf("expected default model nemotron-3-nano:4b, got %s", cfg.Model)
+	if cfg.Model != "qwen3.5:4b" {
+		t.Errorf("expected default model qwen3.5:4b, got %s", cfg.Model)
 	}
 	if cfg.MaxContext != 400 {
 		t.Errorf("expected max context 400, got %d", cfg.MaxContext)

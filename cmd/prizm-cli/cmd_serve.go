@@ -597,7 +597,7 @@ func executeServe(args []string) {
 			// V77: Memory extraction subscriber — consumes prizm.memory.extract.requested events
 			// and runs the gate → extract → store pipeline to persist memories.
 			if natsConn != nil && memoryStore != nil {
-				gateModels := []string{"nemotron-3-nano:4b"} // default fallback
+				gateModels := []string{"qwen3.5:4b"} // default fallback
 				if len(cfg.Prizm.Memory.ModelFallbackChain) > 0 {
 					gateModels = cfg.Prizm.Memory.ModelFallbackChain
 				} else if cfg.Prizm.Memory.GateModel != "" {
