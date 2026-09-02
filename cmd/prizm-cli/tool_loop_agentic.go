@@ -265,6 +265,11 @@ func (cc *conversationContext) runToolLoopAgentic(
 
 			summaries = append(summaries, summary)
 
+			// V77: Publish review event for file-mutating tools
+			if summary.Status == "success" {
+				cc.publishReviewEvent(tc.Function.Name, tc.Function.Arguments, agentCfg.ID)
+			}
+
 			if summary.Status == "success" || summary.Status == "approval_needed" {
 				lastContent = fmt.Sprintf("Based on the information I gathered: %s", summary.Result)
 			}
