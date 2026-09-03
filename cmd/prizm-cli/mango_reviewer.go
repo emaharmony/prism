@@ -24,11 +24,12 @@ import (
 
 // mangoReviewer listens for review requests and delegates them to the mango agent.
 type mangoReviewer struct {
-	nc       *nats.Conn
-	deleg    *delegation.Engine
-	cfg      *orchestrator.Config
-	bot      *discordbot.BotAdapter
-	reviewCh chan reviewRequest
+	nc          *nats.Conn
+	deleg       *delegation.Engine
+	cfg         *orchestrator.Config
+	bot         *discordbot.BotAdapter
+	reviewStore *reviewResultStore // V77: stores review results for prompt injection
+	reviewCh    chan reviewRequest
 }
 
 type reviewRequest struct {
@@ -42,7 +43,7 @@ type reviewRequest struct {
 }
 
 // startMangoReviewer subscribes to review events and delegates to mango.
-func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrator.Config, bot *discordbot.BotAdapter) error {
+func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrator.Config, bot *discordbot.BotAdapter, store *reviewResultStore) error {
 	if nc == nil {
 		return fmt.Errorf("mango reviewer requires NATS connection")
 	}
@@ -63,11 +64,12 @@ func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrat
 	}
 
 	mr := &mangoReviewer{
-		nc:       nc,
-		deleg:    deleg,
-		cfg:      cfg,
-		bot:      bot,
-		reviewCh: make(chan reviewRequest, 16),
+		nc:          nc,
+		deleg:       deleg,
+		cfg:         cfg,
+		bot:         bot,
+		reviewStore: store,
+		reviewCh:    make(chan reviewRequest, 16),
 	}
 
 	// Subscribe to review request events
@@ -151,8 +153,48 @@ func (mr *mangoReviewer) handleTaskCompleted(msg *nats.Msg) {
 			} else {
 				log.Printf("[MANGO-REVIEW] sent review feedback to channel %s", channelID)
 			}
+
+			// V77: Store review result for prompt injection
+			if mr.reviewStore != nil {
+				mr.reviewStore.Add(channelID, ReviewResult{
+					TaskID:      taskID,
+					Reviewer:    "mango",
+					Decision:    extractDecision(result),
+					FilesChanged: extractFilesChanged(payload),
+					ChannelID:   channelID,
+				})
+				log.Printf("[MANGO-REVIEW] stored review result for prompt injection (channel: %s)", channelID)
+			}
 		}
 	}
+}
+
+// extractDecision attempts to parse the review decision from a Mango result string.
+func extractDecision(result string) string {
+	result = strings.TrimSpace(result)
+	if strings.Contains(result, `"fail"`) {
+		return "fail"
+	}
+	if strings.Contains(result, `"pass"`) {
+		return "pass"
+	}
+	return "unknown"
+}
+
+// extractFilesChanged extracts file paths from the task context data.
+func extractFilesChanged(payload map[string]any) []string {
+	if contextData, ok := payload["context_data"].(map[string]any); ok {
+		if files, ok := contextData["files_changed"].([]interface{}); ok {
+			result := make([]string, 0, len(files))
+			for _, f := range files {
+				if s, ok := f.(string); ok {
+					result = append(result, s)
+				}
+			}
+			return result
+		}
+	}
+	return nil
 }
 
 func formatReviewFeedback(taskID, status, result string) string {

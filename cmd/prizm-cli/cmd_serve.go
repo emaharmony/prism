@@ -160,6 +160,7 @@ type conversationContext struct {
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
 	channelID     string                  // Current conversation channel ID for event routing
+	reviewStore  *reviewResultStore       // V77: Pending Mango review results for feedback injection
 
 	// V74: Interactive tool approval — blocking wait for Discord button responses
 	approvalWaitMu sync.Mutex
@@ -180,6 +181,9 @@ func executeServe(args []string) {
 	serveCmd.Parse(args)
 
 	fmt.Println("🔮 Starting Prizm...")
+
+	// V77: Global review store for Mango feedback injection
+	globalReviewStore := newReviewResultStore()
 
 	// 1. Load configuration
 	cfg, err := orchestrator.LoadConfig(*configPath)
@@ -828,6 +832,7 @@ func executeServe(args []string) {
 			ttsClient: ttsClient,
 			ttsConfig: ttsConfig,
 			contextAgent:  contextAgent,  // V76: compressed context block
+			reviewStore:  globalReviewStore, // V77: Mango review feedback
 				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,    // V32: plan manager
 				improveMgr:  improveMgr, // V32: improvement manager
@@ -1133,7 +1138,7 @@ func executeServe(args []string) {
 
 	// V77: Mango review subscriber — delegates prizm.review.requested to mango agent.
 	if natsConn != nil && delegEngine != nil {
-		if err := startMangoReviewer(natsConn, delegEngine, cfg, discordBots[0]); err != nil {
+		if err := startMangoReviewer(natsConn, delegEngine, cfg, discordBots[0], globalReviewStore); err != nil {
 			log.Printf("[MANGO-REVIEW] WARN failed to start: %v", err)
 		}
 	}
@@ -2179,6 +2184,14 @@ func (cc *conversationContext) buildPrompt(sess *session.Session, agentCfg *orch
 				sb.WriteString("\n" + plan.FormatPlanForPrompt(activePlan) + "\n")
 				log.Printf("[PLAN] injected active plan %s into prompt", activePlan.ID)
 			}
+		}
+	}
+
+	// --- Layer 6.5: Pending review feedback (V77) ---
+	if cc.reviewStore != nil {
+		if results := cc.reviewStore.PopForChannel(cc.channelID); len(results) > 0 {
+			sb.WriteString("\n" + FormatReviewResultsForPrompt(results) + "\n")
+			log.Printf("[REVIEW-FEEDBACK] injected %d review results into prompt for channel %s", len(results), cc.channelID)
 		}
 	}
 
