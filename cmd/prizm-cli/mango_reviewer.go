@@ -1,23 +1,22 @@
-// Package main: Mango review subscriber for automatic code review.
+// Package main: Mango review subscriber with feedback injection.
 //
-// When a file-mutating tool succeeds (write_file, edit_file, git_commit, git_push),
-// the tool loop publishes prizm.review.requested with the changed files and context.
-// This subscriber picks up those events and creates a delegation task for the
-// mango agent, which reviews the change for correctness, safety, and quality.
+// When a file-mutating tool succeeds, the tool loop publishes prizm.review.requested.
+// This subscriber delegates the review to the mango agent, then listens for
+// mango.task.completed events and sends the review result back to the Discord
+// channel where the original work happened.
 //
-// V77: Option A — quick wire. Mango receives the review request and responds
-// through the normal agent pipeline. The response is published back on
-// prizm.review.completed so other systems can observe review outcomes.
+// V77: This closes the feedback loop — Mango reviews, Lumi sees the result.
 package main
 
 import (
-	"context"
+	ctxcontext "context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	"github.com/emaharmony/prizm/internal/adapter/builtin/discordbot"
 	"github.com/emaharmony/prizm/internal/delegation"
 	"github.com/emaharmony/prizm/internal/orchestrator"
 	"github.com/nats-io/nats.go"
@@ -28,21 +27,22 @@ type mangoReviewer struct {
 	nc       *nats.Conn
 	deleg    *delegation.Engine
 	cfg      *orchestrator.Config
+	bot      *discordbot.BotAdapter
 	reviewCh chan reviewRequest
 }
 
 type reviewRequest struct {
-	AgentID        string   `json:"agent_id"`
-	FilesChanged   []string `json:"files_changed"`
-	TaskDesc       string   `json:"task_description"`
-	ToolName       string   `json:"tool_name,omitempty"`
-	SessionID      string   `json:"session_id,omitempty"`
-	CorrelationID  string   `json:"correlation_id,omitempty"`
+	AgentID       string   `json:"agent_id"`
+	FilesChanged  []string `json:"files_changed"`
+	TaskDesc      string   `json:"task_description"`
+	ToolName      string   `json:"tool_name,omitempty"`
+	SessionID     string   `json:"session_id,omitempty"`
+	CorrelationID string   `json:"correlation_id,omitempty"`
+	ChannelID     string   `json:"channel_id,omitempty"`
 }
 
-// startMangoReviewer subscribes to prizm.review.requested and delegates
-// review tasks to the mango agent.
-func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrator.Config) error {
+// startMangoReviewer subscribes to review events and delegates to mango.
+func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrator.Config, bot *discordbot.BotAdapter) error {
 	if nc == nil {
 		return fmt.Errorf("mango reviewer requires NATS connection")
 	}
@@ -50,7 +50,6 @@ func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrat
 		return fmt.Errorf("mango reviewer requires delegation engine")
 	}
 
-	// Check if mango agent is configured
 	mangoConfigured := false
 	for _, a := range cfg.Agents {
 		if a.ID == "mango" {
@@ -60,24 +59,33 @@ func startMangoReviewer(nc *nats.Conn, deleg *delegation.Engine, cfg *orchestrat
 	}
 	if !mangoConfigured {
 		log.Printf("[MANGO-REVIEW] mango agent not configured, reviewer disabled")
-		return nil // not an error — just no mango
+		return nil
 	}
 
 	mr := &mangoReviewer{
 		nc:       nc,
 		deleg:    deleg,
 		cfg:      cfg,
+		bot:      bot,
 		reviewCh: make(chan reviewRequest, 16),
 	}
 
-	// Subscribe to review events
+	// Subscribe to review request events
 	sub, err := nc.Subscribe("prizm.review.requested", mr.handleMsg)
 	if err != nil {
 		return fmt.Errorf("subscribe review.requested: %w", err)
 	}
 	_ = sub
 
-	// Start review worker goroutine
+	// Subscribe to mango task completion events for feedback injection
+	taskSub, err := nc.Subscribe("mango.task.completed", mr.handleTaskCompleted)
+	if err != nil {
+		log.Printf("[MANGO-REVIEW] WARN: could not subscribe to mango.task.completed: %v", err)
+	} else {
+		log.Printf("[MANGO-REVIEW] listening for mango.task.completed (feedback injection)")
+	}
+	_ = taskSub
+
 	go mr.processReviews()
 
 	log.Printf("[MANGO-REVIEW] watching prizm.review.requested (delegating to mango)")
@@ -98,6 +106,96 @@ func (mr *mangoReviewer) handleMsg(msg *nats.Msg) {
 	}
 }
 
+// handleTaskCompleted listens for mango.task.completed events and sends
+// the review result back to the Discord channel where the work happened.
+func (mr *mangoReviewer) handleTaskCompleted(msg *nats.Msg) {
+	var payload map[string]any
+	if err := json.Unmarshal(msg.Data, &payload); err != nil {
+		log.Printf("[MANGO-REVIEW] bad mango.task.completed event: %v", err)
+		return
+	}
+
+	taskID, _ := payload["task_id"].(string)
+	status, _ := payload["status"].(string)
+	result, _ := payload["result"].(string)
+
+	log.Printf("[MANGO-REVIEW] mango task %s completed (status: %s)", taskID, status)
+
+	// If we have a result and a bot, format it and send to Discord
+	if result != "" && mr.bot != nil {
+		// Try to find the channel ID from task context data
+		channelID := ""
+		if contextData, ok := payload["context_data"].(map[string]any); ok {
+			if ch, ok := contextData["channel_id"].(string); ok {
+				channelID = ch
+			}
+		}
+
+		// Fall back to first configured channel
+		if channelID == "" {
+			for _, ch := range mr.cfg.Channels {
+				if len(ch.Channels) > 0 {
+					channelID = ch.Channels[0]
+					break
+				}
+			}
+		}
+
+		if channelID != "" {
+			feedback := formatReviewFeedback(taskID, status, result)
+			if err := mr.bot.Send(&discordbot.OutboundMessage{
+				ChannelID: channelID,
+				Content:   feedback,
+			}); err != nil {
+				log.Printf("[MANGO-REVIEW] failed to send feedback to Discord: %v", err)
+			} else {
+				log.Printf("[MANGO-REVIEW] sent review feedback to channel %s", channelID)
+			}
+		}
+	}
+}
+
+func formatReviewFeedback(taskID, status, result string) string {
+	var sb strings.Builder
+	sb.WriteString("📋 **Mango Review** (task: `")
+	if len(taskID) > 8 {
+		sb.WriteString(taskID[:8])
+	} else {
+		sb.WriteString(taskID)
+	}
+	sb.WriteString("`)\n")
+	sb.WriteString("Status: ")
+	if status == "completed" {
+		sb.WriteString("✅ ")
+	} else {
+		sb.WriteString("⚠️ ")
+	}
+	sb.WriteString(status)
+	sb.WriteString("\n")
+
+	// Try to extract decision from result
+	result = strings.TrimSpace(result)
+	if strings.Contains(result, `"decision"`) || strings.Contains(result, `"pass"`) || strings.Contains(result, `"fail"`) {
+		lines := strings.Split(result, "\n")
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if strings.Contains(trimmed, "decision") || strings.Contains(trimmed, "issues") || strings.Contains(trimmed, "suggestions") {
+				sb.WriteString(trimmed)
+				sb.WriteString("\n")
+			}
+		}
+	} else {
+		if len(result) > 500 {
+			sb.WriteString(result[:500])
+			sb.WriteString("...")
+		} else {
+			sb.WriteString(result)
+		}
+	}
+
+	return sb.String()
+}
+
 func (mr *mangoReviewer) processReviews() {
 	for req := range mr.reviewCh {
 		mr.review(req)
@@ -105,10 +203,9 @@ func (mr *mangoReviewer) processReviews() {
 }
 
 func (mr *mangoReviewer) review(req reviewRequest) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := ctxcontext.WithTimeout(ctxcontext.Background(), 5*time.Minute)
 	defer cancel()
 
-	// Build review prompt
 	filesStr := strings.Join(req.FilesChanged, ", ")
 	if filesStr == "" {
 		filesStr = "unknown files"
@@ -124,25 +221,23 @@ func (mr *mangoReviewer) review(req reviewRequest) {
 		req.ToolName, filesStr, req.TaskDesc,
 	)
 
-	// Delegate to mango
-	task, err := mr.deleg.Delegate(ctx, "lumi", "mango", "review_code", reviewPrompt, map[string]any{
-		"files_changed":   req.FilesChanged,
-		"tool_name":       req.ToolName,
-		"session_id":      req.SessionID,
-		"correlation_id":  req.CorrelationID,
-		"review_type":     "post_mutation",
-	})
+	contextData := map[string]any{
+		"files_changed":  req.FilesChanged,
+		"tool_name":      req.ToolName,
+		"session_id":     req.SessionID,
+		"correlation_id": req.CorrelationID,
+		"review_type":    "post_mutation",
+		"channel_id":     req.ChannelID,
+	}
 
+	task, err := mr.deleg.Delegate(ctx, "lumi", "mango", "review_code", reviewPrompt, contextData)
 	if err != nil {
 		log.Printf("[MANGO-REVIEW] failed to delegate review task: %v", err)
-		// Publish failure event
 		mr.publishReviewCompleted(req, "delegation_failed", err.Error())
 		return
 	}
 
 	log.Printf("[MANGO-REVIEW] delegated review task %s to mango (files: %s)", task.ID, filesStr)
-
-	// Publish review requested event so other systems can track
 	mr.publishReviewCompleted(req, "delegated", fmt.Sprintf("task_id: %s", task.ID))
 }
 
@@ -153,6 +248,7 @@ func (mr *mangoReviewer) publishReviewCompleted(req reviewRequest, status, detai
 		"detail":        detail,
 		"files_changed": req.FilesChanged,
 		"agent_id":      req.AgentID,
+		"channel_id":    req.ChannelID,
 		"v":             1,
 	}
 	data, _ := json.Marshal(payload)

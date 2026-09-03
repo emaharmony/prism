@@ -159,6 +159,7 @@ type conversationContext struct {
 	contextAgent  *agent.ContextAgent        // V76: Compress workspace identity into short context block
 	pendingWorkMu sync.Mutex
 	pendingWork   map[string]pendingWorkStart
+	channelID     string                  // Current conversation channel ID for event routing
 
 	// V74: Interactive tool approval — blocking wait for Discord button responses
 	approvalWaitMu sync.Mutex
@@ -1132,7 +1133,7 @@ func executeServe(args []string) {
 
 	// V77: Mango review subscriber — delegates prizm.review.requested to mango agent.
 	if natsConn != nil && delegEngine != nil {
-		if err := startMangoReviewer(natsConn, delegEngine, cfg); err != nil {
+		if err := startMangoReviewer(natsConn, delegEngine, cfg, discordBots[0]); err != nil {
 			log.Printf("[MANGO-REVIEW] WARN failed to start: %v", err)
 		}
 	}
@@ -1168,6 +1169,9 @@ func executeServe(args []string) {
 // The StreamCallback bridges LLMStage streaming to Discord:
 // LLMStage calls callback(token) → callback sends to Discord via placeholder + edits.
 func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessage) {
+	// Store channel ID for event routing (e.g., review feedback)
+	cc.channelID = msg.ChannelID
+
 	// Step 0: Skip empty or whitespace-only messages
 	trimmed := strings.TrimSpace(msg.Content)
 	if trimmed == "" {
@@ -2020,6 +2024,7 @@ func (cc *conversationContext) publishReviewEvent(toolName string, input map[str
 			"agent_id":        agentID,
 			"files_changed":   []string{filePath},
 			"task_description": fmt.Sprintf("Auto-review after %s", toolName),
+			"channel_id":      cc.channelID,
 		})
 	}
 }
