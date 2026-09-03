@@ -156,11 +156,12 @@ type conversationContext struct {
 	commitStore   *commitments.Store       // V61: Commitments store for promise tracking
 	ttsClient     *tts.Client               // V61: Voicebox TTS client
 	ttsConfig     tts.Config                // V61: TTS configuration
-	contextAgent  *agent.ContextAgent        // V76: Compress workspace identity into short context block
-	pendingWorkMu sync.Mutex
-	pendingWork   map[string]pendingWorkStart
-	channelID     string                  // Current conversation channel ID for event routing
-	reviewStore  *reviewResultStore       // V77: Pending Mango review results for feedback injection
+	contextAgent     *agent.ContextAgent        // V76: Compress workspace identity into short context block
+	pendingWorkMu   sync.Mutex
+	pendingWork     map[string]pendingWorkStart
+	channelID       string                    // Current conversation channel ID for event routing
+	reviewStore     *reviewResultStore         // V77: Pending Mango review results for feedback injection
+	memoryStoreLocal *memory.MarkdownStore      // V77: Local memory store for automatic recall
 
 	// V74: Interactive tool approval — blocking wait for Discord button responses
 	approvalWaitMu sync.Mutex
@@ -832,7 +833,8 @@ func executeServe(args []string) {
 			ttsClient: ttsClient,
 			ttsConfig: ttsConfig,
 			contextAgent:  contextAgent,  // V76: compressed context block
-			reviewStore:  globalReviewStore, // V77: Mango review feedback
+			reviewStore:       globalReviewStore, // V77: Mango review feedback
+			memoryStoreLocal: memoryStore,       // V77: Local memory recall
 				stateMgr:    stateMgr,   // V32: shared state manager (same instance as tools)
 				planMgr:     planMgr,    // V32: plan manager
 				improveMgr:  improveMgr, // V32: improvement manager
@@ -1497,6 +1499,26 @@ func (cc *conversationContext) handleDiscordMessage(msg *discordbot.InboundMessa
 				promptSession = cloneSessionWithSystemMemory(sess, memoryBlock)
 				prompt = cc.buildPrompt(promptSession, agentCfg, stateActionKey, channelRole)
 				log.Printf("[REMEMBRANCE] injected %d memory sources into shared prompt layer", len(remCtx.SelectedMemories))
+			}
+		}
+	} else {
+		// V77: Local memory injection — when Remembrance is unavailable,
+		// inject recent local MarkdownStore memories into the prompt.
+		// This ensures Lumi always sees recent memories even without Remembrance.
+		if cc.memoryStoreLocal != nil {
+			recentMemories, memErr := cc.memoryStoreLocal.ListRecent(ctxcontext.Background(), 10)
+			if memErr != nil {
+				log.Printf("[MEMORY] local memory recall failed: %v", memErr)
+			} else if len(recentMemories) > 0 {
+				var memBlock strings.Builder
+				memBlock.WriteString("## Recent Memories\n")
+				memBlock.WriteString("The following memories were automatically recalled from local storage:\n\n")
+				for _, m := range recentMemories {
+				memBlock.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", m.Summary, m.Category, truncate(m.Content, 200)))
+				}
+				promptSession = cloneSessionWithSystemMemory(sess, memBlock.String())
+				prompt = cc.buildPrompt(promptSession, agentCfg, stateActionKey, channelRole)
+				log.Printf("[MEMORY] injected %d recent local memories into prompt", len(recentMemories))
 			}
 		}
 	}
