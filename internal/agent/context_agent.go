@@ -48,7 +48,7 @@ type compressedContext struct {
 // CompressionConfig controls context compression behavior.
 type CompressionConfig struct {
 	Enabled    bool   `yaml:"enabled"`     // default: true
-	Model      string `yaml:"model"`       // default: qwen3.5:4b
+	Model      string `yaml:"model"`       // default: phi3:mini
 	OllamaURL  string `yaml:"ollama_url"`  // default: http://localhost:11434
 	CacheTTL   string `yaml:"cache_ttl"`   // default: 5m
 	MaxContext int    `yaml:"max_context"`  // default: 400 tokens (~1600 chars)
@@ -58,7 +58,7 @@ type CompressionConfig struct {
 func DefaultCompressionConfig() CompressionConfig {
 	return CompressionConfig{
 		Enabled:    true,
-		Model:      "qwen3.5:4b",
+		Model:      "phi3:mini",
 		OllamaURL:  "http://localhost:11434",
 		CacheTTL:   "5m",
 		MaxContext: 400,
@@ -140,6 +140,18 @@ func (ca *ContextAgent) Compress(taskDescription string) string {
 	// Log the compression result for observability
 	log.Printf("[CONTEXT-AGENT] compressed %d bytes → %d bytes (%d%% reduction), %d tokens estimated",
 		rawContext.Len(), len(compressed), 100-(len(compressed)*100/rawContext.Len()), len(compressed)/4)
+
+	// V77: Log compressed output on first call for quality verification
+	if ca.cached == nil {
+		const maxLog = 2000
+		logged := compressed
+		if len(logged) > maxLog {
+			logged = logged[:maxLog] + "..."
+		}
+		log.Printf("[CONTEXT-AGENT] first compression output (preview): %s", logged)
+		// Also write full output to temp file for quality review
+		os.WriteFile("/tmp/prizm-compressed-context.txt", []byte(compressed), 0644)
+	}
 
 	// Cache the result
 	ca.mu.Lock()
@@ -264,23 +276,25 @@ func (ca *ContextAgent) readRecentMemoryFiles(dir string, n int) string {
 
 // callOllama sends the raw context to a local model for compression.
 func (ca *ContextAgent) callOllama(rawContext, taskDescription string) (string, error) {
-	prompt := fmt.Sprintf(`You are a context compression agent. Read the following workspace files and produce a COMPRESSED identity block (~200-400 tokens) that captures:
+	prompt := fmt.Sprintf(`You are distilling workspace identity files into a compact context block for an AI agent named Lumi.
 
-1. **Who the agent is** — name, key personality traits (1-2 sentences)
-2. **Current project** — what project, current status, recent progress
-3. **Key decisions and standing rules** — important constraints and commitments
-4. **User preferences** — how the user wants to work
-5. **Recent context** — what happened recently (from memory files)
+From the files below, extract ONLY:
+1. Who Lumi is — name, role, personality (2-3 sentences)
+2. Current project — name, status, key milestones
+3. Key decisions and standing rules — important constraints
+4. User preferences — how Ema wants to work
+5. Recent context — what happened recently
 
-Be concise. Every token counts. Omit anything not relevant to the current task.
-If a task description is provided, prioritize information relevant to that task.
+Rules:
+- Start IMMEDIATELY with the content. No preamble, no thinking, no markdown fences.
+- Use bullet points. Every token counts.
+- Omit implementation details, architecture specs, and internal system mechanics.
+- Focus on what the agent NEEDS TO KNOW to be effective.
 
-Current task: %s
+/no_think
 
 === WORKSPACE FILES ===
-%s
-
-Produce ONLY the compressed context block, no preamble or explanation.`, taskDescription, rawContext)
+%s`, rawContext)
 
 	reqBody := map[string]any{
 		"model":  ca.model,
@@ -317,6 +331,7 @@ Produce ONLY the compressed context block, no preamble or explanation.`, taskDes
 	}
 
 	// Some models (nemotron) put output in "thinking" when response is empty
+	// qwen3.5 includes thinking process in the response — strip it
 	compressed := strings.TrimSpace(result.Response)
 	if compressed == "" {
 		compressed = strings.TrimSpace(result.Thinking)
@@ -324,6 +339,9 @@ Produce ONLY the compressed context block, no preamble or explanation.`, taskDes
 	if compressed == "" {
 		return "", fmt.Errorf("empty ollama response")
 	}
+
+	// Strip reasoning/thinking prefix that some models include
+	compressed = stripThinkingPrefix(compressed)
 
 	return compressed, nil
 }
@@ -333,4 +351,38 @@ func (ca *ContextAgent) InvalidateCache() {
 	ca.mu.Lock()
 	ca.cached = nil
 	ca.mu.Unlock()
+}
+
+// stripThinkingPrefix removes reasoning/thinking prefixes that some models
+// include in their output. qwen3.5 typically starts with "Thinking Process:" or similar.
+func stripThinkingPrefix(s string) string {
+	// Common reasoning prefixes
+	prefixes := []string{
+		"Thinking Process:",
+		"Thinking process:",
+		"Thought process:",
+		"Let me think about this.",
+		"Let me analyze",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			// Find the end of the thinking section — typically marked by a double newline
+			// or a clear section header like "##" or "**"
+			after := s[len(prefix):]
+			// Skip any leading whitespace/newlines after the prefix
+			after = strings.TrimLeft(after, " \n\t")
+			// Look for a section break that indicates real content starts
+			for _, marker := range []string{"\n## ", "\n**", "\n- ", "\n1."} {
+				if idx := strings.Index(after, marker); idx >= 0 {
+					return after[idx+1:] // skip the leading newline
+				}
+			}
+			// If no section break found, try to find where the thinking ends
+			// by looking for a blank line separator
+			if idx := strings.Index(after, "\n\n"); idx >= 0 {
+				return after[idx+2:]
+				}
+		}
+	}
+	return s
 }
